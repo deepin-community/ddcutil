@@ -1,0 +1,11 @@
+#!/bin/sh
+
+incdirs=/shared/playproj/i2c/src/public
+src_fn=cyddc.fbx
+
+echo ${incdirs}
+echo ${src_fn}
+
+cmd="cython -I ${incdirs} -I . -3 ${src_fn}"
+echo $cmd
+$cmd

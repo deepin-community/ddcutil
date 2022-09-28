@@ -1,0 +1,9 @@
+#!/bin/sh
+
+cydir=/shared/playproj/i2c/src/cython
+cp -p ${cydir}/initcy.py .libs
+cd ${cydir}/.libs
+python3 -i initcy.py
+
+
+

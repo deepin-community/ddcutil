@@ -1,0 +1,16 @@
+
+
+import sys
+from distutils.core import setup
+from Cython.Build   import cythonize
+
+# if (len(sys.argv) < 2):
+#     print("Syntax:  setup.py <file-to-compile>
+# 	sys.exit(1)
+
+# target = sys.argv[1]
+target='nonsuch.pyx'
+print("Compiling: %d" % target)
+
+
+setup(ext_modules=cythonize(target)) 
