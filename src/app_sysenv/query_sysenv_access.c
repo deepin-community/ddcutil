@@ -3,7 +3,7 @@
  *  Checks on the the existence of and access to /dev/i2c devices
  */
 
-// Copyright (C) 2014-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 
@@ -19,11 +19,15 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "config.h"
+
 #include "util/file_util.h"
 #include "util/report_util.h"
 #include "util/string_util.h"
 #include "util/subprocess_util.h"
+#ifdef ENABLE_UDEV
 #include "util/udev_i2c_util.h"
+#endif
 
 #include "base/linux_errno.h"
 /** \endcond */
@@ -43,22 +47,6 @@ bool redundant_i2c_device_identification_checks = false;
 // There are too many ways of doing this throughout the code.
 // Consolidate them here.  (IN PROGRESS)
 //
-
-/** Gets a list of all /dev/i2c devices by checking the file system
- *  if devices named /dev/i2c-N exist.
- *
- *  @return Byte_Value_Array containing the valid bus numbers
- */
-static Byte_Value_Array get_i2c_devices_by_existence_test() {
-   Byte_Value_Array bva = bva_create();
-   for (int busno=0; busno < I2C_BUS_MAX; busno++) {
-      if (i2c_device_exists(busno)) {
-         // if (!is_ignorable_i2c_device(busno))
-         bva_append(bva, busno);
-      }
-   }
-   return bva;
-}
 
 
 /** Gets a list of all /dev/i2c-n devices by screen-scraping the output
@@ -114,65 +102,52 @@ Byte_Value_Array identify_i2c_devices() {
 
    Byte_Value_Array bva1 = NULL;
    Byte_Value_Array bva2 = NULL;
+#ifdef ENABLE_UDEV
    Byte_Value_Array bva3 = NULL;
    Byte_Value_Array bva4 = NULL;
+#endif
 
-   bva1 = get_i2c_devices_by_existence_test();
+   bva1 = get_i2c_devices_by_existence_test(/*include_ignorable_devices=*/ true);
    if (redundant_i2c_device_identification_checks) {     // normally false, set true for testing
       bva2 = get_i2c_devices_by_ls();
+#ifdef ENABLE_UDEV
       bva3 = get_i2c_device_numbers_using_udev(/* include_smbus= */ true);
       bva4 = get_i2c_device_numbers_using_udev_w_sysattr_name_filter(NULL);
+#endif
 
       assert(bva_sorted_eq(bva1,bva2));
+#ifdef ENABLE_UDEV
       assert(bva_sorted_eq(bva1,bva3));
       assert(bva_sorted_eq(bva1,bva4));
+#endif
    }
 
    i2c_device_numbers_result = bva1;
    if (redundant_i2c_device_identification_checks) {
       bva_free(bva2);
+#ifdef ENABLE_UDEV
       bva_free(bva3);
       bva_free(bva4);
+#endif
    }
    // DBGMSG("Identified %d I2C devices", bva_length(bva1));
    return i2c_device_numbers_result;
 }
 
 
-/** Gets the username of the logged on user.
+/** Reports the username and id of the logged on user. Saves the id and a
+ *  copy of the name in the #Env_Accumulator structure passed.
  *
- *  \return user name
- *
- *  The caller is responsible for freeing the returned string.
+ *  \param  accumuator collects user name and userid
  */
-static char * get_username(Env_Accumulator * accum) {
-#ifdef OLD
-   rc = getlogin_r(username, sizeof(username));
-   printf("(%s) getlogin_r() returned %d, strlen(username)=%zd\n", __func__,
-          rc, strlen(username));
-   if (rc == 0)
-      printf("(%s) username = |%s|\n", __func__, username);
-   // printf("\nLogged on user:  %s\n", username);
-   printf("(%s) getlogin() returned |%s|\n", __func__, getlogin());
-   char * cmd = "echo $LOGNAME";
-   printf("(%s) executing command: %s\n", __func__, cmd);
-   bool ok = execute_shell_cmd_rpt(cmd, 0);
-   printf("(%s) execute_shell_cmd() returned %s\n", __func__, sbool(ok));
-
-#endif
+static void
+get_username(Env_Accumulator * accum) {
    uid_t uid = getuid();
-   // uid_t euid = geteuid();
-   // printf("(%s) uid=%u, euid=%u\n", __func__, uid, euid);
-   // gets logged on user name, user id, group id
    struct passwd *  pwd = getpwuid(uid);
    rpt_vstring(0,"Current user: %s (%u)", pwd->pw_name, uid);
    rpt_nl();
-   char * uname = strdup(pwd->pw_name);
-
-   accum->cur_uname = uname;
+   accum->cur_uname = g_strdup(pwd->pw_name);
    accum->cur_uid = uid;
-
-   return uname;
 }
 
 
@@ -193,9 +168,12 @@ static void check_dev_i2c_access(Env_Accumulator * accum) {
    DBGMSF(debug, "Starting");
 
    // bool all_i2c_rw = false;
+   assert(accum->dev_i2c_device_numbers);    // already set
    int busct = bva_length(accum->dev_i2c_device_numbers);
+#ifndef NDEBUG
    int busct0 = i2c_device_count();   // simple count, no side effects, consider replacing with local code
    assert(busct == busct0);
+#endif
    if (busct == 0 &&   !accum->dev_i2c_devices_required) {
       rpt_vstring(0,"WARNING: No /dev/i2c-* devices found");
    }
@@ -206,8 +184,6 @@ static void check_dev_i2c_access(Env_Accumulator * accum) {
 
       for (int ndx = 0; ndx < busct; ndx++) {
          busno = bva_get(accum->dev_i2c_device_numbers, ndx);
-  //  for (busno=0; busno < 32; busno++) {
-  //       if (i2c_device_exists(busno)) {
             snprintf(fnbuf, sizeof(fnbuf), "/dev/i2c-%d", busno);
             int rc;
             int errsv;
@@ -245,11 +221,11 @@ static void check_dev_i2c_access(Env_Accumulator * accum) {
                   if (accum->dev_i2c_common_group_name) {
                      if (!streq(accum->dev_i2c_common_group_name, gr_name)) {
                         free(accum->dev_i2c_common_group_name);
-                        accum->dev_i2c_common_group_name = strdup("MIXED");
+                        accum->dev_i2c_common_group_name = g_strdup("MIXED");
                      }
                   }
                   else
-                     accum->dev_i2c_common_group_name = strdup(gr_name);
+                     accum->dev_i2c_common_group_name = g_strdup(gr_name);
                   if (streq(gr_name, "i2c"))
                      accum->any_dev_i2c_has_group_i2c = true;
                   else
@@ -265,7 +241,6 @@ static void check_dev_i2c_access(Env_Accumulator * accum) {
                         accum->all_dev_i2c_is_group_rw = false;
                   }
                }
- //           }
          }
       }
 
@@ -352,7 +327,7 @@ static void check_group_i2c(Env_Accumulator * accum, bool verbose) {
       gid_t gid = getegid();
       struct passwd * pw = getpwuid(uid);
       printf("Effective uid %d: %s\n", uid, pw->pw_name);
-      char * uname = strdup(pw->pw_name);
+      char * uname = g_strdup(pw->pw_name);
       struct group * pguser = getgrgid(gid);
       printf("Effective gid %d: %s\n", gid, pguser->gr_name);
       if (group_member(gid_i2c)) {
@@ -402,7 +377,7 @@ static void check_group_i2c(Env_Accumulator * accum, bool verbose) {
 }
 
 
-static void check_udev() {
+static void check_udev_files() {
    // makedev not used on udev systems.
    // So look for makedev.d, but don't complain if it's not found
    if (directory_exists("/etc/makedev.d")) {
@@ -421,7 +396,6 @@ static void check_udev() {
 
    rpt_vstring(1, "Checking rules directory /etc/udev/rules.d:");
    execute_shell_cmd_rpt("grep -H i2c /etc/udev/rules.d/*rules ", 2);
-
 }
 
 
@@ -452,46 +426,16 @@ void check_i2c_devices(Env_Accumulator * accum) {
    bool debug = false;
    DBGMSF(debug, "Starting");
 
-   // Env_Accumulator values already set
-   assert(accum->dev_i2c_device_numbers);
-
-#ifdef UNNEEDED
-   // defaults now set properly in Env_Environment allocation
-   accum->dev_i2c_devices_required = true;
-   accum->group_i2c_checked = false;
-   accum->group_i2c_exists = false;
-   accum->cur_user_in_group_i2c = false;
-   accum->cur_user_any_devi2c_rw = false;
-   accum->cur_user_all_devi2c_rw = true;  // i.e. none fail the test
-   accum->any_dev_i2c_has_group_i2c = false;
-   accum->all_dev_i2c_has_group_i2c = true;
-   accum->any_dev_i2c_is_group_rw = false;
-   accum->all_dev_i2c_is_group_rw = true;
-#endif
-
-   Driver_Name_Node * driver_list = accum->driver_list;
    get_username(accum);
 
    rpt_vstring(0,"Checking /dev/i2c-* devices...");
    DDCA_Output_Level output_level = get_output_level();
 
-   bool just_fglrx = only_fglrx(driver_list);
-   if (just_fglrx){
-      accum->dev_i2c_devices_required = false;
-      rpt_nl();
-      rpt_vstring(0,"Apparently using only the AMD proprietary driver fglrx.");
-      rpt_vstring(0,"Devices /dev/i2c-* are not required.");
-      // TODO: delay leaving to properl set other variables
-      if (output_level < DDCA_OL_VERBOSE)
-         return;
-      rpt_vstring(0, "/dev/i2c device detail is purely informational.");
-   }
-
    rpt_nl();
    rpt_multiline(0,
-          "Unless the system is using the AMD proprietary driver fglrx, devices /dev/i2c-*",
-          "must exist and the logged on user must have read/write permission for those",
-          "devices (or at least those devices associated with monitors).",
+          "Devices /dev/i2c-* must exist and the logged on user must have read/write "
+          "permission for those devices (or at least those devices associated ",
+          "with monitors).",
           "",
           "Typically, this access is enabled by:",
           "  - setting the group for /dev/i2c-* to i2c",
@@ -513,10 +457,9 @@ void check_i2c_devices(Env_Accumulator * accum) {
    check_group_i2c(accum, verbose);
 
    if (verbose) {
-      check_udev();
+      check_udev_files();
    }
 
    DBGMSF(debug, "Done");
 }
-
 

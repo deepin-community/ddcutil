@@ -3,11 +3,15 @@
  *  Report utility package
  */
 
-// Copyright (C) 2014-2018 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2022 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef REPORT_UTIL_H_
 #define REPORT_UTIL_H_
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /** \cond */
 #include <glib-2.0/glib.h>
@@ -15,8 +19,10 @@
 #include <stdbool.h>
 /** \endcond */
 
-#include "coredefs.h"
+#include "coredefs_base.h"
+#include "string_util.h"
 
+void rpt_set_default_output_dest(FILE* output_dest);
 void rpt_push_output_dest(FILE* new_dest);
 void rpt_pop_output_dest();
 FILE * rpt_cur_output_dest();
@@ -31,13 +37,16 @@ void rpt_flush();
 void rpt_nl();
 void rpt_title(const char * title, int depth);
 void rpt_label(int depth, const char * text);
+void rpt_label_collect(int depth, GPtrArray* collector, const char * text);
 void rpt_multiline(int depth, ...);
 void rpt_g_ptr_array(int depth, GPtrArray * strings);
 
 void rpt_vstring(int depth, char * format, ...) ;
+void rpt_vstring_collect(int depth, GPtrArray* collector, char * format, ...);
 void rpt_2col(char * s1,  char * s2,  int col2offset, bool offset_absolute, int depth);
 void rpt_structure_loc(const char * name, const void * ptr, int depth);
 void rpt_hex_dump(const Byte * data, int size, int depth);
+void rpt_ntsa(Null_Terminated_String_Array ntsa, int depth);
 int rpt_file_contents(const char * fn, bool verbose, int depth);
 
 // Remaining rpt_ functions share common formatting
@@ -79,5 +88,9 @@ void rpt_ifval2(char * name,
                 Flag_Name_Set *   pflagNameSet,
                 Flag_Dictionary * pDict,
                 int    depth);
+
+#ifdef __cplusplus
+}    // extern "C"
+#endif
 
 #endif /* REPORT_UTIL_H_ */

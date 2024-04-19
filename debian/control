@@ -2,16 +2,18 @@ Source: ddcutil
 Priority: optional
 Section: utils
 Maintainer: Sanford Rockowitz <rockowitz@minsoft.com>
-Build-Depends: debhelper (>= 12),
-               pkg-config,
+Build-Depends: debhelper (>= 13),
                libdrm-dev,
-               libglib2.0-dev (>= 2.32),
+               libglib2.0-dev (>= 2.64),
+               libi2c-dev (>= 4.0),
+               libjansson-dev,
                libudev-dev,
                libusb-1.0-0-dev,
-               libxrandr-dev
-Standards-Version: 4.5.0
+               libxrandr-dev,
+               pkg-config
+Standards-Version: 4.6.2
 Rules-Requires-Root: no
-Homepage: http://www.ddcutil.com
+Homepage: https://www.ddcutil.com
 
 Package: ddcutil
 Architecture: any
@@ -20,16 +22,16 @@ Depends: ${shlibs:Depends},
          pci.ids,
          usb.ids,
          usbutils,
-         i2c-tools
-Description: Query and change monitor settings - command line application
- This is the command line version of ddcutil.
+         i2c-tools (>= 4.0)
+Description: Control monitor settings - Standalone command line application
+ ddcutil is used to query and change monitor settings.
  .
  ddcutil communicates with monitors implementing MCCS (Monitor Control Command
  Set). Normally, communication is performed using the DDC/CI protocol on the
  I2C bus.  Alternatively, communication can be performed over USB as per the
  USB Monitor Control Class Specification.
 
-Package: libddcutil3
+Package: libddcutil5
 Section: libs
 Architecture: any
 Depends: ${shlibs:Depends},
@@ -37,7 +39,7 @@ Depends: ${shlibs:Depends},
          pci.ids,
          usb.ids,
          usbutils
-Description: Query and change monitor settings - shared library
+Description: Control monitor settings - shared library
  This is the shared library version of ddcutil.
  .
  ddcutil communicates with monitors implementing MCCS (Monitor Control Command
@@ -49,8 +51,8 @@ Package: libddcutil-dev
 Architecture: any
 Section: libdevel
 Depends: ${misc:Depends},
-         libddcutil3 (= ${binary:Version})
-Description: Query and change monitor settings - development files
+         libddcutil5 (=${binary:Version})
+Description: Control monitor settings - development files
  These are the C development files for libddcutil.
  .
  ddcutil communicates with monitors implementing MCCS (Monitor Control Command

@@ -1,8 +1,9 @@
-/** \file ddc_packets.h
+/** @file ddc_packets.h
+ *
  * Functions for creating DDC packets and interpreting DDC response packets.
  */
 
-// Copyright (C) 2014-2018 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DDC_PACKETS_H_
@@ -19,18 +20,13 @@
 #include "base/status_code_mgt.h"
 #include "base/core.h"
 
-// was in common.h
-#define MAX_DDCCI_PACKET_SIZE   37    //  32 + 5;
-
-// largest packet is capabilities response packet, which has 1 byte for reply op code,
-// 2 for offset, and up to 32 bytes fragment
-
-#define MAX_DDC_DATA_SIZE           35
-#define MAX_DDC_PACKET_WO_CHECKSUM  38
-#define MAX_DDC_PACKET_INC_CHECKSUM 39
-
-// also is max table fragment size
-#define MAX_DDC_CAPABILITIES_FRAGMENT_SIZE 32
+// max capabilities or table fragment size
+#define MAX_DDC_MULTI_PART_FRAGMENT_SIZE 32
+#define MAX_DDC_MULTI_PART_DATA_SIZE     35   // +3 for op-code, offset-high-byte, offset-low-byte
+#define MAX_DDC_DATA_SIZE                35   // capabilities/table response is largest possible data size
+#define MAX_DDC_PACKET_WO_CHECKSUM       38   // +3 for dest-addr, source-addr, length byte
+#define MAX_DDC_PACKET_INC_CHECKSUM      39
+#define MAX_DDC_PACKET_SIZE              39
 
 #define MAX_DDC_TAG 39
 
@@ -54,16 +50,16 @@ typedef
 struct {
    Byte   vcp_code;             ///< VCP feature code
    bool   valid_response;       ///<
-   bool   supported_opcode;
-   int    max_value;
-   int    cur_value;
-   // for new way
-   Byte   mh;
-   Byte   ml;
-   Byte   sh;
-   Byte   sl;
+   bool   supported_opcode;     ///< is opcode supported?
+   Byte   mh;                   ///< max value high order byte
+   Byte   ml;                   ///< max value low  order byte
+   Byte   sh;                   ///< current value high order byte
+   Byte   sl;                   ///< current value low  order byte
 } Parsed_Nontable_Vcp_Response;
 
+#define HI_LO_BYTES_TO_SHORT(hi,lo) ( (hi)<<8 | (lo))
+#define RESPONSE_CUR_VALUE(response) (response->sh<<8 | response->sl)
+#define RESPONSE_MAX_VALUE(response) (response->mh<<8 | response->ml)
 
 static inline bool
 value_bytes_zero(Parsed_Nontable_Vcp_Response * parsed_val) {
@@ -81,11 +77,11 @@ struct {
    int   fragment_offset;
    int   fragment_length;     // without possible terminating '\0'
    // add 1 to allow for appending a terminating '\0' in case of DDC_PACKET_TYPE_CAPABILITIES_RESPONSE
-   Byte  bytes[MAX_DDC_CAPABILITIES_FRAGMENT_SIZE+1];
+   Byte  bytes[MAX_DDC_MULTI_PART_FRAGMENT_SIZE+1];
 } Interpreted_Multi_Part_Read_Fragment;
 
 
-// TODO: Unify with list in ddc_command_codes.h
+// Keep in sync with list in ddc_command_codes.h
 typedef Byte DDC_Packet_Type;
 #define DDC_PACKET_TYPE_NONE                  0x00
 #define DDC_PACKET_TYPE_QUERY_VCP_REQUEST     0x01
@@ -103,12 +99,9 @@ typedef Byte DDC_Packet_Type;
 /** Packet bytes and interpretation */
 typedef
 struct {
-   Buffer *         raw_bytes;                ///< raw packet bytes
-   char             tag[MAX_DDC_TAG+1]; ///* debug string describing packet, +1 for \0
-   DDC_Packet_Type  type;               ///* packet type
-   // void *           aux_data;           ///* type dependent
-
-   // for a bit more type safety and code clarity:
+   Buffer *         raw_bytes;          ///< raw packet bytes
+   char             tag[MAX_DDC_TAG+1]; ///< debug string describing packet, +1 for \0
+   DDC_Packet_Type  type;               ///< packet type
    union {
       Parsed_Nontable_Vcp_Response *         nontable_response;
       Interpreted_Multi_Part_Read_Fragment * multi_part_read_fragment;
@@ -126,7 +119,9 @@ bool is_double_byte(Byte * pb);
 
 // Byte xor_bytes(Byte * bytes, int len);
 Byte ddc_checksum(Byte * bytes, int len, bool altmode);
+#ifdef UNUSED
 bool valid_ddc_packet_checksum(Byte * readbuf);
+#endif
 // void test_checksum();
 
 
@@ -200,6 +195,8 @@ interpret_capabilities_response(
       Interpreted_Multi_Part_Read_Fragment * aux_data,
       bool          debug);
 
+extern Byte alt_source_addr;
+
 DDC_Packet *
 create_ddc_getvcp_request_packet(
       Byte          vcp_code,
@@ -233,10 +230,12 @@ void
 dbgrpt_interpreted_multi_read_fragment(
       Interpreted_Multi_Part_Read_Fragment * interpreted,
       int depth);
+
 void
 dbgrpt_interpreted_nontable_vcp_response(
       Parsed_Nontable_Vcp_Response * interpreted,
       int depth);
+
 #ifdef OLD
 void   report_interpreted_aux_data(Byte response_type, void * interpreted);
 #endif
@@ -246,6 +245,6 @@ int    get_packet_len(  DDC_Packet * packet);
 Byte * get_data_start(  DDC_Packet * packet);
 int    get_data_len(    DDC_Packet * packet);
 
-
+void init_ddc_packets();
 
 #endif /* DDC_PACKETS_H_ */

@@ -3,7 +3,7 @@
  * Report parsed capabilities, taking into account dynamic feature definitions.
  */
 
-// Copyright (C) 2014-2019 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 /** \cond */
@@ -19,9 +19,9 @@
 /** \endcond */
 
 #include "base/core.h"
+#include "base/ddc_command_codes.h"
 #include "base/displays.h"
 
-#include "vcp/ddc_command_codes.h"
 #include "vcp/parsed_capabilities_feature.h"
 #include "vcp/vcp_feature_codes.h"
 
@@ -46,9 +46,11 @@ format_absolute_gamma(char * buf, int bufsz, Byte bgamma) {
    int i_gamma = bgamma + 100;
    char sgamma1[10];
    g_snprintf(sgamma1, 10, "%d", i_gamma);
-   g_snprintf(buf, bufsz, "%s.%s",
-                          lsub(sgamma1, strlen(sgamma1)-2),
-                          substr(sgamma1, strlen(sgamma1)-2, 2));
+   char * sgamma1_left =   lsub(sgamma1, strlen(sgamma1)-2);
+   char * sgamma1_right =  substr(sgamma1, strlen(sgamma1)-2, 2);
+   g_snprintf(buf, bufsz, "%s.%s", sgamma1_left, sgamma1_right);
+   free(sgamma1_left);
+   free(sgamma1_right);
    return buf;
 }
 
@@ -258,7 +260,7 @@ report_gamma_capabilities(
    }
    else if (gamma_mode == gspecific_presets) {
       // process specific_gammas
-      char buf[300] = "\0";
+      char * buf = g_strdup("");
       char bgamma[10];
       char * sgamma = NULL;
       for (int ndx = 0; ndx < specific_gamma_ct; ndx++) {
@@ -273,9 +275,12 @@ report_gamma_capabilities(
          g_snprintf(buf2, 100, "%s %s (0x%02x)",
                                (ndx > 0) ? "," : "",
                                sgamma, raw_gamma);
-         g_strlcat(buf, buf2, 300);
+         char * bufold = buf;
+         buf = g_strdup_printf("%s%s", bufold, buf2);
+         free(bufold);
       }
       rpt_vstring(d0, "Specific presets: %s", buf);
+      free(buf);
    }   // g_specific_presets
 
 bye:
@@ -474,7 +479,7 @@ report_commands(Byte_Value_Array cmd_ids, int depth)
    int ndx = 0;
    for (; ndx < ct; ndx++) {
       Byte hval = bva_get(cmd_ids, ndx);
-      rpt_vstring(depth+1, "Command: %02x (%s)", hval, ddc_cmd_code_name(hval));
+      rpt_vstring(depth+1, "Op Code: %02X (%s)", hval, ddc_cmd_code_name(hval));
    }
 }
 
@@ -520,26 +525,35 @@ void dyn_report_parsed_capabilities(
       Display_Ref *            dref,
       int                      depth)
 {
+   int d0 = depth;
    int d1 = depth+1;
    int d2 = depth+2;
    bool debug = false;
    assert(pcaps && memcmp(pcaps->marker, PARSED_CAPABILITIES_MARKER, 4) == 0);
    DBGMSF(debug, "Starting. dh-%s, dref=%s, pcaps->raw_cmds_segment_seen=%s, "
                  "pcaps->commands=%p, pcaps->vcp_features=%p",
-                 dh_repr_t(dh), dref_repr_t(dref), sbool(pcaps->raw_cmds_segment_seen),
+                 dh_repr(dh), dref_repr_t(dref), sbool(pcaps->raw_cmds_segment_seen),
                  pcaps->commands, pcaps->vcp_features);
 
    if (dh)
       dref = dh->dref;
 
-   int d0 = depth;
-   // int d1 = d0+1;
+   bool has_error_messages = pcaps->messages && pcaps->messages->len > 0;
    DDCA_Output_Level output_level = get_output_level();
-   if (output_level >= DDCA_OL_VERBOSE) {
+   if (output_level >= DDCA_OL_VERBOSE || has_error_messages) {
       rpt_vstring(d0, "%s capabilities string: %s",
                       (pcaps->raw_value_synthesized) ? "Synthesized unparsed" : "Unparsed",
                       pcaps->raw_value);
    }
+
+   if (has_error_messages) {
+      rpt_label(d0, "Errors parsing capabilities string:");
+      for (int ndx = 0; ndx < pcaps->messages->len; ndx++) {
+         rpt_label(d1, g_ptr_array_index(pcaps->messages, ndx));
+      }
+   }
+
+
    rpt_vstring(d0, "Model: %s", (pcaps->model) ? pcaps->model : "Not specified");
 
    bool damaged = false;
@@ -568,9 +582,9 @@ void dyn_report_parsed_capabilities(
    // if (true) {
    if ( vcp_version_eq(vspec, DDCA_VSPEC_UNKNOWN) || vcp_version_eq(vspec, DDCA_VSPEC_UNQUERIED)) {
       if (dh)
-         vspec = get_vcp_version_by_display_handle(dh);
+         vspec = get_vcp_version_by_dh(dh);
       else if (dref)
-         vspec = get_vcp_version_by_display_ref(dref);
+         vspec = get_vcp_version_by_dref(dref);
    }
 
    if (pcaps->vcp_features) {

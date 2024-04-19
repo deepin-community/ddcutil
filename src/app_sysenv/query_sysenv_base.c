@@ -3,7 +3,7 @@
  * Base structures and functions for subsystem that diagnoses user configuration
  */
 
-// Copyright (C) 2014-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #define _GNU_SOURCE   // for asprintf() in stdio.h
@@ -11,6 +11,7 @@
 /** \cond */
 #include <assert.h>
 #include <errno.h>
+#include <glib-2.0/glib.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -27,7 +28,6 @@
 /** \endcond */
 
 #include "query_sysenv_base.h"
-
 
 static char * known_video_driver_modules[] = {
       "amdgpu",
@@ -110,7 +110,7 @@ char ** get_all_driver_module_strings() {
  *  \param title title message
  *  \param depth logical indentation depth
  */
-void sysenv_rpt_file_first_line(char * fn, char * title, int depth) {
+void sysenv_rpt_file_first_line(const char * fn, const char * title, int depth) {
    int d1 = depth+1;
    if (title)
       rpt_title(title, depth);
@@ -134,15 +134,12 @@ void sysenv_rpt_file_first_line(char * fn, char * title, int depth) {
  *  \param verbose  if ***true***, issue message if error
  *  \param depth    logical indentation depth
  */
-bool sysenv_show_one_file(char * dir_name, char * simple_fn, bool verbose, int depth) {
+bool sysenv_show_one_file(const char * dir_name, const char * simple_fn, bool verbose, int depth) {
    bool result = false;
-   char fqfn[PATH_MAX+2];
-   // strcpy(fqfn,dir_name);
-   g_strlcpy(fqfn, dir_name, PATH_MAX);  // make coverity happy
-   if (!str_ends_with(dir_name, "/"))
-      strcat(fqfn,"/");
-   assert(strlen(fqfn) + strlen(simple_fn) <= PATH_MAX);   // for Coverity
-   strncat(fqfn,simple_fn, sizeof(fqfn)-(strlen(fqfn)+1));  // use strncat to make Coverity happy
+   char * fqfn = g_strdup_printf("%s%s%s",
+                                 dir_name,
+                                 (str_ends_with(dir_name, "/")) ? "" : "/",
+                                 simple_fn);
    if (regular_file_exists(fqfn)) {
       rpt_vstring(depth, "%s:", fqfn);
       rpt_file_contents(fqfn, /*verbose=*/true, depth+1);
@@ -150,6 +147,7 @@ bool sysenv_show_one_file(char * dir_name, char * simple_fn, bool verbose, int d
    }
    else if (verbose)
       rpt_vstring(depth, "File not found: %s", fqfn);
+   free(fqfn);
    return result;
 }
 
@@ -297,7 +295,7 @@ void env_accumulator_report(Env_Accumulator * accum, int depth) {
 Driver_Name_Node *
 driver_name_list_find_exact(
       Driver_Name_Node * head,
-      char *             driver_name)
+      const char *             driver_name)
 {
    Driver_Name_Node * cur_node = head;
    while (cur_node && !streq(cur_node->driver_name, driver_name))
@@ -316,7 +314,7 @@ driver_name_list_find_exact(
 Driver_Name_Node *
 driver_name_list_find_prefix(
       Driver_Name_Node * head,
-      char *             driver_prefix)
+      const char *             driver_prefix)
 {
    Driver_Name_Node * curnode = head;
    while (curnode  && !str_starts_with(curnode->driver_name, driver_prefix) )
@@ -333,11 +331,11 @@ driver_name_list_find_prefix(
  *  \param headptr pointer to address of head of the list
  *  \param driver_name name to add
  */
-void driver_name_list_add(Driver_Name_Node ** headptr, char * driver_name) {
+void driver_name_list_add(Driver_Name_Node ** headptr, const char * driver_name) {
    // printf("(%s) Adding driver |%s|\n", __func__, driver_name);
    if (!driver_name_list_find_exact(*headptr, driver_name)) {
       Driver_Name_Node * newnode = calloc(1, sizeof(Driver_Name_Node));
-      newnode->driver_name = strdup(driver_name);
+      newnode->driver_name = g_strdup(driver_name);
       newnode->next = *headptr;
       *headptr = newnode;
    }
@@ -440,210 +438,20 @@ char * driver_name_list_string(Driver_Name_Node * head) {
 }
 
 
-/** Handles the boilerplate of iterating over a directory.
- *
- *  \param   dirname     directory name
- *  \param   fn_filter   tests the name of a file in a directory to see if should
- *                       be processe.  If NULL, all files are processed.
- *  \param   func        function to be called for each filename in the directory
- *  \param   accumulator pointer to a data structure passed
- *  \param   depth       logical indentation depth
- */
-void dir_foreach(
-      char *               dirname,
-      Filename_Filter_Func fn_filter,
-      Dir_Foreach_Func     func,
-      void *               accumulator,
-      int                  depth)
-{
-   struct dirent *dent;
-   DIR           *d;
-   d = opendir(dirname);
-   if (!d) {
-      rpt_vstring(depth,"Unable to open directory %s: %s", dirname, strerror(errno));
-   }
-   else {
-      while ((dent = readdir(d)) != NULL) {
-         // DBGMSG("%s", dent->d_name);
-         if (!streq(dent->d_name, ".") && !streq(dent->d_name, "..") ) {
-            if (!fn_filter || fn_filter(dent->d_name)) {
-               func(dirname, dent->d_name, accumulator, depth);
-            }
-         }
-      }
-      closedir(d);
-   }
-}
-
-
-/** Deletes lines from a #GPtrArray of text lines. If filter terms
- *  are specified, lines not satisfying any of the search terms are
- *  deleted.  Then, if **limit** is specified, at most the limit
- *  number of lines are left.
- *
- *  \param line_array   GPtrArray of null-terminated strings
- *  \param filter_terms null-terminated string array of terms
- *  \param ignore_case  if true, ignore case when testing filter terms
- *  \param  limit if 0, return all lines that pass filter terms
- *                if > 0, return at most the first #limit lines that satisfy the filter terms
- *                if < 0, return at most the last  #limit lines that satisfy the filter terms
- *
- *  \remark
- *  Consider allowing filter_terms to be regular expressions.
- */
-void filter_and_limit_g_ptr_array(
-      GPtrArray * line_array,
-      char **     filter_terms,
-      bool        ignore_case,
-      int         limit)
-{
-   bool debug = false;
-   if (debug) {
-      DBGMSG("line_array=%p, line_array->len=%d, ct(filter_terms)=%d, ignore_case=%s, limit=%d",
-            line_array, line_array->len, ntsa_length(filter_terms), sbool(ignore_case), limit);
-      // (const char **) cast to conform to strjoin() signature
-      char * s = strjoin( (const char **) filter_terms, -1, ", ");
-      DBGMSG("Filter terms: %s", s);
-      free(s);
-   };
-#ifdef TOO_MUCH
-   if (debug) {
-      if (filter_terms) {
-         printf("(%s) filter_terms:\n", __func__);
-         ntsa_show(filter_terms);
-      }
-   }
-#endif
-   // inefficient, just make it work for now
-   for (int ndx = (line_array->len)-1 ; ndx >= 0; ndx--) {
-      char * s = g_ptr_array_index(line_array, ndx);
-      assert(s);
-      // DBGMSF(debug, "s=|%s|", s);
-      bool keep = true;
-      if (filter_terms)
-         keep = apply_filter_terms(s, filter_terms, ignore_case);
-      if (!keep) {
-         g_ptr_array_remove_index(line_array, ndx);
-      }
-   }
-   gaux_ptr_array_truncate(line_array, limit);
-
-   DBGMSF(debug, "Done. line_array->len=%d", line_array->len);
-}
-
-
-/** Reads the contents of a file into a #GPtrArray of lines, optionally keeping only
- *  those lines containing at least one on a list of terms.  After filtering, the set
- *  of returned lines may be further reduced to either the first or last n number of
- *  lines.
- *
- *  \param  line_array #GPtrArray in which to return the lines read
- *  \param  fn         file name
- *  \param  filter_terms  #Null_Terminated_String_Away of filter terms
- *  \param  ignore_case   ignore case when testing filter terms
- *  \param  limit if 0, return all lines that pass filter terms
- *                if > 0, return at most the first #limit lines that satisfy the filter terms
- *                if < 0, return at most the last  #limit lines that satisfy the filter terms
- *  \return if >= 0, number of lines before filtering and limit applied
- *          if < 0,  -errno
- *
- *  \remark
- *  This function was created because using grep in conjunction with pipes was
- *  producing obscure shell errors.
- */
-int read_file_with_filter(
-      GPtrArray * line_array,
-      char *      fn,
-      char **     filter_terms,
-      bool        ignore_case,
-      int         limit)
-{
-   bool debug = false;
-   DBGMSF(debug, "line_array=%p, fn=%s, ct(filter_terms)=%d, ignore_case=%s, limit=%d",
-            line_array, fn, ntsa_length(filter_terms), sbool(ignore_case), limit);
-
-   g_ptr_array_set_free_func(line_array, g_free);    // in case not already set
-
-   int rc = file_getlines(fn, line_array, /*verbose*/ true);
-   DBGMSF(debug, "file_getlines() returned %d", rc);
-
-   if (rc > 0) {
-      filter_and_limit_g_ptr_array(
-         line_array,
-         filter_terms,
-         ignore_case,
-         limit);
-   }
-   else { // rc == 0
-      DBGMSF0(debug, "Empty file");
-   }
-
-   DBGMSF(debug, "Returning: %d", rc);
-   return rc;
-}
-
-
-/** Execute a shell command and return the contents in a newly allocated
- *  #GPtrArray of lines. Optionally, keep only those lines containing at least
- *  one in a list of terms.  After filtering, the set of returned lines may
- *  be further reduced to either the first or last n number of lines.
- *
- *  \param  cmd        command to execute
- *  \param  fn         file name
- *  \param  filter_terms  #Null_Terminated_String_Away of filter terms
- *  \param  ignore_case   ignore case when testing filter terms
- *  \param  limit if 0, return all lines that pass filter terms
- *                if > 0, return at most the first #limit lines that satisfy the filter terms
- *                if < 0, return at most the last  #limit lines that satisfy the filter terms
- *  \param  result_loc  address at which to return a pointer to the newly allocate #GPtrArray
- *  \return if >= 0, number of lines before filtering and limit applied
- *          if < 0,  -errno
- */
-int execute_cmd_collect_with_filter(
-      char *       cmd,
-      char **      filter_terms,
-      bool         ignore_case,
-      int          limit,
-      GPtrArray ** result_loc)
-{
-   bool debug = false;
-   DBGMSF(debug, "cmd|%s|, ct(filter_terms)=%d, ignore_case=%s, limit=%d",
-            cmd, ntsa_length(filter_terms), sbool(ignore_case), limit);
-
-   int rc = 0;
-   GPtrArray *line_array = execute_shell_cmd_collect(cmd);
-   if (!line_array) {
-      rc = -1;
-   }
-   else {
-      rc = line_array->len;
-      if (rc > 0) {
-         filter_and_limit_g_ptr_array(
-            line_array,
-            filter_terms,
-            ignore_case,
-            limit);
-      }
-   }
-   *result_loc = line_array;
-
-   DBGMSF(debug, "Returning: %d", rc);
-   return rc;
-}
-
 /** Given a path whose final segment is of the form "i2c-n",
  *  returns the bus number.
  *
  *  \param path  fully qualified or simple path name
- *  \return  I2C bus number, -1 if cannot be sxtracted
+ *  \return  I2C bus number, -1 if cannot be extracted
  */
-int  i2c_path_to_busno(char * path) {
+int  i2c_path_to_busno(const char * path) {
    bool debug = false;
 
    int busno = -1;
    if (path) {
-      char * lastslash = strrchr(path, '/');
-      char * basename = (lastslash) ? lastslash+1 : path;
+      char * path2 = g_strdup(path);    // for const-ness
+      char * lastslash = strrchr(path2, '/');
+      char * basename = (lastslash) ? lastslash+1 : path2;
       // char * basename = basename(path);
       if (basename) {
          if (str_starts_with(basename, "i2c-")) {
@@ -652,6 +460,7 @@ int  i2c_path_to_busno(char * path) {
                busno = ival;
          }
       }
+      free(path2);
    }
 
    DBGMSF(debug, "path=%s, returning: %d", path, busno);
@@ -662,4 +471,7 @@ int  i2c_path_to_busno(char * path) {
 // For testing situation  where 2 displays have the same EDID, e.g. LG displays
 Byte * first_edid = NULL;
 #endif
+
+bool sysfs_quick_test = false;
+
 

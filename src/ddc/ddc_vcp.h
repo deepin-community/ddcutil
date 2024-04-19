@@ -1,14 +1,16 @@
-/** \file ddc_vcp.c
+/** \file ddc_vcp.h
  *  Virtual Control Panel access
+ *  Basic functions to get and set single values and save current settings.
  */
 
-// Copyright (C) 2014-2018 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DDC_VCP_H_
 #define DDC_VCP_H_
 
 /** \cond */
+#include <stdbool.h>
 #include <stdio.h>
 
 #include "util/error_info.h"
@@ -21,6 +23,7 @@
 #include "vcp/vcp_feature_codes.h"
 #include "vcp/vcp_feature_values.h"
 
+extern bool enable_mock_data;
 
 bool
 ddc_set_verify_setvcp(
@@ -42,8 +45,8 @@ ddc_set_nontable_vcp_value(
 Error_Info *
 ddc_set_vcp_value(
       Display_Handle *          dh,
-      DDCA_Any_Vcp_Value *        vrec,
-      DDCA_Any_Vcp_Value **       newval_loc);
+      DDCA_Any_Vcp_Value *      vrec,
+      DDCA_Any_Vcp_Value **     newval_loc);
 
 Error_Info *
 ddc_get_table_vcp_value(

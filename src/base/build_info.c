@@ -1,39 +1,158 @@
 /** \file build_info.c
  *
- *  Build Information: version, build timestamp, etc.
+ *  Build Information: version, build options etc.
+ *
+ *  This file hides the quirks and redundancies in configure.ac.
+ *  It is the single source of version information for all of
+ *  ddcutil. In particular, it handles how an optional version
+ *  suffix (e.g. RC1) is appended to the version string.
  */
 
-/* build_info.c
- *
- * <copyright>
- * Copyright (C) 2014-2018 Sanford Rockowitz <rockowitz@minsoft.com>
- *
- * Licensed under the GNU General Public License Version 2
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- * </endcopyright>
- */
+// Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <config.h>
+#include "config.h"
 
+#include <glib-2.0/glib.h>
+
+#include "util/report_util.h"
 #include "base/build_info.h"
 
-const char * BUILD_VERSION = VERSION;      /**< ddcutil version */
 
-// TODO: patch dummy values at link time
-// const char * BUILD_DATE = __DATE__;
-const char * BUILD_DATE = "mmm dd yyyy";   /**<  build date, to be patched at link time */
-// const char * BUILD_TIME = __TIME__;
-const char * BUILD_TIME = "hh:mm:ss";      /**< build time, to be patched at link time */
+/** Returns the base ddcutil version as a string, e.g. 1.2.3
+ *
+ *  \return  ddcutil version string, do not free
+ */
+const char * get_base_ddcutil_version() {
+   return VERSION;
+}
+
+
+/** Returns the ddcutil version suffix, e.g. "dev".
+ *
+ *  \return version suffix, "" if no suffix. Do not free.
+ */
+const char * get_ddcutil_version_suffix() {
+   return VERSION_VSUFFIX;
+}
+
+
+/** Returns the full ddcutil version, e.g. "1.2.3", "1.2.3-dev".
+ *
+ *  \return full ddcutil version, do not free.
+ */
+const char * get_full_ddcutil_version() {
+   static char full_ddcutil_version[20] = {0};
+   if (full_ddcutil_version[0] == '\0') {
+      g_strlcpy( full_ddcutil_version, VERSION, 20);
+      if (strlen(VERSION_VSUFFIX) > 0) {
+         g_strlcat(full_ddcutil_version, "-", 20);
+         g_strlcat(full_ddcutil_version, VERSION_VSUFFIX, 20);
+      }
+   }
+   return full_ddcutil_version;
+}
+
+
+/** Reports build options used.
+ *
+ *  \depth logical indentation depth
+ */
+void report_build_options(int depth) {
+   int d1 = depth+1;
+   rpt_label(depth, "General Build Options:");
+
+// doesn't work, fails if option name undefined
+// #define REPORT_BUILD_OPTION(_name) rpt_vstring(d1, "%-20s %s", #_name ":", ( _name ## "+0" ) ? "Set" : "Not Set" )
+
+#define IS_SET(_name) \
+      rpt_vstring(d1, "%-24s Defined", #_name ":");
+#define NOT_SET(_name) \
+      rpt_vstring(d1, "%-24s Not defined", #_name ":");
+
+#ifdef BUILD_SHARED_LIB
+   IS_SET(BUILD_SHARED_LIB);
+#else
+   NOT_SET(BUILD_SHARED_LIB);
+#endif
+
+#ifdef ENABLE_ENVCMDS
+   IS_SET(ENABLE_ENVCMDS);
+#else
+   NOT_SET(ENABLE_ENVCMDS);
+#endif
+
+#ifdef ENABLE_FAILSIM
+   IS_SET(ENABLE_FAILSIM);
+#else
+   NOT_SET(ENABLE_FAILSIM);
+#endif
+
+#ifdef ENABLE_UDEV
+   IS_SET(ENABLE_UDEV);
+#else
+   NOT_SET(ENABLE_UDEV);
+#endif
+
+#ifdef USE_X11
+   IS_SET(USE_X11);
+#else
+   NOT_SET(USE_X11);
+#endif
+
+#ifdef USE_LIBDRM
+   IS_SET(USE_LIBDRM);
+#else
+   NOT_SET(USE_LIBDRM);
+#endif
+
+#ifdef ENABLE_USB
+   IS_SET(ENABLE_USB);
+#else
+   NOT_SET(ENABLE_USB);
+#endif
+
+#ifdef UNUSED
+#ifdef ENABLE_TRACE
+   IS_SET(ENABLE_TRACE);
+#else
+   NOT_SET(ENABLE_TRACE);
+#endif
+#endif
+
+#ifdef WITH_ASAN
+   IS_SET(WITH_ASAN);
+#else
+   NOT_SET(WITH_ASAN);
+#endif
+
+   rpt_nl();
+
+   rpt_label(depth, "Private Build Options:");
+
+#ifdef TARGET_LINUX
+   IS_SET(TARGET_LINUX);
+#else
+   NOT_SET(TARGET_LINUX);
+#endif
+
+#ifdef TARGET_BSD
+   IS_SET(TARGET_BSD);
+#else
+   NOT_SET(TARGET_BSD);
+#endif
+
+#ifdef INCLUDE_TESTCASES
+   IS_SET(INCLUDE_TESTCASES);
+#else
+   NOT_SET(INCLUDE_TESTCASES);
+#endif
+
+#ifdef STATIC
+   IS_SET(STATIC);
+#else
+   NOT_SET(STATIC);
+#endif
+
+   rpt_nl();
+}

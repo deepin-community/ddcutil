@@ -1,14 +1,14 @@
-/** \file sleep.c
- * Basic Sleep Services
+/** @file sleep.c Basic Sleep Services
  *
  * Most of **ddcutil's** elapsed time is spent in sleeps mandated by the
  * DDC protocol. Basic sleep invocation is centralized here to perform sleep
  * tracing and and maintain sleep statistics.
  */
 
-// Copyright (C) 2014-2019 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#define _GNU_SOURCE  // for usleep()
 
 /** \cond */
 #include <glib-2.0/glib.h>
@@ -107,7 +107,7 @@ void sleep_millis(int milliseconds) {
  * \param filename     name of file from which sleep was invoked
  * \param message      text to be appended to trace message
  */
-void sleep_millis_with_tracex(
+void sleep_millis_with_trace(
         int          milliseconds,
         const char * func,
         int          lineno,
@@ -119,8 +119,9 @@ void sleep_millis_with_tracex(
    if (!message)
       message = "";
 
-   dbgtrc((debug) ? 0xff : DDCA_TRC_SLEEP,
-           func, lineno, filename, "Sleeping for %d milliseconds. %s", milliseconds, message);
+   DBGTRC_NOPREFIX(debug, DDCA_TRC_SLEEP,
+                   "Sleeping for %d milliseconds. %s", milliseconds, message);
 
-   sleep_millis(milliseconds);
+   if (milliseconds > 0)
+      sleep_millis(milliseconds);
 }

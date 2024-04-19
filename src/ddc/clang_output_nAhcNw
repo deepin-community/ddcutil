@@ -1,0 +1,4 @@
+ddc_displays.c:721:25: error: incompatible integer to pointer conversion assigning to 'Parsed_Edid *' from 'int' [-Wint-conversion]
+            dref->pedid = copy_parsed_edid(businfo->edid);    // needed?
+                        ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1 error generated.

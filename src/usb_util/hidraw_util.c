@@ -1,15 +1,16 @@
 /** @file hidraw_util.c
  */
 
-// Copyright (C) 2014-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2021 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <config.h>
 
+#include <assert.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <glib.h>
+#include <glib-2.0/glib.h>
 #include <libudev.h>
 #include <linux/hidraw.h>
 #include <linux/input.h>
@@ -107,6 +108,9 @@ void probe_hidraw_device(char * devname, bool show_monitors_only,  int depth) {
    /* Open the Device with non-blocking reads. In real life,
       don't use a hard coded path; use libudev instead. */
    fd = open(devname, O_RDWR|O_NONBLOCK);
+   // open() returns < 0 for error, > 0 if success,
+   // assert() avoids coverity flagging resource leak
+   assert(fd != 0);
 
    if (fd < 0) {
       rpt_vstring(depth, "Unable to open device %s: %s", devname, strerror(errno));

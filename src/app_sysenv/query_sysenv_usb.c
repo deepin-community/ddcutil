@@ -1,4 +1,4 @@
-/** \file query_sysenv_usb.c
+/** @file query_sysenv_usb.c
  *  Probe the USB environment
  */
 
@@ -72,7 +72,7 @@ static void probe_uhid(int depth) {
    int d2 = depth+2;
 
    bool debug = false;
-   DBGMSF0(debug, "Starting");
+   DBGMSF(debug, "Starting");
 
    struct dirent * ep;
    char * dirname = "/sys/kernel/debug/hid/";
@@ -133,7 +133,7 @@ static void probe_uhid(int depth) {
       closedir(dp);
    }
 
-   DBGMSF0(debug, "Done");
+   DBGMSF(debug, "Done");
 }
 
 
@@ -241,7 +241,7 @@ static void probe_hiddev(int depth) {
                 if (b0) {
                    Buffer * edid_buffer = hiddev_get_edid(fd);
                    if (edid_buffer) {
-                      Parsed_Edid * parsed_edid = create_parsed_edid(edid_buffer->bytes);  // copies bytes
+                      Parsed_Edid * parsed_edid = create_parsed_edid2(edid_buffer->bytes, "USB");  // copies bytes
                       if (!parsed_edid) {
                          rpt_label(d1, "get_hiddev_edid() returned invalid EDID");
                          // if debug or verbose, dump the bad edid  ??
@@ -271,19 +271,17 @@ static void probe_hiddev(int depth) {
 }
 
 
-/* Report information about USB connected monitors
- *
- * Arguments:    none
- *
- * Returns:      nothing
- */
-static void query_usb_monitors() {
-   rpt_nl();
-   rpt_vstring(0, "Checking for USB connected monitors...");
-
+/** Master function to query USB aspects of the system environment
+  */
+void query_usbenv() {
    DDCA_Output_Level output_level = get_output_level();
 
+   rpt_label(0, "The following tests probe for monitors that use USB for VCP communication...");
    rpt_nl();
+
+   rpt_vstring(0, "Checking for USB connected monitors...");
+   rpt_nl();
+
    rpt_vstring(1, "Using lsusb to summarize USB devices...");
    execute_shell_cmd_rpt("lsusb|sort", 2);
    rpt_nl();
@@ -371,13 +369,3 @@ static void query_usb_monitors() {
    rpt_vstring(0, "Checking for USB connected monitors complete");
 }
 
-
-/* Master function to query USB aspects of the system environment
- *
- * Arguments:    none
- *
- * Returns:      nothing
- */
-void query_usbenv() {
-   query_usb_monitors();
-}

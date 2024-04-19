@@ -4,7 +4,7 @@
  * reads and writes for completion.
  */
 
-// Copyright (C) 2014-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DDC_MULTI_PART_IO_H_
@@ -20,13 +20,17 @@
 #include "base/displays.h"
 #include "base/status_code_mgt.h"
 
+#include "ddc/ddc_packet_io.h"
+
+//temp:
+extern int multi_part_null_adjustment_millis;
 
 Error_Info *
 multi_part_read_with_retry(
    Display_Handle * dh,
    Byte             request_type,
    Byte             request_subtype,   // VCP feature code for table read, ignore for capabilities
-   bool             all_zero_response_ok,
+   DDC_Write_Read_Flags write_read_flags,
    Buffer**         ppbuffer);
 
 Error_Info *

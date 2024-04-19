@@ -1,4 +1,9 @@
-# to automatically update libtool script if it becomes out of date
+# Top level Makefile.am
+
+# Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+# To automatically update libtool script if it becomes out of date
 LIBTOOL_DEPS = @LIBTOOL_DEPS@
 
 # From autoconf manual: 
@@ -10,66 +15,43 @@ LIBTOOL_DEPS = @LIBTOOL_DEPS@
 # Introspection does this. 
 ACLOCAL_AMFLAGS = -I m4 ${ACLOCAL_FLAGS}
 
-
-EXTRA_DIST =  README.md NEWS.md
-
-# if ENABLE_GOBJECT_COND
-DISTCHECK_CONFIGURE_FLAGS = --enable-introspection
-EXTRA_DIST += m4/introspection.m4 
-# endif
+DIST_SUBDIRS = src man data docs 
+EXTRA_DIST =  README.md NEWS.md CHANGELOG.md
+EXTRA_DIST += m4/ax_prog_doxygen.m4 
 
 if USE_DOXYGEN
 DOXYDIR = docs
 endif
 
-
-
-# doc_DATA = AUTHORS COPYING NEWS.md README.md ChangeLog
-
 SUBDIRS = src man data  $(DOXYDIR)
 
+# if ENABLE_GOBJECT_COND
+DISTCHECK_CONFIGURE_FLAGS = --enable-introspection
+# endif
+EXTRA_DIST += m4/introspection.m4 
 
-# The proper location for pkgconfig files is ambiguous, and the 
-# subject of much discussion.  .
-# However, it appears that: 
-#   - /usr/lib64/pkgconfig should hold x64 specific pkgconfig files
-#   - /usr/lib/pkgconfig should hold i386 specific pkgconfig files
-#   - /usr/share/pkgconfig should hold architecture agnostic pkgconfig files
-#
-# The tail wags the dog. libddcutil-dev can contain
-#   usr/*/pkgconfig
-# or 
-#   usr/lib/x86_64-linux-gnu/pkgconfig
-# but there's no way to or these two statements. 
-#
-# When building on OBS, the same libddcutil-dev.install is used for all (Debian based) builds, 
-# and if using $(libdir) the location of ddcutil.pc will depend on platform, e.g. 
-# some times it will be /usr/lib/x86_64-linux-gnu/pkgconfig, sometimes something else. 
-# 
-# Note the the entry for ddcutil.pc in the Debian .install file needs
-# to be kept in sync with where autotools puts the files.
+# install-data-local:
+#	@echo "(Makefile) install-data-local):"
+#	@echo "  docdir                 = $(docdir)"
 
 if ENABLE_SHARED_LIB_COND
-   # pkgconfigdir = $(datadir)/pkgconfig
-   pkgconfigdir = ${libdir}/pkgconfig
-   pkgconfig_DATA = ddcutil.pc
-
-   # cmakedir = $(datadir)/cmake/Modules
-   # cmake_DATA = FindDDCUtil.cmake
-   # EXTRA_DIST += FindDDCUtil.cmake
-   # cmake_DATA = data/usr/share/cmake/Modules/FindDDCUtil.cmake
-endif
-
-if ENABLE_SHARED_LIB_COND
-libddcdocdir = $(datarootdir)/doc/libddcutil
+  libddcdocdir = $(datarootdir)/doc/libddcutil
 # libddcdoc_DATA = AUTHORS
 endif
 
-
 dist-hook:
 	echo "(Makefile) Executing dist-hook..."
-	chmod a-x AUTHORS COPYING README.md
-
+	chmod a-x ${distdir}/AUTHORS ${distdir}/COPYING ${distdir}/README.md
+	find ${distdir}  -name "*~"    -exec rm -v {} \;
+	find ${distdir}  -name "*.ctl" -exec rm -v {} \;
+	find ${distdir}  -name "*.lst" -exec rm -v {} \;
+	find ${distdir}  -name "*.la"  -exec rm -v {} \;
+	find ${distdir}  -name "*.old" -exec rm -v {} \;
+	find ${distdir}  -name "*.new" -exec rm -v {} \;
+	find ${distdir}  -name "*.tmp" -exec rm -v {} \;
+	find ${distdir}  -name "*old"  -type d -prune -exec rm -fv {} \;
+	find ${distdir}  -name "*new"  -type d -prune -exec rm -fv {} \;
+	find ${distdir}  -name ".gitignore"    -exec rm -v {} \;
 
 # Too many false positives: 
 #  alpha.clone.CloneChecker
@@ -101,58 +83,19 @@ clang:
 # 	$(foreach v, $(.VARIABLES), @echo "$v = $$v")
 show:
 	@echo "---> Show variables"
-	@echo "Set by AM_PATH_PYTHON:"
-	@echo "  PYTHON               = $(PYTHON) "
-	@echo "  PYTHON_PREFIX        = $(PYTHON_PREFIX) "
-	@echo "  PYTHON_EXEC_PREFIX   = $(PYTHON_EXEC_PREFIX) "
-	@echo "  pythondir            = $(pythondir) "
-	@echo "  pkgpythondir         = $(pkgpythondir) "
-	@echo "  pyexecdir            = $(pyexecdir) "
-	@echo "  pkgpyexecdir         = $(pkgpyexecdir) "
-	@echo ""
-	@echo "Explicitly set:"
-	@echo "  PYTHONDIR            = $(PYTHONDIR) "
-	@echo "  PKGPYTHONDIR         = $(PKGPYTHONDIR) "
-	@echo "  PYEXECDIR            = $(PYEXECDIR) "
-	@echo "  PKGPYEXECDIR         = $(PKGPYEXECDIR) "
-	@echo ""
-	@echo "Set by AX_PYTHON:"
-	@echo "  PYTHON_BIN           = $(PYTHON_BIN), @PYTHON_BIN@ "
-	@echo "  PYTHON_INCLUDE_DIR   = $(PYTHON_INCLUDE_DIR) "
-	@echo "  PYTHON_LIB           = $(PYTHON_LIB) "
-	@echo ""
-	@echo "Set by AX_PYTHON_DEVEL:"
-	@echo "  PYTHON_CPPFLAGS      = $(PYTHON_CPPFLAGS), @PYTHON_CPPFLAGS@ "
-	@echo "  PYTHON_LIBS          = $(PYTHON_LIBS) "
-	@echo "  PYTHON_LDFLAGS       = $(PYTHON_LDFLAGS)"
-	@echo "  PYTHON_EXTRA_LIBS    = $(PYTHON_EXTRA_LIBS) "
-	@echo "  PYTHON_EXTRA_LDFLAGS = $(PYTHON_EXTRA_LDFLAGS) "
-	@echo "  PYTHON_SITE_PKG      = $(PYTHON_SITE_PKG)"
-	@echo "  PYTHON_SITE_PKG_EXEC = $(PYTHON_SITE_PKG_EXEC)"
-	@echo "  PYTHON_CFLAGS        = $(PYTHON_CFLAGS)"
-	@echo ""
-	@echo "Set by AX_SWIG_PYTHON:"
-	@echo "  AX_SWIG_PYTHON_CPPFLAGS = $(AX_SWIG_PYTHON_CPPFLAGS), @AX_SWIG_PYTHON_CPPFLAGS@"
-	@echo "  AX_SWIG_PYTHON_OPT      = $(AS_SWIG_PYTHON_OPT)"
-	@echo "  AX_SWIG_PYTHON_LIBS     = $(AX_SWIG_PYTHON_LIBS)"
-	@echo ""
-	@echo "Set by AX_PKG_SWIG:"
-	@echo "  SWIG                    = $(SWIG), @SWIG@"
-	@echo "  SWIG_LIB                = $(SWIG_LIB)"
 	@echo ""
 	@echo "Set by PKG_CHECK_MODULES:"
-	@echo "  PYTHON_CFLAGS           = $(PYTHON_CFLAGS), @PYTHON_CFLAGS@)"
-	@echo "  PYTHON_LIBS             = $(PYTHON_LIBS)"
 	@echo "  GLIB_CFLAGS             = $(GLIB_CFLAGS) "
 	@echo "  GLIB_LIBS               = $(GLIB_LIBS)"
+	@echo "  JANSSON_LIBS            = $(JANSSON_LIBS)"
+	@echo "  JANSSON_CFLAGS          = $(JANSSON_CFLAGS)"
+
 	@echo "  UDEV_CFLAGS             = $(UDEV_CFLAGS)"
 	@echo "  UDEV_LIBS               = $(UDEV_LIBS)"
 	@echo "  SYSTEMD_CFLAGS          = $(SYSTEMD_CFLAGS)"
 	@echo "  SYSTEMD_LIBS            = $(SYSTEMD_LIBS)" 
 	@echo "  LIBUSB_CFLAGS           = $(LIBUSB_CFLAGS)"
 	@echo "  LIBUSB_LIBS             = $(LIBUSB_LIBS)"
-	@echo "  GOBJECT_CFLAGS          = $(GOBJECT_CFLAGS)"
-	@echo "  GOBJECT_LIBS            = $(GOBJECT_LIBS)"
 	@echo ""
 	@echo "Addtional:"
 	@echo "  prefix                  = $(prefix)"
@@ -161,8 +104,6 @@ show:
 	@echo "  libexecdir              = $(libexecdir)"
 	@echo "  top_srcdir              = $(top_srcdir)"
 	@echo "  srcdir                  = $(srcdir)"
-	@echo "  pythondir               = $(pythondir)"
-	@echo "  pyexecdir               = $(pyexecdir)"
 	@echo "  pkgconfigdir:           = ${pkgconfigdir}"
 	@echo ""
 	@echo "  CFLAGS                  = $(CFLAGS)"
@@ -172,7 +113,7 @@ show:
 .PHONY: clang show
 
 # ldconfig fails when executed in pbuilder due to permissions
-# just have to tell users to run in manually
+# just have to tell users to run it manually
 
 # install-exec-local:
 # 	@echo "(install-exec-local):"
@@ -182,20 +123,19 @@ show:
 # 	@echo "(uninstall-local):="
 #	ldconfig
 
-install-data-local:
-	@echo "(Makefile) install-data-local):"
-	@echo "  docdir                 = $(docdir)"
 
-
-
-install-cmake-local:
-	@echo "(Makefile) install-cmake-local):"
-	@echo "  cmakedir                 = $(cmakedir)"
-
-
-# rpmarch=`$(RPM) --showrc | grep "^build arc" | \
-# 	sed 's/\(.*: \)\(.*\)/\2/'`; \
-#	echo "$$rpmarch" ;\
-#test -z "obs/$$rpmarch" || \
-#	( mv obs/$$rpmarch/* . && rm -rf /obs/$$rpmarch )
-#rm -rf obs/$(distdir)
+# Rename to "all-local" for development
+all-local-disabled:
+	@echo ""
+	@echo "(Makefile:all-local) Variable values:"
+	@echo "   CLEANFILES:       $(CLEANFILES)"
+	@echo "   CFLAGS:           $(CFLAGS)"
+	@echo "   AM_CFLAGS:        $(AM_CFLAGS)"
+	@echo "   CPPFLAGS:         $(CPPFLAGS)"
+	@echo "   AM_CPPFLAGS:      $(AM_CPPFLAGS)"
+	@echo "   AUTOMAKE_OPTIONS: $(AUTOMAKE_OPTIONS)"
+	@echo "   MAKELEVEL:        $(MAKELEVEL)"
+	@echo "   MAKEFLAGS:        $(MAKEFLAGS)"
+	@echo "   V:                $(V)"
+	@echo "   AM_CFLAGS_STD:    $(AM_CFLAGS_STD)"
+	@echo ""

@@ -3,8 +3,10 @@
  *  Timestamp management
  */
 
-// Copyright (C) 2014-2018 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
+
+#define _GNU_SOURCE
 
 /** \cond */
 #include <assert.h>
@@ -31,8 +33,6 @@ bool  tracking_timestamps = false;    // set true to enable timestamp history
 // static long  timestamp[MAX_TIMESTAMPS];
 static int   timestamp_ct = 0;
 static uint64_t * timestamp_history = NULL;
-
-
 
 
 /** Returns the current value of the realtime clock in nanoseconds.
@@ -143,25 +143,81 @@ uint64_t elapsed_time_nanosec() {
 }
 
 
-/** Returns the elapsed time since start of program execution
+static uint64_t ipow(const uint64_t base, guint n)
+{
+   int p = base;
+   if (n == 0)
+      return 1;
+   for (int i = 1; i < n; ++i)
+      p *= base;
+   return p;
+}
+
+
+/** Returns the elapsed time in seconds since start of program execution
  *  as a formatted, printable string.
  *
  *  The string is built in a thread specific private buffer.  The returned
  *  string is valid until the next call of this function in the same thread.
  *
+ *  @param  precision  number of digits after the decimal point
  *  @return formatted elapsed time
  */
-char * formatted_elapsed_time() {
+char * formatted_elapsed_time_t(guint precision) {
    static GPrivate  formatted_elapsed_time_key = G_PRIVATE_INIT(g_free);
    char * elapsed_buf = get_thread_fixed_buffer(&formatted_elapsed_time_key, 40);
 
-   uint64_t et_nanos = elapsed_time_nanosec();
-   uint64_t isecs    = et_nanos/ (1000 * 1000 * 1000);
-   uint64_t imillis  = et_nanos/ (1000 * 1000);
-   // printf("(%s) et_nanos=%"PRIu64", isecs=%"PRIu64", imillis=%"PRIu64"\n", __func__,  et_nanos, isecs, imillis);
-   snprintf(elapsed_buf, 40, "%3"PRIu64".%03"PRIu64"", isecs, imillis - (isecs*1000) );
+   uint64_t et_nanos         = elapsed_time_nanosec();
+   uint64_t isecs            = et_nanos/ (1000 * 1000 * 1000);
+   uint64_t adjusted_isecs   = isecs * ipow(10,precision);
+   uint64_t fractional_units = et_nanos / ipow(10, (9-precision));
+
+   // printf("(%s) et_nanos=%"PRIu64", isecs=%"PRIu64", fractional_units=%"PRIu64", adjusted_isecs=%"PRIu64"\n",
+   //       __func__,  et_nanos,       isecs,                      fractional_units, adjusted_isecs);
+   snprintf(elapsed_buf, 40, "%3"PRIu64".%0*"PRIu64"", isecs, precision, (fractional_units-adjusted_isecs) );
 
    // printf("(%s) |%s|\n", __func__, elapsed_buf);
    return elapsed_buf;
 }
+
+
+/** Returns returns a time in nanoseconds as a formatted, printable string
+ *  in the form SECONDS.MILLISECONDS.
+ *
+ *  The string is built in a thread specific private buffer.  The returned
+ *  string is valid until the next call of this function in the same thread.
+ *
+ *  @param  start   start time, in nanoseconds
+ *  @param  end     end time, in nanoseconds
+ *  @return formatted time difference
+ */
+char *   formatted_time_t(uint64_t nanos) {
+   static GPrivate  formatted_time_key = G_PRIVATE_INIT(g_free);
+   char * elapsed_buf = get_thread_fixed_buffer(&formatted_time_key, 40);
+
+   uint64_t isecs    = nanos/ (1000 * 1000 * 1000);
+   uint64_t imillis  = nanos/ (1000 * 1000);
+   snprintf(elapsed_buf, 40, "%3"PRIu64".%03"PRIu64"", isecs, imillis - (isecs*1000) );
+   return elapsed_buf;
+}
+
+
+/** Thread safe function that returns a string representation of an epoch
+ *  time value. The returned value is valid until the next call to this
+ *  function on the current thread.
+ *
+ *  \param  epoch_time
+ *  \return string representation
+ */
+char * formatted_epoch_time_t(long epoch_seconds) {
+   static GPrivate  formatted_epoch_time_key = G_PRIVATE_INIT(g_free);
+   char * buf = get_thread_fixed_buffer(&formatted_epoch_time_key, 40);
+
+   struct tm broken_down_time;
+   localtime_r(&epoch_seconds, &broken_down_time);
+   strftime(buf, 40, "%b %d %T", &broken_down_time);
+
+   return buf;
+}
+
 

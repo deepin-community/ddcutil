@@ -1,14 +1,15 @@
-/** \file execution_stats.c
+/** @file execution_stats.c
+ *
  *  Record execution statistics, mainly the count and elapsed time of system calls.
  */
 
-// Copyright (C) 2014-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 /** \cond */
 #include <assert.h>
 #include <errno.h>
-#include <glib.h>
+#include <glib-2.0/glib.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -62,15 +63,12 @@ typedef struct {
 // Global Variables
 //
 
-// static IO_Event_Type        last_io_event;
-// static long                 last_io_timestamp = -1;
 static uint64_t             program_start_timestamp;
 static uint64_t             resettable_start_timestamp;
-static Status_Code_Counts * primary_error_code_counts;
-static Status_Code_Counts * retryable_error_code_counts;
+static Status_Code_Counts * primary_error_code_counts = NULL;
+static Status_Code_Counts * retryable_error_code_counts = NULL;
 static GMutex               status_code_counts_mutex;
 static GMutex               global_stats_mutex;
-
 
 static bool                 debug_status_code_counts_mutex  = false;
 static bool                 debug_global_stats_mutex = false;
@@ -83,17 +81,19 @@ static bool                 debug_sleep_stats_mutex = false;
 
 static
 IO_Event_Type_Stats io_event_stats[] = {
-      // id           name             desc           nanosec  count
-      {IE_WRITE,      "IE_WRITE",      "write calls",       0, 0},
-      {IE_READ,       "IE_READ",       "read calls",        0, 0},
-      {IE_WRITE_READ, "IE_WRITE_READ", "write/read calls",  0, 0},
-      {IE_OPEN,       "IE_OPEN",       "open file calls",   0, 0},
-      {IE_CLOSE,      "IE_CLOSE",      "close file calls",  0, 0},
-      {IE_OTHER,      "IE_OTHER",      "other I/O calls",   0, 0},
+   // id             name               desc                  nanosec  count
+   {IE_FILEIO_WRITE, "IE_FILEIO_WRITE", "i2c writes using write()", 0, 0},
+   {IE_FILEIO_READ,  "IE_FILEIO_READ",  "i2c reads using read()",   0, 0},
+   {IE_IOCTL_WRITE,  "I2_IOCTL_WRITE",  "i2c writes using ioctl",   0, 0},
+   {IE_IOCTL_READ,   "I2_IOCTL_READ",   "i2c reads using ioctl",    0, 0},
+   {IE_OPEN,         "IE_OPEN",         "open file calls",          0, 0},
+   {IE_CLOSE,        "IE_CLOSE",        "close file calls",         0, 0},
+   {IE_OTHER,        "IE_OTHER",        "other I/O calls",          0, 0},
 };
 #define IO_EVENT_TYPE_CT (sizeof(io_event_stats)/sizeof(IO_Event_Type_Stats))
 static GMutex io_event_stats_mutex;
 static bool   debug_io_event_stats_mutex;
+
 
 static
 void reset_io_event_stats() {
@@ -117,7 +117,6 @@ void reset_io_event_stats() {
  * @return symbolic name
  */
 const char * io_event_name(IO_Event_Type event_type) {
-   // return io_event_names[event_type];
    return io_event_stats[event_type].name;
 }
 
@@ -144,7 +143,8 @@ static int total_io_event_count() {
    return total;
 }
 
-// unused
+
+#ifdef UNUSED
 uint64_t total_io_event_nanosec() {
    uint64_t total = 0;
    int ndx = 0;
@@ -152,6 +152,7 @@ uint64_t total_io_event_nanosec() {
       total += io_event_stats[ndx].call_nanosec;
    return total;
 }
+#endif
 
 
 // No effect on program logic, but makes debug messages easier to scan
@@ -163,7 +164,7 @@ uint64_t normalize_timestamp(uint64_t timestamp) {
 /** Called immediately after an I2C IO call, this function updates the total
  *  number of calls and elapsed time for categories of calls.
  *
- *  @param  event_type        e.g. IE_WRITE
+ *  @param  event_type        e.g. IE_IOCTL_WRITE
  *  @param  location          function name
  *  @param  start_time_nanos  starting time of the event in nanoseconds
  *  @param  end_time_nanos    ending time of the event in nanoseconds
@@ -210,7 +211,7 @@ void report_io_call_stats(int depth) {
       if (io_event_stats[ndx].call_count > 0) {
          IO_Event_Type_Stats* curstat = &io_event_stats[ndx];
          char buf[100];
-         snprintf(buf, 100, "%-17s (%s)", curstat->desc, curstat->name);
+         snprintf(buf, 100, "%-22s (%s)", curstat->desc, curstat->name);
          rpt_vstring(d1, "%-40s  %4d  %10" PRIu64 "  (%13" PRIu64 ")",
                      buf,
                      curstat->call_count,
@@ -235,23 +236,20 @@ typedef struct {
    uint64_t nanos;
 } Non_Sleep_Call_Totals;
 
+
 Non_Sleep_Call_Totals
 get_non_sleep_call_totals () {
    Non_Sleep_Call_Totals totals;
    totals.count = 0;
    totals.nanos = 0;
-    int ndx = 0;
-    // int max_name_length = max_event_name_length();
-
-    for (;ndx < IO_EVENT_TYPE_CT; ndx++) {
-       if (io_event_stats[ndx].call_count > 0) {
-          IO_Event_Type_Stats* curstat = &io_event_stats[ndx];
-
-          totals.count += curstat->call_count;
-          totals.nanos += curstat->call_nanosec;
-       }
-    }
-    return totals;
+   for (int ndx = 0; ndx < IO_EVENT_TYPE_CT; ndx++) {
+      if (io_event_stats[ndx].call_count > 0) {
+         IO_Event_Type_Stats* curstat = &io_event_stats[ndx];
+         totals.count += curstat->call_count;
+         totals.nanos += curstat->call_nanosec;
+      }
+   }
+   return totals;
  }
 
 
@@ -276,12 +274,25 @@ Status_Code_Counts * new_status_code_counts(char * name) {
    pcounts->error_counts_hash =  g_hash_table_new(NULL,NULL);
    pcounts->total_status_counts = 0;
    if (name)
-      pcounts->name = strdup(name);
+      pcounts->name = g_strdup(name);
    g_mutex_unlock(&status_code_counts_mutex);
 
    DBGMSF(debug, "Done");
    return pcounts;
 }
+
+
+void free_status_code_counts(Status_Code_Counts * counts) {
+   bool debug = false;
+   DBGMSF(debug, "counts=%p", counts);
+   if (counts) {
+      g_hash_table_destroy(counts->error_counts_hash);
+      g_free(counts->name);
+      free(counts);
+   }
+   DBGMSF(debug, "Done");
+}
+
 
 static void
 reset_status_code_counts_struct(Status_Code_Counts * pcounts) {
@@ -299,13 +310,11 @@ reset_status_code_counts_struct(Status_Code_Counts * pcounts) {
 }
 
 
-
 static void
 reset_status_code_counts() {
    reset_status_code_counts_struct(primary_error_code_counts);
    reset_status_code_counts_struct(retryable_error_code_counts);
 }
-
 
 
 static
@@ -326,7 +335,10 @@ int log_any_status_code(Status_Code_Counts * pcounts, int rc, const char * calle
    // DBGMSG("Old count=%d", ct);
 
    // check the new value
-   int newct = GPOINTER_TO_INT(g_hash_table_lookup(pcounts->error_counts_hash,  GINT_TO_POINTER(rc)) );
+#ifndef NDEBUG
+   int newct =
+#endif
+   GPOINTER_TO_INT(g_hash_table_lookup(pcounts->error_counts_hash,  GINT_TO_POINTER(rc)) );
    g_mutex_unlock(&status_code_counts_mutex);
    // DBGMSG("new count for key %d = %d", rc, newct);
    assert(newct == ct+1);
@@ -355,6 +367,7 @@ log_status_code(Public_Status_Code rc, const char * caller_name) {
    log_any_status_code(pcounts, rc, caller_name);
    return rc;
 }
+
 
 /** Log a status code that occurs in a retry loop
  *
@@ -448,6 +461,8 @@ void report_specific_status_counts(Status_Code_Counts * pcounts, int depth) {
 
 
 /** Master function to display status counts
+ *
+ *  @param depth logical_indentation_depth
  */
 void report_all_status_counts(int depth) {
    report_specific_status_counts(primary_error_code_counts, 0);
@@ -492,26 +507,20 @@ int get_true_io_error_count(Status_Code_Counts * pcounts) {
 // Sleep Strategy
 //
 
-
 // Names for Sleep_Event enum values
 static const char * sleep_event_names[] = {
       "SE_WRITE_TO_READ",
-      "SE_POST_OPEN",
       "SE_POST_WRITE",
       "SE_POST_READ",
-      "SE_DDC_NULL",
       "SE_POST_SAVE_SETTINGS",
-      "SE_PRE_EDID",
       "SE_PRE_MULTI_PART_READ",
-      "SE_MULTI_PART_READ_TO_WRITE",
-      "SE_BETWEEN_CAP_TABLE_SEGMENTS",
-      "SE_POST_CAP_TABLE_COMMAND",
-      "SE_OTHER",
+      "SE_POST_CAP_TABLE_SEGMENT",
       "SE_SPECIAL",
      };
 #define SLEEP_EVENT_ID_CT (sizeof(sleep_event_names)/sizeof(char *))
 
-int max_sleep_event_name_size() {
+static int
+max_sleep_event_name_size() {
    int result = 0;
    for (int ndx = 0; ndx < SLEEP_EVENT_ID_CT; ndx++) {
       if (strlen(sleep_event_names[ndx]) > result)
@@ -520,17 +529,22 @@ int max_sleep_event_name_size() {
    return result;
 }
 
-/** Returns the name of sleep event type */
+/** Returns the name of a sleep event type
+ *
+ *  @param event_type sleep event type, e.g. SE_WRITE_TO_READ
+ *  @result
+ * */
 const char * sleep_event_name(Sleep_Event_Type event_type) {
    // ensure sleep_event_names stays in sync with Sync_Event_Type
+#ifndef NDEBUG
    const int sleep_event_type_count = SE_SPECIAL+1;   // relies on values in enum assigned from 0
    assert( SLEEP_EVENT_ID_CT ==  sleep_event_type_count);
+#endif
    return sleep_event_names[event_type];
 }
 
-static int sleep_event_cts_by_id[SLEEP_EVENT_ID_CT];
-static int total_sleep_event_ct = 0;
-
+static int    sleep_event_cts_by_id[SLEEP_EVENT_ID_CT];
+static int    total_sleep_event_ct = 0;
 static GMutex sleep_stats_mutex;
 
 
@@ -546,6 +560,7 @@ void reset_sleep_event_counts() {
 
    DBGMSF(debug, "Done");
 }
+
 
 void record_sleep_event(Sleep_Event_Type event_type) {
    // For better performance, separate mutex for each index in array
@@ -620,7 +635,9 @@ void reset_execution_stats() {
 void report_elapsed_stats(int depth) {
    uint64_t end_nanos = cur_realtime_nanosec();
    if (program_start_timestamp != resettable_start_timestamp) {
+      g_mutex_lock(&global_stats_mutex);    // not really needed, make coverity happy
       uint64_t cur_elapsed_nanos = end_nanos - resettable_start_timestamp;
+      g_mutex_unlock(&global_stats_mutex);
       rpt_vstring(depth,
             "Elapsed milliseconds since last reset (nanosec):%10"PRIu64"  (%13"PRIu64")",
             cur_elapsed_nanos / (1000*1000),
@@ -652,3 +669,16 @@ void report_elapsed_summary(int depth) {
                elapsed_nanos / (1000*1000));
    rpt_nl();
 }
+
+
+
+/** Cleanup at program termination */
+void terminate_execution_stats() {
+   bool debug = false;
+   DBGMSF(debug, "Starting");
+   free_status_code_counts(primary_error_code_counts);
+   free_status_code_counts(retryable_error_code_counts);
+   DBGMSF(debug, "Done");
+}
+
+

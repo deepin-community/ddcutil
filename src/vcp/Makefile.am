@@ -3,15 +3,14 @@ AM_CPPFLAGS =        \
   -I$(top_srcdir)/src \
   -I$(top_srcdir)/src/public
 
-AM_CFLAGS  = -Wall 
-AM_CFLAGS += -Werror
-# vcp_feature_codes.c requires extensive changes if -Wpedantic
-# AM_CFLAGS += -Wpedantic
+AM_CFLAGS = $(AM_CFLAGS_STD)
 
-if ENABLE_CALLGRAPH_COND
-AM_CFLAGS += -fdump-rtl-expand
+if WARNINGS_ARE_ERRORS_COND
+AM_CFLAGS += "-Werror"
 endif
 
+# vcp_feature_codes.c requires extensive changes if -Wpedantic
+# AM_CFLAGS += -Wpedantic
 
 CLEANFILES = \
 *expand
@@ -32,10 +31,9 @@ dist-hook:
 noinst_LTLIBRARIES = libvcp.la
 
 libvcp_la_SOURCES =           \
-ddc_command_codes.c           \
 parse_capabilities.c          \
 parsed_capabilities_feature.c \
+persistent_capabilities.c     \
 vcp_feature_codes.c           \
 vcp_feature_set.c             \
 vcp_feature_values.c    
-

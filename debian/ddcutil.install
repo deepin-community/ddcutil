@@ -1,4 +1,5 @@
 /usr/bin
 /usr/share/man
-/usr/share/ddcutil/data/*rules
-/usr/share/ddcutil/data/*conf
+/usr/share/ddcutil/data
+/usr/lib/udev/rules.d/60-ddcutil*.rules
+/usr/lib/modules-load.d/ddcutil.conf

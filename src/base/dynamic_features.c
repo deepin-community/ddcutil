@@ -3,14 +3,13 @@
  *  Dynamic Feature Record definition, creation, destruction, and conversion
  */
 
-// Copyright (C) 2018-2019 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2018-2022 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
-
-#define _GNU_SOURCE      // for asprintf()
 
 /** \cond */
 #include <assert.h>
 #include <ctype.h>
+#include <glib-2.0/glib.h>
 #include <stdio.h>
 #include <string.h>
 /** \endcond */
@@ -21,14 +20,19 @@
 #include "util/report_util.h"
 #include "util/string_util.h"
 
+#include "base/core.h"
 #include "base/feature_metadata.h"
-
-#include "core.h"
-#include "monitor_model_key.h"
-#include "vcp_version.h"
+#include "base/monitor_model_key.h"
+#include "base/rtti.h"
+#include "base/vcp_version.h"
 
 #include "dynamic_features.h"
 
+//
+// Trace control
+//
+
+static DDCA_Trace_Group TRACE_GROUP = DDCA_TRC_UDF;
 
 //
 // Generic functions that probably belong elsewhere
@@ -40,7 +44,8 @@ typedef struct {
    char * rest;
 } Tokenized;
 
-Tokenized first_word(char * s) {
+Tokenized
+first_word(char * s) {
    // DBGMSG("Starting. s=|%s|", s);
    Tokenized result = {NULL,NULL};
    if (s) {
@@ -65,53 +70,13 @@ Tokenized first_word(char * s) {
    return result;
 }
 
-
-// TODO: modify parse_vcp_value() in app_setvcp.c to use this function.
-//       Move this function to a more general location.
-
-/** Converts a string containing a (possible) hex value to canonical form.
- *
- *  If the value starts with "x" or "X", or ends with "h" or "H", it is
- *  modified to start with "0x".
- *  Otherwise, the returned value is identical to the input value.
- *
- *  @param string_value  value to convert
- *  @return canonicalized value (caller is responsible for freeing)
- *
- *  @remark
- *  Consider converting to a function that uses a thread-specific buffer, making
- *  the returned value valid until the next call to this function on the current
- *  thread.  Would relieve the caller of responsibility for freeing the value.
- */
-
-char * canonicalize_possible_hex_value(char * string_value) {
-   assert(string_value);
-
-   int bufsz = strlen(string_value) + 1 + 1;  // 1 for possible increased length, 1 for terminating null
-   char * buf = calloc(1, bufsz);
-   if (*string_value == 'X' || *string_value == 'x' ) {
-      // increases string size by 1
-      snprintf(buf, bufsz, "0x%s", string_value+1);
-   }
-   else if (*(string_value + strlen(string_value)-1) == 'H' ||
-            *(string_value + strlen(string_value)-1) == 'h' )
-   {
-      // increases string size by 1
-      int newlen = strlen(string_value)-1;
-      snprintf(buf, bufsz, "0x%.*s", newlen, string_value);
-   }
-   else
-      strcpy(buf, string_value);
-   // DBGMSG("string_value=|%s|, returning |%s|", string_value, buf);
-   return buf;
-}
-
 // End of generic functions
 
 
 // Dynamic_Features_Rec
 
-void dbgrpt_dynamic_features_rec(
+void
+dbgrpt_dynamic_features_rec(
       Dynamic_Features_Rec*   dfr,
       int                     depth)
 {
@@ -128,25 +93,24 @@ void dbgrpt_dynamic_features_rec(
    if (dfr->features) {
       rpt_vstring(d1, "features count: %d", g_hash_table_size(dfr->features));
       for (int ndx = 1; ndx < 256; ndx++) {
-         DDCA_Feature_Metadata * cur_feature = g_hash_table_lookup(dfr->features,
+         Dyn_Feature_Metadata * cur_feature = g_hash_table_lookup(dfr->features,
                GINT_TO_POINTER(ndx));
          if (cur_feature)
-            dbgrpt_ddca_feature_metadata(cur_feature, d1);
+            dbgrpt_dyn_feature_metadata(cur_feature, d1);
       }
    }
 }
-
-
 
 
 /** Thread safe function that returns a string representation of a #Dynamic_Features_Rec
  *  suitable for diagnostic messages. The returned value is valid until the
  *  next call to this function on the current thread.
  *
- *  \param  dfr  pointer to #Dynamic_Features_Rec
- *  \return string representation
+ *  @param  dfr  pointer to #Dynamic_Features_Rec
+ *  @return string representation
  */
-char * dfr_repr_t(Dynamic_Features_Rec * dfr) {
+char *
+dfr_repr_t(Dynamic_Features_Rec * dfr) {
    static GPrivate  dfr_repr_key = G_PRIVATE_INIT(g_free);
    char * buf = get_thread_fixed_buffer(&dfr_repr_key, 100);
 
@@ -159,9 +123,14 @@ char * dfr_repr_t(Dynamic_Features_Rec * dfr) {
 }
 
 
-
-
-DDCA_Feature_Metadata *
+/** Gets a #Dyn_Feature_Metadata record from the features hash table
+ *  of a #Dynamic_Features_Rec.
+ *
+ *  @param  dfr          pointer to dynamic feature record
+ *  @param  feature_code feature code
+ *  @return pointer to feature metadata, NULL if not found
+ */
+Dyn_Feature_Metadata *
 get_dynamic_feature_metadata(
       Dynamic_Features_Rec * dfr,
       uint8_t                feature_code)
@@ -169,7 +138,7 @@ get_dynamic_feature_metadata(
    bool debug = false;
    DBGMSF(debug, "dfr=%s, feature_code=0x%02x", dfr_repr_t(dfr), feature_code);
 
-   DDCA_Feature_Metadata * result = NULL;
+   Dyn_Feature_Metadata * result = NULL;
    if (dfr && dfr->features)
       result = g_hash_table_lookup(dfr->features, GINT_TO_POINTER(feature_code));
 
@@ -178,39 +147,48 @@ get_dynamic_feature_metadata(
 }
 
 
+/** Free a #Dyn_Feature_Metadata record.
+ *
+ *  @param data pointer to record
+ *
+ *  This function has signature GDestroyNotify()
+ */
 void
 free_feature_metadata(
-      gpointer data)    // i.e. DDCA_Feature_Metadata *
+      gpointer data)    // i.e. Dyn_Feature_Metadata *
 {
    bool debug = false;
-   DBGMSF(debug, "Starting. DDCA_Feature_Metadata * data = %p", data);
+   DBGTRC_STARTING(debug, TRACE_GROUP, "Starting. Dyn_Feature_Metadata * data = %p", data);
 
-   DDCA_Feature_Metadata * info = (DDCA_Feature_Metadata*) data;
-   assert(memcmp(info->marker, DDCA_FEATURE_METADATA_MARKER, 4) == 0);
+   Dyn_Feature_Metadata * info = (Dyn_Feature_Metadata*) data;
+   assert(info && memcmp(info->marker, DDCA_FEATURE_METADATA_MARKER, 4) == 0);
    // compare vs ddca_free_metadata_contents()
 
    if (debug)
-      dbgrpt_ddca_feature_metadata(info, 2);
+      dbgrpt_dyn_feature_metadata(info, 2);
 
    free(info->feature_desc);
    free(info->feature_name);
    if (info->sl_values) {
+      DBGMSF(debug, "Freeing sl_values table at %p", info->sl_values);
       free_sl_value_table(info->sl_values);
-#ifdef OLD
-      DDCA_Feature_Value_Entry * cur = info->sl_values;
-      for ( ;cur->value_code != 0x00 || cur->value_name; cur++ ) {
-         free(cur->value_name);
-      }
-      free(info->sl_values);      // is this right? freeing a hunk allocated by GPtrArray
-#endif
    }
+   // free latest_sl_values ?
    info->marker[3] = 'x';
    free(info);
 
-   DBGMSF(debug, "Done");
+   DBGTRC_DONE(debug, TRACE_GROUP, "");
 }
 
 
+/** Create a #Dynamic_Feature_Rec
+ *
+ *  @param   mfg_id
+ *  @param   model_name
+ *  @param   product_code
+ *  @param   filename
+ *  @return newly allocated #Dynamic_Features_Rec, caller must free
+ */
 Dynamic_Features_Rec *
 dfr_new(
       const char * mfg_id,
@@ -218,27 +196,38 @@ dfr_new(
       uint16_t     product_code,
       const char * filename)
 {
+   bool debug = false;
+   DBGTRC_STARTING(debug, TRACE_GROUP, "mfg_id -> %s, model_name -> %s, product_code=%d, filename -> %s",
+         mfg_id, model_name, product_code, filename);
+
    assert(mfg_id);
    assert(model_name);
 
    Dynamic_Features_Rec * frec = calloc(1, sizeof(Dynamic_Features_Rec));
    memcpy(frec->marker, DYNAMIC_FEATURES_REC_MARKER, 4);
 
-   frec->mfg_id       = strdup(mfg_id);
-   frec->model_name   = strdup(model_name);
+   frec->mfg_id       = g_strdup(mfg_id);
+   frec->model_name   = g_strdup(model_name);
    frec->product_code = product_code;
+   frec->vspec        = DDCA_VSPEC_UNKNOWN;   // redundant, since set by calloc(), but be explicit
    if (filename)
-      frec->filename  = strdup(filename);
+      frec->filename  = g_strdup(filename);
+
+   DBGTRC_DONE(debug, TRACE_GROUP, "Returning %p", frec);
    return frec;
 }
 
 
+/** Free a #Dynamic_Features_Rec
+ *
+ *  @param frec pointer to record to free, if NULL no operation is performed
+ */
 void
 dfr_free(
       Dynamic_Features_Rec * frec)
 {
    bool debug = false;
-   DBGMSF(debug, "Starting. frec=%p", frec);
+   DBGTRC_STARTING(debug, TRACE_GROUP, "frec=%p", frec);
 
    if (frec) {
       assert(memcmp(frec->marker, DYNAMIC_FEATURES_REC_MARKER, 4) == 0);
@@ -256,18 +245,43 @@ dfr_free(
       free(frec);
    }
 
-   DBGMSF(debug, "Done");
+   DBGTRC_DONE(debug, TRACE_GROUP, "");
 }
 
-//
-// Functions private to create_monitor_dynamic_featuers()
-//
 
-
-static
+/** Wrap a $dfr_free() call in the signature GDestroyNofify.
+ *
+ *  @param p pointer to record to free
+ */
 void
+dfr_gdestroy(gpointer p) {
+   if (p) {
+      Dynamic_Features_Rec * frec = p;
+      assert(memcmp(frec->marker, DYNAMIC_FEATURES_REC_MARKER, 4) == 0);
+      dfr_free(frec);
+   }
+}
+
+
+//
+// Functions private to create_monitor_dynamic_features()
+//
+
+
+/** Creates a #Error_Info using the error location (line number) and
+ *  detail, and appends it to array **errors**..
+ *
+ *  @param errors   GPtrArray of #Error_Info
+ *  @param filename name of file whose lines are being processed
+ *  @param linectr  line number of error
+ *  @param caller   function creating the error message
+ *  @param fmt      message format string
+ *  @param ..       substitution values
+ *  @return newly allocated #Error_Info struct, with status code DDCRC_BAD_DATA
+ */
+static void
 add_error(
-      GPtrArray *  errors,
+      GPtrArray *  errors,      // array of Error_Info
       const char * filename,
       int          linectr,
       const char * caller,
@@ -291,7 +305,7 @@ add_error(
       else {
          final_detail = detail;
       }
-      Error_Info *  err = errinfo_new2(DDCRC_BAD_DATA, caller, final_detail);
+      Error_Info *  err = errinfo_new(DDCRC_BAD_DATA, caller, final_detail);
       g_ptr_array_add(errors, err);
       va_end(args);
 }
@@ -300,11 +314,9 @@ add_error(
    add_error(errors, filename, _linectr, __func__, _fmt, ##__VA_ARGS__)
 
 
-
-static
-bool
+static bool
 attr_keyword(
-      DDCA_Feature_Metadata * cur_feature_metadata,
+      Dyn_Feature_Metadata * cur_feature_metadata,
       char *                  keyword)
 {
    bool debug = false;
@@ -323,7 +335,7 @@ attr_keyword(
    else if (streq(keyword, "CCONT"))
       *pflags |= DDCA_COMPLEX_CONT;
    else if (streq(keyword, "NC"))
-      *pflags |= DDCA_COMPLEX_NC;
+      *pflags |= DDCA_SIMPLE_NC;
    else if (streq(keyword, "T"))
       *pflags |= DDCA_TABLE;
 
@@ -335,8 +347,7 @@ attr_keyword(
 }
 
 
-static
-void
+static void
 switch_bits(
       DDCA_Feature_Flags * pflags,
       uint16_t             old_bit,
@@ -347,11 +358,10 @@ switch_bits(
 }
 
 
-static
-void
+static void
 finalize_feature(
       Dynamic_Features_Rec *  frec,
-      DDCA_Feature_Metadata * cur_feature_metadata,
+      Dyn_Feature_Metadata * cur_feature_metadata,
       GArray *                cur_feature_values,
       const char *            filename,
       GPtrArray *             errors)
@@ -364,10 +374,7 @@ finalize_feature(
       last_entry.value_code = 0x00;
       last_entry.value_name = NULL;
       g_array_append_val(cur_feature_values, last_entry);
-
       cur_feature_metadata->sl_values = (DDCA_Feature_Value_Entry*) cur_feature_values->data;
-      // g_array_free(cur_feature_values, false);
-      // cur_feature_values = NULL;
    }
 
    if ( cur_feature_metadata->feature_flags & (DDCA_RW | DDCA_RO | DDCA_WO) )
@@ -403,15 +410,16 @@ finalize_feature(
  *
  *  @param  mfg_id        3 character manufacturer identifier
  *  @param  model_name    model name
- *  @param  product_code  product code
+ *  @param  product_code  product code, as integer
  *  @param  lines         array of input lines
  *  @param  filename      source file name, for diagnostic messages, may be NULL
- *  @param  dynamic_features_loc where to return newly allocated #Dynamic_Features_Rec,
- *                        set to null if an #Error_Info struct is returned
- *  @return error info struct, NULL if no error
+ *  @param  dynamic_features_loc where to return pointer to newly allocated #Dynamic_Features_Rec,
+ *                               NULL if an #Error_Info struct is returned
+ *  @return pointer to #Error_Info, NULL if no error
+ *          The #Error_Info, and all of its causes, have status code DDCRC_BAD_DATA
  */
 Error_Info *
-create_monitor_dynamic_features(
+create_dynamic_features_rec(
       const char * mfg_id,
       const char * model_name,
       uint16_t     product_code,
@@ -420,7 +428,7 @@ create_monitor_dynamic_features(
       Dynamic_Features_Rec ** dynamic_features_loc)
 {
    bool debug = false;
-   DBGMSF(debug, "Starting. filename=%s", filename);
+   DBGTRC_STARTING(debug, TRACE_GROUP, "filename=%s", filename);
 
    Error_Info * master_err = NULL;
    GPtrArray * errors = g_ptr_array_new();
@@ -430,17 +438,17 @@ create_monitor_dynamic_features(
    bool product_code_seen = false;
    frec->features = g_hash_table_new_full(
                               g_direct_hash,
-                              g_direct_equal,   // g_int_equal,
+                              g_direct_equal,
                               NULL,                     // key_destroy_func
                               free_feature_metadata);   // value_destroy_func
 
-   int     linectr = 0;
-   DDCA_Feature_Metadata * cur_feature_metadata = NULL;
+   Dyn_Feature_Metadata * cur_feature_metadata = NULL;
    GArray * cur_feature_values = NULL;
 
+   int     linectr = 0;
    while ( linectr < lines->len ) {
-      char *  line = g_ptr_array_index(lines,linectr);
-      linectr++;
+      char *  line = g_ptr_array_index(lines,linectr);     // 0  based
+      linectr++;                     // line numbers in error msgs are 1 based
 
       Tokenized t1 = first_word(line);
       if (t1.word && *t1.word != '*' && *t1.word != '#') {
@@ -453,28 +461,26 @@ create_monitor_dynamic_features(
                product_code_seen = true;
                int ival;
                bool ok = str_to_int(t2.word, &ival, 10);
-               // DBGMSG("ival: %d", ival);
                if (!ok) {
                    ADD_ERROR(linectr, "Invalid product_code \"%s\"", t2.word);
                }
                else if (ival != product_code) {
-                  ADD_ERROR(linectr, "Unexpected product_code \"%s\"", t2.word);
+                  ADD_ERROR(linectr, "Unexpected product_code %d, expected %d", ival, product_code);
                }
             }
             else if (streq(t1.word, "MFG_ID")) {
                mfg_id_seen = true;
                if ( !streq(t2.word, mfg_id) ) {
-                  ADD_ERROR(linectr, "Unexpected manufacturer id \"%s\"", t2.word);
+                  ADD_ERROR(linectr, "Unexpected manufacturer id \"%s\", expected \"%s\"", t2.word, mfg_id);
                }
             }
             else if (streq(t1.word, "MODEL")) {
                model_name_seen = true;
                if ( !streq(t1.rest, model_name) ) {
-                  // DBGMSG("Expected model_name: \"%s\"", model_name);
-                  ADD_ERROR(linectr, "Unexpected model name \"%s\"", t1.rest);
+                  ADD_ERROR(linectr, "Unexpected model name \"%s\", expected \"%s\"", t1.rest, model_name);
                }
             }
-            else if (streq(t1.word, "MCCS_VERSION")) {
+            else if (streq(t1.word, "MCCS_VERSION") || streq(t1.word, "VCP_VERSION") ) {
                // mccs_version_seen = true;   // not required for now
                // default as set by calloc() is 0.0, which is DDCA_VSPEC_UNKNOWN
                // returns DDCA_VSPEC_UKNOWN if invalid
@@ -501,7 +507,6 @@ create_monitor_dynamic_features(
                   }
                }
             }
-
             else if (streq(t1.word, "FEATURE_CODE")) {
                // n. cur_feature_metadata saved in frec
                if (cur_feature_metadata) {
@@ -517,7 +522,7 @@ create_monitor_dynamic_features(
                   }
                }
 
-               cur_feature_metadata = calloc(1, sizeof(DDCA_Feature_Metadata));
+               cur_feature_metadata = calloc(1, sizeof(Dyn_Feature_Metadata));
                memcpy(cur_feature_metadata->marker, DDCA_FEATURE_METADATA_MARKER, 4);
                cur_feature_metadata->feature_flags = DDCA_USER_DEFINED | DDCA_PERSISTENT_METADATA;
 
@@ -541,12 +546,11 @@ create_monitor_dynamic_features(
                   }
                   else {     // valid opcode
                      cur_feature_metadata->feature_code = feature_id;
-                     cur_feature_metadata->feature_name = strdup(feature_name);
+                     cur_feature_metadata->feature_name = g_strdup(feature_name);
                      cur_feature_metadata->feature_desc = NULL;   // ignore for now
                   }
                }
             }
-
             else if (streq(t1.word, "VALUE")) {
                if (!t2.rest) {
                   ADD_ERROR(linectr, "Invalid feature value data \"%s\"", line);
@@ -554,11 +558,10 @@ create_monitor_dynamic_features(
                else {   // found value code and name
                   int feature_value;
                    // Byte feature_value;
-                  // bool ok = hhs_to_byte_in_buf(s1, &feature_value);
                   char * canonical = canonicalize_possible_hex_value(t2.word);
                   bool ok = str_to_int(canonical, &feature_value, 0);
                   free(canonical);
-                  if (!ok) {
+                  if (!ok || feature_value < 0 || feature_value > 255) {
                      ADD_ERROR(linectr, "Invalid feature value \"%s\"", t2.word);
                   }
                   else {     // valid feature value
@@ -566,12 +569,11 @@ create_monitor_dynamic_features(
                         cur_feature_values = g_array_new(false, false, sizeof(DDCA_Feature_Value_Entry));
                      DDCA_Feature_Value_Entry entry;
                      entry.value_code = feature_value;
-                     entry.value_name = strdup(t2.rest);
+                     entry.value_name = g_strdup(t2.rest);
                      g_array_append_val(cur_feature_values, entry);
                   }
                }
             }
-
             else {
                ADD_ERROR(linectr, "Unexpected field \"%s\"", t1.word);
             }
@@ -609,22 +611,14 @@ create_monitor_dynamic_features(
       ADD_ERROR(-1, "Missing PRODUCT_CODE");
 
    if (errors->len > 0) {
-      // DBGMSG("errors->len=%d", errors->len);
-      // DBGMSG("errors->pdata: %p", errors->pdata);
-      // DBGMSG("&errors->pdata: %p", &errors->pdata);
-      // DBGMSG("*errors->pdata: %p", *errors->pdata);
-      // Error_Info * first = g_ptr_array_index(errors, 0);
-      // DBGMSG("first: %p", first);
-      //char * detail = gaux_asprintf("Error(s) processing monitor definition file: %s", filename);
       char * detail = g_strdup_printf("Error(s) processing monitor definition file: %s", filename);
-      master_err = errinfo_new_with_causes2(
+      master_err = errinfo_new_with_causes(
                             DDCRC_BAD_DATA,
                             (Error_Info**) errors->pdata,
                             errors->len,
                             __func__,
                             detail);
       free(detail);
-      // DBGMSG("After errinfo_new_with_causes2()");
       g_ptr_array_free(errors, false);
       dfr_free(frec);
       *dynamic_features_loc = NULL;
@@ -632,13 +626,26 @@ create_monitor_dynamic_features(
    else {
       g_ptr_array_free(errors, false);
       *dynamic_features_loc = frec;
-      if (debug)
-         dbgrpt_dynamic_features_rec(frec, 0);
    }
 
-   DBGMSF(debug, "Done. *dynamic_features_loc=%p, returning %s",
-                  *dynamic_features_loc, errinfo_summary(master_err));
-   assert( (master_err && !*dynamic_features_loc) || (!master_err && *dynamic_features_loc));
+   ASSERT_IFF(master_err, !*dynamic_features_loc);
+   DBGTRC_RET_ERRINFO_STRUCT(debug, TRACE_GROUP, master_err, dynamic_features_loc, dbgrpt_dynamic_features_rec);
+
+#ifdef OLD
+   DBGTRC_RET_ERRINFO(debug, TRACE_GROUP, master_err,
+                      "*dynamic_features_loc=%p", *dynamic_features_loc);
+   if ( (debug || IS_TRACING()) && *dynamic_features_loc )
+      dbgrpt_dynamic_features_rec(*dynamic_features_loc, 1);
+#endif
+
    return master_err;
+}
+
+
+void init_base_dynamic_features() {
+   RTTI_ADD_FUNC(create_dynamic_features_rec);
+   RTTI_ADD_FUNC(free_feature_metadata);
+   RTTI_ADD_FUNC(dfr_new);
+   RTTI_ADD_FUNC(dfr_free);
 }
 

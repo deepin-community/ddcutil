@@ -2,7 +2,7 @@
  *  Parse the capabilities string returned by DDC, query the parsed data structure.
  */
 
-// Copyright (C) 2014-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2022 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 /** \cond */
@@ -18,16 +18,21 @@
 #include "util/string_util.h"
 
 #include "base/core.h"
+#include "base/ddc_command_codes.h"
 #include "base/displays.h"
+#include "base/rtti.h"
 #include "base/vcp_version.h"
 
-#include "vcp/ddc_command_codes.h"
 #include "vcp/parsed_capabilities_feature.h"
 #include "vcp/vcp_feature_codes.h"
 
 #include "vcp/parse_capabilities.h"
 
+
+static DDCA_Trace_Group  TRACE_GROUP = DDCA_TRC_NONE;
+
 #undef CAPABILITIES_TESTS
+// #define CAPABILITIES_TESTS
 
 #ifdef CAPABILITIES_TESTS
 // not made static to avoid warning about unused variable
@@ -37,6 +42,12 @@ char* test_cap_strings[] = {
       "vcp(0203(10 00)0405080B0C101214(05 07 08 0B) 16181A5260(3033 04)6C6E70"
       "87ACAEB6C0C6C8C9D6(01 04)DFE4E5E6E7E8E9EAEBED(00 10 20 40)EE(00 01)"
       "FE(01 02 03)FF)mswhql(1)mccs_ver(2.1))",
+      // Asus PB287
+      "(prot(monitor) type(LCD)model LCDPB287 cmds(01 02 03 07 0C F3) "
+      "vcp(02 04 05 08 0B 0C 10 12 14(05 06 08 0B) 16 18 1A 60(11 12 0F) "
+      "62 6C 6E 70 8D(01 02) A8 AC AE B6 C6 C8 C9 D6(01 04) DF) "
+      "mccs_ver(2.1)asset_eep(32)mpu(01)mswhql(1))",
+
 };
 #endif
 
@@ -89,36 +100,6 @@ void dbgrpt_parsed_capabilities(Parsed_Capabilities * pcaps, int depth) {
 }
 
 
-#ifdef OLD
-/** Parses a VCP version string.
- *
- *  \param version_string
- *  \return a version specifier, DDCA_VSPEC_UNKNOWN if invalid
- */
-
-DDCA_MCCS_Version_Spec parse_vcp_version(char * version_string) {
-   bool debug = true;
-  DDCA_MCCS_Version_Spec result = DDCA_VSPEC_UNQUERIED;    // {0.0};
-   if (version_string) {
-      int vmajor;
-      int vminor;
-      // sscanf expecting integers, easiest to convert afterwards
-      int rc = sscanf(version_string, "%d.%d", &vmajor, &vminor);
-      if (rc != 2)
-         result = DDCA_VSPEC_UNKNOWN;
-      else {
-         result.major = vmajor;
-         result.minor = vminor;
-      }
-   }
-   DBGMSF(debug, "version_string = %s, Returning %d.%d",
-           version_string, result.major, result.minor);
-   return result;
-}
-#endif
-
-
-
 /** Frees a Parsed_Capabilities record
  *
  * @param pcaps  pointer to #Parsed_Capabilities struct
@@ -132,6 +113,7 @@ void free_parsed_capabilities(Parsed_Capabilities * pcaps) {
 
    free(pcaps->raw_value);
    free(pcaps->mccs_version_string);
+   free(pcaps->model);
 
    if (pcaps->commands)
       bva_free(pcaps->commands);
@@ -147,6 +129,8 @@ void free_parsed_capabilities(Parsed_Capabilities * pcaps) {
          g_ptr_array_remove_index(pcaps->vcp_features, ndx);
       }
       g_ptr_array_free(pcaps->vcp_features, true);
+      if (pcaps->messages)
+         g_ptr_array_free(pcaps->messages, true);
    }
 
    pcaps->marker[3] = 'x';
@@ -158,7 +142,13 @@ void free_parsed_capabilities(Parsed_Capabilities * pcaps) {
 // *** Utility Functions ***
 //
 
-
+/* Point to the first non-space character in a string.
+ *
+ * @param  s   pointer to string
+ * \parsm  len length of string
+ * @return pointer to first non-space character of string,
+ *         end of string if not found
+ */
 char * ltrim(char * s, int len) {
    while (len > 0 && *s == ' ') {
       len--;
@@ -168,18 +158,14 @@ char * ltrim(char * s, int len) {
 }
 
 
-
-/* Finds the matching closing parenthesis for the
- * current open parenthesis.
+/** Finds the matching closing parenthesis for the
+ *  current open parenthesis.
  *
- * Arguments:
- *   start    first character to examine (must be '(')
- *   end      points to end of string, i.e. the byte
- *            after the last character to examine
- *
- * Returns:
- *   pointer to closing parenthesis
- *   or end if closing parenthesis not found
+ *  @param start    first character to examine (must be '(')
+ *  @param end      points to end of string, i.e. the byte
+ *                  after the last character to examine
+ *  @return pointer pointer to closing parenthesis,
+ *          end if closing parenthesis not found
  */
 
 static char * find_closing_paren(
@@ -218,18 +204,14 @@ update_validity(
 }
 
 
-
-
 //
 // Parsing
 //
 
-/* Capabilities string format.
-
-   Parenthesized expression
-   containing sequence of "segments"
-   each segment consists of a segment name, followed by a parenthesized value
-
+/* Capabilities string format:
+     Parenthesized expression
+     containing sequence of "segments"
+     each segment consists of a segment name, followed by a parenthesized value
  */
 
 
@@ -240,20 +222,20 @@ update_validity(
 /** Parses the value of the cmds segment, which is a list of 2 character values
  *  separated by spaces.
  *
- * \param   start    start of values
- * \param   len      segment length
- * \param   messages accumulates error messages
- * \return  #Byte_Value_Array indicating command values seen,
+ * @param   start    start of values
+ * @param   len      segment length
+ * @param   messages accumulates error messages
+ * @return  #Byte_Value_Array indicating command values seen,
  *          NULL if a parsing error
  *
- *  \remark
+ *  @remark
  *  Alternatively, return a ByteBitFlag value, or pass a
  *  preallocted ByteBitFlag instance
  *
- *  \remark
+ *  @remark
  *  On every monitor tested, the values are separated by spaces.
  *  However, per the Access Bus spec, Section 7, values need not be separated by spaces,
-*   e.g. 010203 is valid
+ *  e.g. 010203 is valid
  */
 static Byte_Value_Array parse_cmds_segment(
       char *      start,
@@ -265,8 +247,8 @@ static Byte_Value_Array parse_cmds_segment(
 
    Byte_Value_Array cmd_ids = bva_create();
    bool ok = store_bytehex_list(start, len, cmd_ids, bva_appender);
+   // ok = false;   // force failure for testing
    if (!ok) {
-      // f0printf(ferr(), "Error processing commands list: %.*s\n", len, start);
       char * s = g_strdup_printf("Error processing commands list: %.*s", len, start);
       g_ptr_array_add(messages, s);
    }
@@ -274,6 +256,7 @@ static Byte_Value_Array parse_cmds_segment(
       bva_free(cmd_ids);
       cmd_ids = NULL;
    }
+
    DBGMSF(debug, "Done.     Returning %p", cmd_ids);
    return cmd_ids;
 }
@@ -283,20 +266,10 @@ static Byte_Value_Array parse_cmds_segment(
 // vcp segment
 //
 
-
-
-
-typedef
-struct {
-   char * values_start;
-   int    values_len;
-   char * remainder_start;
-   int    remainder_len;
-} Vcp_Feature_Values_Segment;
-
-
+#ifdef FUTURE
 void parse_vcp_values(char * start, int len, GPtrArray* messages) {
 }
+#endif
 
 
 //
@@ -313,118 +286,6 @@ struct {
    int    remainder_len;
    bool   valid;
 } Vcp_Feature_Segment;
-
-
-
-Parsed_Capabilities_Validity
-parse_single_feature(
-      Vcp_Feature_Segment * segment,
-      GPtrArray * vcp_array,    // accumulates Capabilities_Feature_Record
-      GPtrArray * messages)     // accumulates error messages
-{
-   bool debug = true;
-   assert(segment->code_start);
-   if (debug) {
-      DBGMSG("segment_->code_len=%d. segment->code_start = %p -> |%.*s|",
-            segment->code_len, segment->code_start,
-            segment->code_len, segment->code_start);
-      DBGMSG("segment_->values_len=%d. segment->values_start = %p -> |%.*s|",
-            segment->values_len, segment->values_start,
-            segment->values_len, segment->values_start);
-      DBGMSG("segment_->remainder_len=%d. segment->remainder_start = %p -> |%.*s|",
-            segment->remainder_len, segment->remainder_start,
-            segment->remainder_len, segment->remainder_start);
-      DBGMSG("segment->valid     = %s", sbool(segment->valid) );
-   }
-
-   Parsed_Capabilities_Validity result = CAPABILITIES_VALID;
-   segment->valid = true;
-   Byte cur_feature_id;
-   bool feature_code_ok = false;
-   if (segment->code_len == 2) {
-      // cur_feature_id = hhc_to_byte(st);   // what if invalid hex?
-      feature_code_ok = hhc_to_byte_in_buf(segment->code_start, &cur_feature_id);
-      if (feature_code_ok) {
-         DBGMSF(debug,"code = 0x%02x", cur_feature_id);
-        // valid_feature = true;
-        // value_start = NULL;
-        // value_len   = 0;
-      }
-   }
-   if (!feature_code_ok) {
-      char * s = g_strdup_printf("Feature %.*s (Invalid code)",segment->code_len, segment->code_start);
-      g_ptr_array_add(messages, s);
-      // DBGMSG("%s",s);
-      // f0printf(ferr(), "Feature: %.*s (invalid code)\n", 1, st);
-      segment->valid = false;
-      result = CAPABILITIES_INVALID;
-   }
-   else {
-      Capabilities_Feature_Record * vfr =
-               parse_capabilities_feature(cur_feature_id, segment->values_start, segment->values_len, messages);
-         // if (debug) {
-         //    DDCA_MCCS_Version_Spec dummy_version = {0,0};
-         //    report_capabilities_feature(vfr, dummy_version, 1);
-         // }
-         if (!vfr->valid_values && result == CAPABILITIES_VALID)
-            result = CAPABILITIES_USABLE;
-         g_ptr_array_add(vcp_array, vfr);
-   }
-
-   return result;
-}
-
-
-
-
-Vcp_Feature_Segment * next_vcp_feature_segment(char * start, int len, GPtrArray * messages) {
-   if (!start)
-      return NULL;
-   Vcp_Feature_Segment * segment = calloc(1, sizeof(Vcp_Feature_Segment));
-   segment->valid = true;
-   // rely on all other fields = NULL, 0
-
-   char * end = start + len;
-   char * pos = start;
-   while (*pos == ' ') pos++;
-   segment->code_start = pos;
-   while (pos < end && *pos != ' ' && *pos != '(') pos++;
-   segment->code_len = pos - segment->code_start;
-   if (pos < end) {
-       if (*pos == '(') {
-          segment->values_start = pos+1;
-          while (pos < end && *pos != ')') pos++;
-          if (pos == end) {
-             char * s = g_strdup_printf(
-                                "Incomplete value string for feature %.*s",
-                                segment->code_len, segment->code_start);
-             g_ptr_array_add(messages, s);
-             DBGMSG(s);
-             segment->valid = false;
-             goto out;
-          }
-          // found closing paren
-          segment->values_len = (pos - segment->values_start) - 1;
-          segment->remainder_start = pos+1;
-          segment->remainder_len = end - segment->remainder_start;
-       }
-       else {
-          segment->values_start = NULL;
-          segment->values_len = 0;
-          segment->remainder_start = pos;
-          segment->remainder_len = end - pos;
-       }
-   }
- out:
-   if (segment->code_len == 0 || !segment->valid) {
-      free(segment);
-      segment = NULL;
-   }
-
-   return segment;
-}
-
-
 
 
 /** Parse the value of a vcp() segment..
@@ -499,7 +360,7 @@ parse_vcp_segment(
          // find matching )
          char * value_end = find_closing_paren(pos, end);
          if (value_end == end) {
-            g_ptr_array_add(messages, "Value parse terminated without closing parenthesis" );
+            g_ptr_array_add(messages, g_strdup("Value parse terminated without closing parenthesis") );
             // TODO: recover from error, this is bad data from the monitor
             result = CAPABILITIES_INVALID;
             goto bye;  // Error is fatal
@@ -550,7 +411,7 @@ parse_vcp_segment_new(
       GPtrArray *  vcp_array,
       GPtrArray *  messages)
 {
-   bool debug = true;
+   bool debug = false;
    DBGMSF(debug, "Starting.  len = %d, start=%p -> %.*s", len, start, len, start);
    // Vcp_Code_Table_Entry * vcp_entry;    // future?
 
@@ -673,27 +534,26 @@ struct {
 // void dbgrpt_capabilities_segment(Capabilities_Segment * segment, int depth) {
 
 
-
-/* Extract the next top level segment of the capabilities string.
+/** Extract the next top level segment of the capabilities string.
  *
- * Arguments:     start   current position in the capabilities string
- *                len     length of remainder of capabilities string
- *
- * Returns:    pointer to newly allocated Capabilities_Segment describing the segment
- *             It is the responsibility of the caller to free the returned struct,
- *             BUT NOT THE LOCATIONS IT ADDRESSES
+ *  @param  start   current position in the capabilities string
+ *  @param  len     length of remainder of capabilities string
+ *  @return pointer to newly allocated Capabilities_Segment describing the segment
+ *          It is the responsibility of the caller to free the returned struct,
+ *          BUT NOT THE LOCATIONS IT ADDRESSES
  */
 static Capabilities_Segment *
-next_capabilities_segment(char * start, int len, GPtrArray* messages)
+next_capabilities_segment(char * start, int len, GPtrArray* messages, char * capabilities_staring_start)
 {
    bool debug = false;
    DBGMSF(debug, "Starting. len=%d, start=%p -> |%.*s|", len, start, len, start);
-   const char * global_start = start;
+   const char * global_start = capabilities_staring_start; // was: start;
    char * end = start+len;
    Capabilities_Segment * segment = calloc(1, sizeof(Capabilities_Segment));
    // n. Apple Cinema Display precedes segment name with blank
    char * trimmed_start = ltrim(start, len);
    int    trimmed_len   = len - (trimmed_start - start) ;
+   char * errmsg = NULL;
    // DBGMSG("trimmed_len=%ld, trimmed_start=%p -> |%.*s|",
    //        trimmed_len, trimmed_start, trimmed_len, trimmed_start);
    if (trimmed_len == 0) {
@@ -704,9 +564,11 @@ next_capabilities_segment(char * start, int len, GPtrArray* messages)
    }
    char * pos = trimmed_start;
 
+
 #define REQUIRE(_condition, _msg, _position)  \
    if (!(_condition)) { \
-      g_ptr_array_add(messages, g_strdup_printf("%s at offset %jd", _msg, (intmax_t)( _position-global_start)) ); \
+      g_ptr_array_add(messages, g_strdup_printf("%s at offset %jd", \
+                      _msg, (intmax_t)( _position-global_start)) ); \
       segment->name_start = segment->value_start = segment->remainder_start = NULL; \
       segment->name_len   = segment->value_len   = segment->remainder_len   = 0; \
       goto bye; \
@@ -718,20 +580,31 @@ next_capabilities_segment(char * start, int len, GPtrArray* messages)
    REQUIRE( pos < end, "Nothing follows segment name", pos);
    segment->name_len = pos-trimmed_start;
    while ( pos < end && *pos == ' ' ) { pos++; }   // blanks following segment name
-   REQUIRE( pos < end, "Nothing follows segment name (2)", pos);
-   assert(*pos == '(');
-   // DBGMSG("pos=%p, trimmed_start=%p", pos, trimmed_start);
+
+   errmsg = g_strdup_printf("Nothing follows segment name (2) %.*s",
+                            segment->name_len, segment->name_start);
+   REQUIRE( pos < end, errmsg, pos);
+   free(errmsg); errmsg = NULL;
+
+   // assert(*pos == '(');
+   DBGMSF(debug, "pos=%p, trimmed_start=%p", pos, trimmed_start);
    segment->name_len = pos - trimmed_start;
-   // DBGMSG("start=%p, len=%d, trimmed_start=%p", start, len, trimmed_start);
-   // DBGMSG("name_len = %d, name_start = %p -> %.*s", segment->name_len, segment->name_start,
-   //                                                 segment->name_len, segment->name_start);
-   REQUIRE(*pos == '(', "Missing parenthesized value", pos);
+   DBGMSF(debug, "start=%p, len=%d, trimmed_start=%p", start, len, trimmed_start);
+   DBGMSF(debug, "name_len = %d, name_start = %p -> %.*s", segment->name_len, segment->name_start,
+                                                   segment->name_len, segment->name_start);
+   errmsg = g_strdup_printf("Missing parenthesized value for segment %.*s",
+                                   segment->name_len, segment->name_start);
+   REQUIRE(*pos == '(', errmsg, pos);
+   free(errmsg); errmsg = NULL;
+
    segment->value_start = pos+1;
    pos =find_closing_paren(pos, end);
-   REQUIRE(pos < end,
-           g_strdup_printf("No closing parenthesis for segment %.*s",
-                           segment->name_len, segment->name_start),
-           pos);
+
+   errmsg = g_strdup_printf("No closing parenthesis for segment %.*s",
+                            segment->name_len, segment->name_start);
+   REQUIRE(pos < end, errmsg, pos);
+   free(errmsg); errmsg=NULL;
+
    segment->value_len = pos - segment->value_start;
    REQUIRE(segment->value_len > 0, "zero length value", pos);
 
@@ -743,6 +616,8 @@ next_capabilities_segment(char * start, int len, GPtrArray* messages)
    // printf("remainder: |%.*s|\n", segment->remainder_len, segment->remainder_start);
 
 bye:
+   if (errmsg)
+      free(errmsg);
    DBGMSF(debug, "Returning: %p", segment);
    return segment;
 }
@@ -761,11 +636,18 @@ Parsed_Capabilities * parse_capabilities(
 {
    assert(buf_start);
    bool debug = false;
-   if (debug) {
-      // hex_dump((Byte*)buf_start, buf_len);
-      DBGMSF(debug, "Starting. buf_len=%d, buf_start->|%.*s|", buf_len, buf_len, buf_start);
+   DBGTRC_STARTING(debug, TRACE_GROUP, "buf_len=%d, buf_start=%p->|%.*s|",
+                                       buf_start, buf_len, buf_len, buf_start);
+   if ( IS_DBGTRC(debug, TRACE_GROUP) ) {
+      rpt_hex_dump((Byte*)buf_start, buf_len, 1);
+   }
+   
+   // right trim white space
+   while ( buf_len > 0 && *(buf_start+buf_len-1) == ' ') {
+      buf_len--;
    }
 
+   char * capabilities_string_start = buf_start;
    Parsed_Capabilities* pcaps = calloc(1, sizeof(Parsed_Capabilities));
    memcpy(pcaps->marker, PARSED_CAPABILITIES_MARKER, 4);
 
@@ -785,8 +667,12 @@ Parsed_Capabilities * parse_capabilities(
    // DBGMSG("Initial buf_len=%d, buf_start=%p -> |%.*s|", buf_len, buf_start, buf_len, buf_start);
    // Apple Cinema display violates spec, does not surround capabilities string with parens
    if (buf_start[0] == '(') {
-      // for now, don't try to fix bad stringS
-      assert(buf_start[buf_len-1] == ')' );
+      if (buf_start[buf_len-1] != ')') {
+            g_ptr_array_add(pcaps->messages,
+                            g_strdup("Capabilities string lacks closing parenthesis"));
+            pcaps->caps_validity = CAPABILITIES_INVALID;
+            goto bye;
+      }
 
       // trim starting and ending parens
       buf_start = buf_start+1;
@@ -795,10 +681,12 @@ Parsed_Capabilities * parse_capabilities(
    // DBGMSG("Adjusted buf_len=%d, buf_start=%p -> |%.*s|", buf_len, buf_start, buf_len, buf_start);
 
    while (buf_len > 0) {
-      Capabilities_Segment * seg = next_capabilities_segment(buf_start, buf_len, pcaps->messages);
+      Capabilities_Segment * seg =
+         next_capabilities_segment(buf_start, buf_len, pcaps->messages, capabilities_string_start);
       if (seg->name_start == NULL)  {
          // error condition encountered
          pcaps->caps_validity = CAPABILITIES_INVALID;
+         free(seg);
          break;
       }
       buf_start = seg->remainder_start;
@@ -808,7 +696,9 @@ Parsed_Capabilities * parse_capabilities(
                     seg->name_len,  seg->name_start,  seg->value_len, seg->value_start );
 
       // cmds segment
-      if (memcmp(seg->name_start, "cmds", seg->name_len) == 0) {
+      if (seg->name_len == 4 &&  // avoid buffer overflow
+          memcmp(seg->name_start, "cmds", seg->name_len) == 0)
+      {
          pcaps->raw_cmds_segment_seen = true;
          pcaps->commands = parse_cmds_segment(seg->value_start, seg->value_len, pcaps->messages);
          pcaps->raw_cmds_segment_valid = (pcaps->commands);   // ??
@@ -819,8 +709,10 @@ Parsed_Capabilities * parse_capabilities(
       }
 
       // vcp segment
-      else if (memcmp(seg->name_start, "vcp", seg->name_len) == 0 ||
-               memcmp(seg->name_start, "VCP", seg->name_len) == 0      // hack for Apple Cinema Display
+      else if (seg->name_len == 3 &&
+                (memcmp(seg->name_start, "vcp", seg->name_len) == 0 ||
+                 memcmp(seg->name_start, "VCP", seg->name_len) == 0      // hack for Apple Cinema Display
+                )
               )
       {
          pcaps->raw_vcp_features_seen = true;
@@ -828,18 +720,13 @@ Parsed_Capabilities * parse_capabilities(
                parse_vcp_segment(seg->value_start, seg->value_len, pcaps->vcp_features, pcaps->messages);
 
          pcaps->caps_validity = update_validity(pcaps->caps_validity, vcp_segment_validity);
-
-#ifdef OLD
-         if (pcaps->caps_validity == CAPABILITIES_INVALID || vcp_segment_validity == CAPABILITIES_INVALID)
-            pcaps->caps_validity = CAPABILITIES_INVALID;
-         else if (pcaps->caps_validity == CAPABILITIES_VALID && vcp_segment_validity == CAPABILITIES_VALID)
-            pcaps->caps_validity = CAPABILITIES_VALID;
-         else
-            pcaps->caps_validity = CAPABILITIES_USABLE;
-#endif
       }
 
-      else if (memcmp(seg->name_start, "mccs_ver" /* was "mccs_version_string" WHY? */, seg->name_len) == 0) {
+      else if (seg->name_len == 8 &&
+               memcmp(seg->name_start,
+                      "mccs_ver" /* was "mccs_version_string" WHY? */,
+                      seg->name_len) == 0)
+      {
          pcaps->mccs_version_string = chars_to_string(seg->value_start, seg->value_len);
          DDCA_MCCS_Version_Spec vspec = parse_vspec(pcaps->mccs_version_string);
          // n. will be DDCA_VSPEC_UNQUERIED if no value string, DDCA_VSPEC_UNKNOWN if invalid
@@ -853,7 +740,9 @@ Parsed_Capabilities * parse_capabilities(
          }
       }
 
-      else if (memcmp(seg->name_start, "model", seg->name_len) == 0 ) {
+      else if ( seg->name_len == 5 &&
+                memcmp(seg->name_start, "model", seg->name_len) == 0 )
+      {
          DBGMSF(debug, "model: |%.*s|", seg->value_len, seg->value_start);
          pcaps->model = chars_to_string(seg->value_start, seg->value_len);
          // DBGMSF(debug, "pcaps->model = |%s|", pcaps->model);
@@ -866,35 +755,10 @@ Parsed_Capabilities * parse_capabilities(
       free(seg); // allocated by next_capabilities_segment()
    }
 
-   if (debug) {
-      dbgrpt_parsed_capabilities(pcaps, 0);  // handles NULL
-      DBGMSF(debug, "Done.     Returning %p", pcaps);
-   }
+bye:
+   DBGTRC_RET_STRUCT(debug, DDCA_TRC_NONE, "Parsed_Capabilities", dbgrpt_parsed_capabilities, pcaps);
    return pcaps;
 }
-
-
-#ifdef UNUSED
-/** Parses a capabilities string passed in a #Buffer object.
- *
- *  @param  capabilities   pointer to #Buffer
- *
- *  @return pointer to newly allocated #Parsed_Capabilities structure
- */
-Parsed_Capabilities* parse_capabilities_buffer(
-      Buffer * capabilities)
-{
-   // dump_buffer(capabilities);
-   int len = capabilities->len - 1;
-   while (capabilities->bytes[len] == '\0')  {
-      // strip trailings 0's - 2 seen
-      // printf("%d\n", len);
-      len--;
-   }
-   len++;
-   return parse_capabilities((char *)capabilities->bytes, len);
-}
-#endif
 
 
 /** Parses a capabilities string
@@ -909,7 +773,7 @@ Parsed_Capabilities* parse_capabilities_string(
 #ifdef CAPABILITIES_TESTS
    // Uncomment to enable test
    DBGMSG("Substituting test capabilities string");
-   caps = test_cap_strings[0];
+   caps = test_cap_strings[1];
 #endif
 
    return parse_capabilities(caps, strlen(caps));
@@ -925,9 +789,9 @@ Parsed_Capabilities* parse_capabilities_string(
  *  @param pcaps           pointer to #Parsed_Capabilities
  *  @param readable_only   restrict returned list to readable features
  *
- *  @return  #Byte_Bit_Flags value indicating features found
+ *  @return  #Bit_Set_256  value indicating features found
  */
-Byte_Bit_Flags get_parsed_capabilities_feature_ids(
+Bit_Set_256 get_parsed_capabilities_feature_ids(
       Parsed_Capabilities * pcaps,
       bool                  readable_only)
 {
@@ -936,7 +800,8 @@ Byte_Bit_Flags get_parsed_capabilities_feature_ids(
    DBGMSF(debug, "Starting. readable_only=%s, feature count=%d",
                  sbool(readable_only), pcaps->vcp_features->len);
 
-   Byte_Bit_Flags flags = bbf_create();
+   // Byte_Bit_Flags flags = bbf_create();
+   Bit_Set_256 flags = EMPTY_BIT_SET_256;
    if (pcaps->vcp_features) {    // pathological case of 0 length capabilities string
       for (int ndx = 0; ndx < pcaps->vcp_features->len; ndx++) {
          Capabilities_Feature_Record * frec = g_ptr_array_index(pcaps->vcp_features, ndx);
@@ -951,11 +816,12 @@ Byte_Bit_Flags get_parsed_capabilities_feature_ids(
                free_synthetic_vcp_entry(vfte);
          }
          if (add_feature_to_list)
-            bbf_set(flags, frec->feature_id);
+            // bbf_insert(flags, frec->feature_id);
+            flags = bs256_insert(flags, frec->feature_id);
       }
    }
 
-   DBGMSF(debug, "Returning Byte_Bit_Flags: %s", bbf_to_string(flags, NULL, 0));
+   DBGMSF(debug, "Returning Bit_Set_256: %s", bs256_to_string_t(flags, "x", ", ") );
    return flags;
 }
 
@@ -990,6 +856,7 @@ bool parsed_capabilities_supports_table_commands(Parsed_Capabilities * pcaps) {
 // Tests
 //
 
+#ifdef OLD
 void test_segment(char * text) {
    char * start = text;
    int len   = strlen(text);
@@ -1003,6 +870,7 @@ void test_segments() {
    test_segment("vcp(10 20)abc");
    test_segment("vcp(10 20 30( asdf ))x");
 }
+#endif
 
 
 void test_parse_caps() {
@@ -1011,4 +879,12 @@ void test_parse_caps() {
    free_parsed_capabilities(pcaps);
 }
 #endif
+
+
+/** Module initialization */
+void init_parse_capabilities() {
+   RTTI_ADD_FUNC(parse_capabilities);
+}
+
+
 

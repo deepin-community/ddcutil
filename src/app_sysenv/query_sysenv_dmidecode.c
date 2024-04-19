@@ -3,7 +3,7 @@
  *  dmidecode report for the environment command
  */
 
-// Copyright (C) 2016-2019 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2016-2021 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 /** \cond */
@@ -79,8 +79,8 @@ static const char *dmi_chassis_type(Byte code)
 
 /** Reports DMI information for the system.
  */
-void query_dmidecode() {
-
+void query_dmidecode()
+{
    // Note: The alternative of calling execute_shell_cmd_collect() with the following
    // command fails if executing from a non-privileged account, which lacks permissions
    // for /dev/mem or /sys/firmware/dmi/tables/smbios_entry_point

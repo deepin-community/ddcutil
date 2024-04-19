@@ -1,0 +1,4 @@
+dsa1.c:189:16: error: incompatible integer to pointer conversion initializing 'DSA1_Data *' with an expression of type 'int' [-Wint-conversion]
+   DSA1_Data * dsa1 = dsa1_from_dh(dh);
+               ^      ~~~~~~~~~~~~~~~~
+1 error generated.

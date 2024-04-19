@@ -3,15 +3,15 @@
  * This file defines the DDC specific status codes that can be returned in #DDCA_Status.
  * In addition to these codes, #DDCA_Status can contain:
  *   - negative Linux errno values
- *   - modulated ADL status codes
- *     (i.e. ADL status codes with a constant added or subtracted so as not to overlap
- *      with Linux errno values)
  *
- * Because the DDC specific status codes are merged with the Linux and ADL status codes
+ * Because the DDC specific status codes are merged with the Linux status codes
  * (which are \#defines), they are specified as \#defines rather than enum values.
+ *
+ * If status codes are added, an entry must also be added to the description table
+ * in base/ddc_errno.c.
  */
 
-// Copyright (C) 2014-2019 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 
@@ -24,9 +24,9 @@
 #define DDCRC_DDC_DATA               (-(RCRANGE_DDC_START+1 ) )  ///< DDC data error
 #define DDCRC_NULL_RESPONSE          (-(RCRANGE_DDC_START+2 ) )  //!< DDC Null Response received
 #define DDCRC_MULTI_PART_READ_FRAGMENT (-(RCRANGE_DDC_START+3) ) ///< Error in multi-part read fragment
-#define DDCRC_ALL_TRIES_ZERO         (-(RCRANGE_DDC_START+4 ) )  ///< packet data entirely 0
+#define DDCRC_ALL_TRIES_ZERO         (-(RCRANGE_DDC_START+4 ) )  ///< packet data entirely 0 for all tries
 #define DDCRC_REPORTED_UNSUPPORTED   (-(RCRANGE_DDC_START+5 ) )  ///< DDC reply says unsupported
-#define DDCRC_READ_ALL_ZERO          (-(RCRANGE_DDC_START+6 ) )  ///<
+#define DDCRC_READ_ALL_ZERO          (-(RCRANGE_DDC_START+6 ) )  ///< all bytes in response packet 0
 #define DDCRC_RETRIES                (-(RCRANGE_DDC_START+7 ) )  ///< too many retries
 #define DDCRC_EDID                   (-(RCRANGE_DDC_START+8 ) )  ///< still in use, use DDCRC_READ_EDID or DDCRC_INVALID_EDID
 #define DDCRC_READ_EDID              (-(RCRANGE_DDC_START+9 ) )  ///< error reading EDID
@@ -49,6 +49,10 @@
 #define DDCRC_LOCKED                 (-(RCRANGE_DDC_START+25) ) ///< resource locked
 #define DDCRC_ALREADY_OPEN           (-(RCRANGE_DDC_START+26) ) ///< already open in current thread
 #define DDCRC_BAD_DATA               (-(RCRANGE_DDC_START+27) ) ///< invalid data
+#define DDCRC_INVALID_CONFIG_FILE    (-(RCRANGE_DDC_START+28) ) ///< config file syntax
+#define DDCRC_DISCONNECTED           (-(RCRANGE_DDC_START+29) ) ///< display has been disconnected
+#define DDCRC_DPMS_ASLEEP            (-(RCRANGE_DDC_START+30) ) ///< display is in a DPMS sleep mode
+#define DDCRC_FLOCKED                (-(RCRANGE_DDC_START+31) ) ///< flock() failure, cross-process locking
 // #define DDCRC_CAP_FATAL              (-(RCRANGE_DDC_START+28) ) ///< invalid, unusable capabilities string"
 // #define DDCRC_CAP_WARNING            (-(RCRANGE_DDC_START+29) ) ///< capabilities string has errors but is beautiful
 

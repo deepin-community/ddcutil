@@ -1,25 +1,12 @@
 #
-# ddcutil configure script 
+# ddcutil autotools configure script 
 #
-# Copyright 2014-2020 Sanford Rockowitz <rockowitz@minsoft.com>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 2 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+# Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
+# SPDX-License-Identifier: GPL-2.0-or-later
 
-dnl Note on comments: 
-dnl Macro names in comments are written in lower case to avoid processing as actual macros
-
+dnl General notes:  
+dnl - Macro names in comments are written in lower case to avoid processing as actual macros
 
 ###
 ### Initial Setup
@@ -27,44 +14,57 @@ dnl Macro names in comments are written in lower case to avoid processing as act
 
 AC_PREREQ([2.69])
 
-m4_define([ddcutil_major_version], [0])
-m4_define([ddcutil_minor_version], [9])
-m4_define([ddcutil_micro_version], [9])
-m4_define([ddcutil_version],
-          [ddcutil_major_version.ddcutil_minor_version.ddcutil_micro_version])
+m4_define([ddcutil_major_version], [2])
+m4_define([ddcutil_minor_version], [1])
+m4_define([ddcutil_micro_version], [4])
+dnl ddcutil_version_suffix does not begin with hyphen, e.g. "dev", not "-dev"
+m4_define([ddcutil_version_suffix], [""])
+# m4_ifelse(ddcutil_version_suffix,[], m4_define([ddcutil_version], [a]),define([ddcutil_version],[b]))
+dnl mf_define( [ddcutil_version], m4_format([%s.%s.%s%s],[ddcutil_major_version],[ddcutil_minor_version],[ddcutil_micro_version],[ddcutil_version_suffix])
+m4_define([ddcutil_version], [ddcutil_major_version.ddcutil_minor_version.ddcutil_micro_version])
+dnl m4_ifdef('ddcutil_version_suffix' ,m4_define([ddcutil_version], [ddcutil_major_version.ddcutil_minor_version.ddcutil_micro_version]))
 
+dnl It should be possible to define here the "fully qualified" version name, conditionally
+dnl containing the version suffix, but after hours of trying to get that to work (5/2021) 
+dnl I gave up.  It will be handled in the C code.
+
+dnl process command line args, perform initializations
+dnl sets among several output vars including  PACKAGE_NAME, PACKAGE_VERSION,
+dnl PACKAGE_TARNAME (name of output package)
 dnl causes VERSION to be set in config.h
-AC_INIT([ddcutil], [ddcutil_version], [rockowitz@minsoft.com])
+AC_INIT([ddcutil],[ddcutil_version],[rockowitz@minsoft.com])
 
-AC_DEFINE_UNQUOTED( [PACKAGE_VMAJOR], [ ddcutil_major_version ], [ddcutil major version] )
-AC_DEFINE_UNQUOTED( [PACKAGE_VMINOR], [ ddcutil_minor_version ], [ddcutil minor version] )
-AC_DEFINE_UNQUOTED( [PACKAGE_VMICRO], [ ddcutil_micro_version ], [ddcutil micro version] )
+dnl define preprocessor symbols
+dnl was AC_DEFINE_UNQUOTED, but don't need extra handling?
+dnl         symbol             value set by               comment 
+AC_DEFINE( [VERSION_VMAJOR], [ ddcutil_major_version  ], [ddcutil major version] )
+AC_DEFINE( [VERSION_VMINOR], [ ddcutil_minor_version  ], [ddcutil minor version] )
+AC_DEFINE( [VERSION_VMICRO], [ ddcutil_micro_version  ], [ddcutil micro version] )
+AC_DEFINE( [VERSION_VSUFFIX],[ ddcutil_version_suffix ], [ddcutil version suffix] )
 
-AC_SUBST( PACKAGE_VMAJOR, [ddcutil_major_version] )
-AC_SUBST( PACKAGE_VMINOR, [ddcutil_minor_version] )
-AC_SUBST( PACKAGE_VMICRO, [ddcutil_micro_version] )
+dnl substitute @PACKAGE_MAJOR@ etc. in Makefile.am with the value of the environment variable
+AC_SUBST( VERSION_VMAJOR,  [ddcutil_major_version] )
+AC_SUBST( VERSION_VMINOR,  [ddcutil_minor_version] )
+AC_SUBST( VERSION_VMICRO,  [ddcutil_micro_version] )
+AC_SUBST( VERSION_VSUFFIX, [ddcutil_version_suffix] )
 
 AC_ARG_VAR(DBG, [Turn on script debugging messages(0/1)])
 dnl AC_MSG_NOTICE([DBG = |$DBG|])
+
+AM_CONDITIONAL(WARNINGS_ARE_ERRORS_COND, [test "x$ddcutil_version_suffix" != "x"] )
 
 AS_IF( [test 0$DBG -ne 0], 
    AC_MSG_NOTICE([debug messages enabled]),
    AC_MSG_NOTICE([debug messages disabled])
    )
 
-dnl dnl uncomment the following line to enable debug messages from configure:
-dnl debug_config=yes
-dnl AS_IF( [ test -n "$debug_config"], 
-dnl    AC_MSG_NOTICE( [debug messages enabled ] ),
-dnl    AC_MSG_NOTICE( [debug messages disabled] )
-dnl    )
-
+dnl reduce clutter,  save files litmain.sh, config.guess, missing etc. here instead of top directory
 AC_CONFIG_AUX_DIR(config)
-dnl sanity check: check for a unique file in source directory: 
+dnl sanity check: verify a unique file in source directory: 
 AC_CONFIG_SRCDIR([src/util/coredefs.h])
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_MACRO_DIR([m4])
-# removed from list: package/debian/changelog
+
 AC_CONFIG_FILES([
 	Makefile 
 	src/Makefile 
@@ -74,23 +74,20 @@ AC_CONFIG_FILES([
 	src/vcp/Makefile
 	src/dynvcp/Makefile
 	src/i2c/Makefile
-	src/adl/Makefile
 	src/usb/Makefile
 	src/ddc/Makefile
 	src/test/Makefile
 	src/cmdline/Makefile
 	src/app_sysenv/Makefile
-	src/swig/Makefile 
-	src/cython/Makefile 
-	src/cffi/Makefile 
-	src/gobject_api/Makefile 
+	src/app_ddcutil/Makefile
+	src/libmain/Makefile
 	src/sample_clients/Makefile
 	man/Makefile 
 	data/Makefile 
 	docs/Makefile
 	docs/doxygen/Makefile
 	src/public/ddcutil_macros.h
-  ddcutil.pc
+	data/ddcutil.pc
   ],
  )
 dnl AC_CONFIG_FILES(package/upload_obsrpm, [chmod +x package/upload_obsrpm] )
@@ -101,11 +98,18 @@ dnl not working, why?
 # AC_DEFINE_UNQUOTED([DDCUTIL_MAJOR_VERSION], [$ddcutil_major_version], [ddcutil major version])
 
 
-
+dnl Automake options to be applied to every Makefile.am in the tree: 
+dnl The effect is as if each option were listed in AUTOMAKE_OPTIONS
 dnl removed -Werror from AM_INIT_AUTOMAKE to allow compilation to proceed
-AM_INIT_AUTOMAKE([1.11 -Wall -Wno-extra-portability foreign subdir-objects])
-dnl AM_SILENT_RULES defined as of automake 1.11, so don't need to test for macro's existence
+dnl n. first option in our list is the required automake version
+AM_INIT_AUTOMAKE([1.14 -Wall -Wno-extra-portability foreign subdir-objects ])
+
+dnl alternatively, add "silent-rules" to AM_INIT_AUTOMAKE
+dnl Eclipse warns that as of 2.68, AM_SILENT_RULES takes 0 arguments
+dnl but in 2.69 it only defaults to silent with argument "yes"
+dnl with "yes" arg, silent rules is the default
 AM_SILENT_RULES([yes])
+
 AM_PROG_AR
 
 dnl explicitly initialize pkg-config in case first call to pkg_check_modules is within an if test:
@@ -114,22 +118,8 @@ required_packages=
 
 dnl Determines C compiler to use, sets output variable cc, ac_cv_prog_cc_c89
 dnl Called by other macros, but must be called explicitly at top level for proper initialization
-AC_PROG_CC
-
-dnl This is an obsolescent macro that checks that the C compiler supports the -c and -o options together. 
-dnl Note that, since Automake 1.14, the AC_PROG_CC is rewritten to implement such checks itself, and thus 
-dnl the explicit use of AM_PROG_CC_C_O should no longer be required.
-dnl included in case running Automake 1.13, which is the case for SuSE 13.2
-dnl but causes warning: macro 'AM_PROG_CC_C_0' not found in library on SUSE if included:
-dnl AM_PROG_CC_C_0
-
-dnl but on Suse 13.2 w automake 1.13.4, get msg that 
-dnl warning: warning: compiling 'base/common.c' in subdir requires 'AM_PROG_CC_C_O' in 'configure.ac'
-
-dnl needed for OBS
-AC_PROG_CC_STDC
-
-AC_PROG_CC_C99
+# AC_PROG_C99 for CENTOS 7 in OBS, EOL 6/30/2024
+m4_version_prereq(2.70, [AC_PROG_CC], [AC_PROG_CC_C99])
 
 dnl AC_PROG_LIBTOOL, AM_PROG_LIBTOOL are deprecated names for older versions of LT_INIT
 dnl adds support for --enable/disable -static/shared, -with/without-pic configure flags
@@ -180,9 +170,9 @@ AC_SUBST([LIBTOOL_DEPS])
 # is --version-info "13:1:4", and the generated SO name looks like xxx.so.9.4.1
 
 dnl 7/29/19 first use, LT_CURRENT set to 1
-LT_CURRENT=3
-LT_REVISION=0
-LT_AGE=0
+LT_CURRENT=6
+LT_REVISION=2
+LT_AGE=1
 AC_SUBST(LT_CURRENT)
 AC_SUBST(LT_REVISION)
 AC_SUBST(LT_AGE)
@@ -192,26 +182,15 @@ AC_SUBST(LT_AGE)
 ### Recognize command options for configure script
 ### 
 
+###
 ### Documented options
+###
 
 AC_MSG_NOTICE( [Checking configure command options...] )
 
-dnl *** configure option: --with-adl-headers
-dnl AC_ARG_WITH([adl-headers],
-dnl             [ AS_HELP_STRING([--with-adl-headers=DIR], [Directory containing ADL header files]) ],
-dnl             [adl_header_dir=$withval],
-dnl             [adl_header_dir=[]])
+dnl # residual setting so that Makefile.am files don't break
 adl_header_dir=""
-AC_MSG_NOTICE([adl_header_dir = $adl_header_dir])
-AS_IF( [test -n "$adl_header_dir"],
-         AC_DEFINE( [HAVE_ADL], [1], [If defined, ADL headers are present.  Build with ADL support.])
-         AC_MSG_NOTICE( [adl... enabled]  )
-        ,
-         AC_MSG_NOTICE( [adl... disabled] )
-     )
 AM_CONDITIONAL([HAVE_ADL_COND], [test -n "$adl_header_dir"] )
-AC_SUBST([ADL_HEADER_DIR], [$adl_header_dir])
-
 
 dnl *** configure option: --enable-lib
 AC_ARG_ENABLE([lib],
@@ -222,81 +201,79 @@ dnl Set flag for automake.am:
 AM_CONDITIONAL([ENABLE_SHARED_LIB_COND], [test "x$enable_lib" = "xyes"] )
 dnl ENABLE_SHARED_LIB_FLAG used in package/ddcutil_spec.in
 AS_IF([test "x$enable_lib" = "xyes"],
-      AC_MSG_NOTICE( [lib... enabled] )
-      AC_SUBST(ENABLE_SHARED_LIB_FLAG, 1) 
+      AC_MSG_NOTICE( [lib...        enabled] )
+      AC_SUBST(ENABLE_SHARED_LIB_FLAG, 1)
+	  AC_DEFINE( [BUILD_SHARED_LIB], [1], [If defined, buid shared library.])
      ,
-      AC_MSG_NOTICE( [lib... disabled] )
+      AC_MSG_NOTICE( [lib...        disabled] )
       AC_SUBST(ENABLE_SHARED_LIB_FLAG, 0)
      )
-
-
-dnl Were we building SWIG support for more than Python, there would need to be 2 configuration option, 
-dnl one to control SWIG and one to enable the Python bindings.   
-dnl Since that day is far off, we have just 1 option to enable SWIG for Python
-
-dnl *** configure option: --enable-swig
-AC_ARG_ENABLE([swig],
-              [ AS_HELP_STRING( [--enable-swig=@<:@no/yes@:>@], [Build SWIG interface@<:@default=no@:>@] )],
-              [enable_swig=${enableval}],
-              [enable_swig=no] )
-dnl Set flag for automake.am:
-AM_CONDITIONAL([ENABLE_SWIG_COND], [test "x$enable_swig" = "xyes"] )
-AS_IF([test "x$enable_swig" = "xyes"],
-      AC_MSG_NOTICE( [swig... enabled]  ),
-      AC_MSG_NOTICE( [swig... disabled] )
+     
+dnl *** configure option: --install-lib-only
+AC_ARG_ENABLE([install-lib-only],
+              [ AS_HELP_STRING([--enable-install-lib-only=@<:@yes/no@:>@], [Install only shared shared librarys@<:@default=no@:>@] )],
+              [enable_install_lib_only=${enableval}],
+              [enable_install_lib_only=no] )
+AM_CONDITIONAL([INSTALL_LIB_ONLY_COND], [test "x$enable_install_lib_only" = "xyes"] )
+AS_IF([test "x$enable_install_lib_only" = "xyes"],
+      AC_MSG_NOTICE( [install_lib_only...        enabled] )
+     ,
+      AC_MSG_NOTICE( [install_lib_only...        disabled] )
      )
 
 
-dnl *** configure option: --enable-cython
-AC_ARG_ENABLE([cython],
-              [ AS_HELP_STRING( [--enable-cython=@<:@no/yes@:>@], [Build cython interface@<:@default=no@:>@] )],
-              [enable_cython=${enableval}],
-              [enable_cython=no] )
-dnl Set flag for automake.am:
-AM_CONDITIONAL([ENABLE_CYTHON_COND], [test "x$enable_cython" = "xyes"] )
-AS_IF([test "x$enable_cython" = "xyes"],
-      AC_MSG_NOTICE( [cython... enabled]  ),
-      AC_MSG_NOTICE( [cython... disabled] )
+AS_IF([test "x$enable_lib" = "xno" -a "x$enable_install_lib_only" = "xyes" ],
+       AC_MSG_ERROR( [--disable-lib contradicts --enable-install-lib-only] )
+   ) 
+
+dnl *** configure option: --install-lib-only
+AC_ARG_ENABLE([install-lib-only],
+              [ AS_HELP_STRING([--enable-install-lib-only=@<:@yes/no@:>@], [Install only shared shared librarys@<:@default=no@:>@] )],
+              [enable_install_lib_only=${enableval}],
+              [enable_install_lib_only=no] )
+AM_CONDITIONAL([INSTALL_LIB_ONLY_COND], [test "x$enable_install_lib_only" = "xyes"] )
+AS_IF([test "x$enable_install_lib_only" = "xyes"],
+      AC_MSG_NOTICE( [install_lib_only...        enabled] )
+     ,
+      AC_MSG_NOTICE( [install_lib_only...        disabled] )
      )
 
 
-dnl *** configure option: --enable-cffi
-AC_ARG_ENABLE([cffi],
-              [ AS_HELP_STRING( [--enable-cffi=@<:@no/yes@:>@], [Build cffi interface@<:@default=no@:>@] )],
-              [enable_cffi=${enableval}],
-              [enable_cffi=no] )
-dnl Set flag for automake.am:
-AM_CONDITIONAL([ENABLE_CFFO_COND], [test "x$enable_cffi" = "xyes"] )
-AS_IF([test "x$enable_cffi" = "xyes"],
-      AC_MSG_NOTICE( [cffi... enabled]  ),
-      AC_MSG_NOTICE( [cffi... disabled] )
+AS_IF([test "x$enable_lib" = "xno" -a "x$enable_install_lib_only" = "xyes" ],
+       AC_MSG_ERROR( [--disable-lib contradicts --enable-install-lib-only] )
+   ) 
+
+dnl *** configure option: --enable-envcmds
+AC_ARG_ENABLE([envcmds],
+              [ AS_HELP_STRING([--enable-envcmds=@<:@yes/no@:>@], [Include environment and usbenvironment@<:@default=yes@:>@] )],
+              [enable_envcmds=${enableval}],
+              [enable_envcmds=yes] )
+AS_IF([test "x$enable_envcmds" = "xyes"],
+        AC_MSG_NOTICE( [envcmds...    enabled (provisional) ]  )
+      ,
+        AC_MSG_NOTICE( [envcmds...    disabled] )
      )
 
-
-dnl TODO: Review
-dnl copied from tschoonj configure.ac snippet: https://gist.github.com/tschoonj/6441999
-
-dnl #default behavior is to install the python bindings into subfolders of $prefix
-dnl #however, this may require the user to set the PYTHONPATH environment variable
-dnl #in order to avoid this, invoke configure with the --enable-python-integration option
-
-dnl AC_ARG_ENABLE([python-integration],[AS_HELP_STRING([--enable-python-integration],[install the python bindings in the interpreters site-packages folder])],[enable_python_integration=$enableval],[enable_python_integration=check])
-
+dnl *** configure option: --enable-udev
+AC_ARG_ENABLE([udev],
+              [ AS_HELP_STRING([--enable-udev=@<:@yes/no@:>@], [Use UDEV@<:@default=yes@:>@] )],
+              [enable_udev=${enableval}],
+              [enable_udev=yes] )
+dnl AS_IF([test "x$enable_udev" = "xyes"],
+dnl         AC_MSG_NOTICE( [udev...       enabled (provisional) ]  )
+dnl       ,
+dnl         AC_MSG_NOTICE( [udev...       disabled] )
+dnl      )
 
 dnl *** configure option: --enable-usb
 AC_ARG_ENABLE([usb],
               [ AS_HELP_STRING( [--enable-usb=@<:@yes/no@:>@], [Support USB connected displays@<:@default=yes@:>@] )],
               [enable_usb=${enableval}],
               [enable_usb=yes] )
-AM_CONDITIONAL([ENABLE_USB_COND], [test "x$enable_usb" = "xyes"] )
-dnl ENABLE_USB_FLAG used in package/ddcutil.apec.in
 AS_IF([test "x$enable_usb" = "xyes"],
-        AC_DEFINE( [USE_USB], [1], [If defined, use usb.])
-        AC_SUBST(  ENABLE_USB_FLAG, [1] )
-        AC_MSG_NOTICE( [usb... enabled]  )
+        AC_MSG_NOTICE( [usb...        enabled (provisional) ]  )
       ,
-        AC_SUBST( ENABLE_USB_FLAG, [0] )
-        AC_MSG_NOTICE( [usb... disabled] )
+        AC_MSG_NOTICE( [usb...        disabled] )
      )
 
 dnl *** configure option: --enable-drm
@@ -305,33 +282,184 @@ AC_ARG_ENABLE([drm],
               [enable_drm=${enableval}],
               [enable_drm=yes] )
 AS_IF([test "x$enable_drm" = "xyes"],
-        AC_MSG_NOTICE( [drm... enabled (provisional) ]  )
+        AC_MSG_NOTICE( [drm...        enabled (provisional) ]  )
       ,
-        AC_MSG_NOTICE( [drm... disabled] )
+        AC_MSG_NOTICE( [drm...        disabled] )
      )
 
 dnl *** configure option: --enable-x11
 AC_ARG_ENABLE([x11],
-              [ AS_HELP_STRING( [--enable-x11=@<:@yes/no@:>@], [Use X11 in diagnostics@<:@default=yes@:>@] )],
+              [ AS_HELP_STRING( [--enable-x11=@<:@no/yes@:>@], [Deprecated option X11 ignored.] )],
               [enable_x11=${enableval}],
               [enable_x11=yes] )
-AS_IF([test "x$enable_x11" = "xyes"],
-        AC_MSG_NOTICE( [x11... enabled]  )
+enable_x11=no
+ AS_IF([test "x$enable_x11" = "xyes"],
+       AC_MSG_NOTICE( [x11...      Deprecated option ignored]  ),
+       AC_MSG_NOTICE( [x11...      disabled] )
+      )              
+
+dnl *** configure option: --enable-static-functions-visible
+AC_ARG_ENABLE([static-functions-visible],
+              [ AS_HELP_STRING( [--enable-static-functions-visible=@<:@no/yes@:>@], [Remove static qualifier from function names)@<:@default=no@:>@] )],
+              [enable_static_functions_visible=${enableval}],
+              [enable_static_functions_visible=no] )
+AM_CONDITIONAL([STATIC_FUNCTIONS_VISIBLE_COND], [test "x$enable_static_functions_visible" = "xyes"] )
+AS_IF( [test "x$enable_static_functions_visible" = "xyes"],
+         AC_DEFINE( [STATIC_FUNCTIONS_VISIBLE], [1], [If defined, remove static qualifier from function declarations.])
+         AC_MSG_NOTICE( [static_functions_visible...enabled] )
       ,
-        AC_MSG_NOTICE( [x11... disabled] )
+         AC_MSG_NOTICE( [static_functions_visible...disabled] )
      )
+
+dnl *** configure option: --enable-asan
+AC_ARG_ENABLE([asan],
+              [ AS_HELP_STRING( [--enable-asan=@<:@no/yes@:>@], [Build for asan (address sanitizer)@<:@default=no@:>@] )],
+              [enable_asan=${enableval}],
+              [enable_asan=no] )
+AM_CONDITIONAL([ASAN_COND], [test "x$enable_asan" = "xyes"] )
+AS_IF( [test "x$enable_asan" = "xyes"],
+         AC_DEFINE( [WITH_ASAN], [1], [If defined, building for Asan instrumentation.])
+         AC_MSG_NOTICE( [asan..........enabled] )
+      ,
+         AC_MSG_NOTICE( [asan..........disabled] )
+     )
+
+
+
+dnl dnl *** configure option: --enable-trace
+dnl AC_ARG_ENABLE([trace],
+dnl               [ AS_HELP_STRING( [--enable-trace=@<:@yes/no@:>@], [Output trace messages@<:@default=yes@:>@] )],
+dnl               [enable_trace=${enableval}],
+dnl               [enable_trace=yes] )
+dnl AS_IF([test "x$enable_trace" = "xyes"],
+dnl         AC_MSG_NOTICE( [trace...     enabled]  )
+dnl         AC_DEFINE([ENABLE_TRACE], [1], [If defined, enable trace messages.])
+dnl       ,
+dnl         AC_MSG_NOTICE( [TRACE...     disabled] )
+dnl      )
+
+dnl *** configure option: --enable-targetbsd
+AC_ARG_ENABLE([targetbsd],
+              [ AS_HELP_STRING([--enable-targetbsd=@<:@no/yes@:>@], [Build for BSD@<:@default=no@:>@ (Developer-only)] )],
+              [enable_targetbsd=${enableval}],
+              [enable_targetbsd=no] )
 
 
 dnl *** configure option: --enable-doxygen
 AC_ARG_ENABLE([doxygen],
-              [ AS_HELP_STRING( [--enable-doxygen=@<:@no/yes@:>@], [Build API documentation using Doxygen (if it is installed)@<:@default=no@:>@] )],
+              [ AS_HELP_STRING( [--enable-doxygen=@<:@no/yes@:>@], [Build API documentation using Doxygen (if it is installed)@<:@default=no@:>@ (Developer-only)] )],
               [enable_doxygen=${enableval}],
               [enable_doxygen=no] )
 AM_CONDITIONAL([ENABLE_DOXYGEN_COND], [test "x$enable_doxygen" = "xyes"] )
 AS_IF([test "x$enable_doxygen" = "xyes"],
-        AC_MSG_NOTICE( [doxygen... enabled]  )
+        AC_MSG_NOTICE( [doxygen...    enabled]  )
       ,
-        AC_MSG_NOTICE( [doxygen... disabled] )
+        AC_MSG_NOTICE( [doxygen...    disabled] )
+     )
+
+###
+### Resolve choices for public options
+###
+
+AC_MSG_NOTICE( [Resolving options...] ) 
+dnl --enable-targetbsd => --disable-envcmds, --disable-usb, --disable-udev
+
+AS_IF([test "x$enable_targetbsd" = "xyes" -a "x$enable_envcmds" = "xyes" ],
+       [ AC_MSG_NOTICE( [--enable-targetbsd forces --disable-envcmds] )
+        enable_envcmds=no
+       ]
+   ) 
+
+AS_IF([test "x$enable_targetbsd" = "xyes" -a "x$enable_udev" = "xyes" ],
+       [ AC_MSG_NOTICE( [--enable-targetbsd forces --disable-udev] )
+        enable_udev=no
+       ]
+   ) 
+
+AS_IF([test "x$enable_targetbsd" = "xyes" -a "x$enable_usb" = "xyes" ],
+       [ AC_MSG_NOTICE( [--enable-targetbsd forces --disable-usb] )
+        enable_usb=no
+       ]
+   ) 
+
+AS_IF([test "x$enable_udev" != "xyes" -a "x$enable_usb" = "xyes" ],
+       [ AC_MSG_NOTICE( [--disable-udev forces --disable-usb] )
+        enable_usb=no
+       ]
+   ) 
+
+# --enable-install-lib-only => --disable-envcmds
+
+AS_IF([test "x$enable_install_lib_only" = "xyes" -a "x$enable_envcmds" = "xyes"  ],
+       [ AC_MSG_NOTICE( [--enable-install-lib-only forces --disable-envcmds] )
+        enable_envcmds=no
+       ]
+   ) 
+
+# --disable-envcmds => --disable-drm, --disable-x11
+
+AS_IF([test "x$enable_envcmds" != "xyes" -a "x$enable_drm" = "xyes" ],
+       [ AC_MSG_NOTICE( [--disable-envcmds forces --disable-drm] )
+        enable_drm=no
+       ]
+   ) 
+
+AS_IF([test "x$enable_envcmds" != "xyes" -a "x$enable_x11" = "xyes" ],
+       [ AC_MSG_NOTICE( [--disable-envcmds forces --disable-x11] )
+        enable_x11=no
+       ]
+   ) 
+
+
+###
+### Report resolved options and set conditionals, substitutions, and defines
+###
+
+AM_CONDITIONAL([ENABLE_TARGETBSD_COND], [test "x$enable_targetbsd" = "xyes"] )
+AS_IF([test "x$enable_targetbsd" = "xyes"],
+      AC_MSG_NOTICE( [targetbsd...  enabled] )
+      AC_DEFINE( [TARGET_BSD], [1], [If defined, building for BSD.])
+      AC_SUBST(ENABLE_TARGETBSD_FLAG, 1) 
+     ,
+      AC_MSG_NOTICE( [targetbsd...  disabled] )
+      AC_SUBST(ENABLE_TARGETBSD_FLAG, 0)
+      AC_DEFINE( [TARGET_LINUX], [1], [If defined, building for Linux.])
+     )
+
+AM_CONDITIONAL([ENABLE_ENVCMDS_COND], [test "x$enable_envcmds" = "xyes"] )
+AS_IF([test "x$enable_envcmds" = "xyes"],
+      AC_MSG_NOTICE( [envcmds...    enabled] )
+      AC_DEFINE( [ENABLE_ENVCMDS], [1], [If defined, enable environment commands.])
+      AC_SUBST(ENABLE_ENVCMDS_FLAG, 1) 
+     ,
+      AC_MSG_NOTICE( [envcmds...    disabled] )
+      AC_SUBST(ENABLE_ENVCMDS_FLAG, 0)
+     )
+
+AM_CONDITIONAL([ENABLE_UDEV_COND], [test "x$enable_udev" = "xyes"] )
+AS_IF([test "x$enable_udev" = "xyes"],
+      AC_MSG_NOTICE( [udev...       enabled] )
+      AC_DEFINE( [ENABLE_UDEV], [1], [If defined, use UDEV.])
+      AC_SUBST(ENABLE_UDEV_FLAG, 1) 
+     ,
+      AC_MSG_NOTICE( [udev...       disabled] )
+      AC_SUBST(ENABLE_UDEV_FLAG, 0)
+     )
+
+AM_CONDITIONAL([ENABLE_USB_COND], [test "x$enable_usb" = "xyes"] )
+AS_IF([test "x$enable_usb" = "xyes"],
+        AC_DEFINE( [ENABLE_USB], [1], [If defined, enable USB communication.])
+        AC_SUBST(  ENABLE_USB_FLAG, [1] )
+        AC_MSG_NOTICE( [usb...        enabled]  )
+      ,
+        AC_SUBST( ENABLE_USB_FLAG, [0] )
+        AC_MSG_NOTICE( [usb...        disabled] )
+     )
+
+AS_IF([test "x$enable_x11" = "xyes"],
+        AC_MSG_NOTICE( [x11...        enabled]  )
+      ,
+        AC_MSG_NOTICE( [x11...        disabled] )
      )
 
 
@@ -353,84 +481,56 @@ dnl     )
 
 dnl *** configure option: --enable-testcases
 AC_ARG_ENABLE([testcases],
-              [ AS_HELP_STRING( [--enable-testcases=@<:@no/yes@:>@], [Include test cases @<:@default=no@:>@] )],
+              [ AS_HELP_STRING( [--enable-testcases=@<:@no/yes@:>@], [Include test cases @<:@default=no@:>@] (Developer-only) )],
               [include_testcases=${enableval}],
               [include_testcases=no] )
 AM_CONDITIONAL([INCLUDE_TESTCASES_COND], [test "x$include_testcases" = "xyes"] )
 AS_IF([test "x$include_testcases" = "xyes"],
       AC_DEFINE( [INCLUDE_TESTCASES], [1], [If defined, build with test cases.]) 
-      AC_MSG_NOTICE( [testcases... enabled]  )
+      AC_MSG_NOTICE( [testcases...  enabled]  )
       ,
-      AC_MSG_NOTICE( [testcases... disabled] )
+      AC_MSG_NOTICE( [testcases...  disabled] )
      )
 
 dnl *** configure option: --enable-callgraph
 AC_ARG_ENABLE([callgraph],
-              [ AS_HELP_STRING( [--enable-callgraph=@<:@no/yes@:>@], [Create .expand files for static call graph@<:@default=no@:>@] )],
+              [ AS_HELP_STRING( [--enable-callgraph=@<:@no/yes@:>@], [Create .expand files for static call graph@<:@default=no@:>@] (Developer-only) )],
               [enable_callgraph=${enableval}],
               [enable_callgraph=no] )
 AM_CONDITIONAL([ENABLE_CALLGRAPH_COND], [test "x$enable_callgraph" = "xyes"] )
 AS_IF([test "x$enable_callgraph" = "xyes"],
-      AC_MSG_NOTICE( [callgraph... enabled]  ),
-      AC_MSG_NOTICE( [callgraph... disabled] )
-     )
-
-dnl GObject implementation has been mothballed.  
-dnl TODO: delete or comment out this section
-dnl *** configure option: --enable-gobject-api
-AC_ARG_ENABLE([gobject-api],
-              [ AS_HELP_STRING( [--enable-gobject-api=@<:@no/yes@:>@], [Build gobject related files, typelib@<:@default=no@:>@] )],
-              [enable_gobject=${enableval}],
-              [enable_gobject=no] )
-AM_CONDITIONAL([ENABLE_GOBJECT_COND], [test "x$enable_gobject" = "xyes"] )
-AS_IF([test "x$enable_gobject" = "xyes"],
-      AC_MSG_NOTICE( [gobject-api... enabled]  ),
-      AC_MSG_NOTICE( [gobject-api... disabled] )
+      AC_MSG_NOTICE( [callgraph...  enabled]  ),
+      AC_MSG_NOTICE( [callgraph...  disabled] )
      )
 
 dnl *** configure option: --enable-failsim
 AC_ARG_ENABLE([failsim],
-              [ AS_HELP_STRING( [--enable-failsim=@<:@no/yes@:>@], [Build with failure simulation@<:@default=no@:>@] )],
+              [ AS_HELP_STRING( [--enable-failsim=@<:@no/yes@:>@], [Build with failure simulation@<:@default=no@:>@ (Developer-only)] )],
               [enable_failsim=${enableval}],
               [enable_failsim=no] )
 AM_CONDITIONAL([ENABLE_FAILSIM_COND], [test "x$enable_failsim" = "xyes"] )
 AS_IF( [test "x$enable_failsim" = "xyes"],
          AC_DEFINE( [ENABLE_FAILSIM], [1], [If defined, enable failsim.])
-         AC_MSG_NOTICE( [failsim..... enabled] )
+         AC_MSG_NOTICE( [failsim.....  enabled] )
       ,
-         AC_MSG_NOTICE( [failsim..... disabled] )
+         AC_MSG_NOTICE( [failsim.....  disabled] )
      )
-
 
 dnl *** configure option: --enable-force-suse
 AC_ARG_ENABLE([force-suse],
-              [ AS_HELP_STRING( [--enable-force-suse=@<:@no/yes@:>@], [Force SUSE target directories@<:@default=no@:>@] )],
+              [ AS_HELP_STRING( [--enable-force-suse=@<:@no/yes@:>@], [Force SUSE target directories@<:@default=no@:>@ (Developer-only)]  )],
               [enable_force_suse=${enableval}],
               [enable_force_suse=no] )
 AM_CONDITIONAL([ENABLE_FORCE_SUSE_COND], [test "x$enable_force_suse" = "xyes"] )
 AS_IF( [test "x$enable_force_suse" = "xyes"],
          AC_DEFINE( [ENABLE_FORCE_SUSE], [1], [If defined, force SUSE target directories.])
-         AC_MSG_NOTICE( [force-suse..... enabled] )
+         AC_MSG_NOTICE( [force-suse....enabled] )
       ,
-         AC_MSG_NOTICE( [force-suse..... disabled] )
+         AC_MSG_NOTICE( [force-suse....disabled] )
      )
 
-
-dnl *** configure option: --enable-internal-api-use
-AC_ARG_ENABLE([use-api],
-              [ AS_HELP_STRING( [--enable-internal-api-use=@<:@no/yes@:>@], [Use ddcutil API internally@<:@default=no@:>@] )],
-              [enable_use_api=${enableval}],
-              [enable_use_api=no] )
-AM_CONDITIONAL([USE_API_COND], [test "x$enable_use_api" = "xyes"] )
-AS_IF( [test "x$enable_use_api" = "xyes"],
-         AC_DEFINE( [USE_API], [1], [If defined, use ddcutil APIs internally.])
-         AC_MSG_NOTICE( [use-api..... enabled] )
-      ,
-         AC_MSG_NOTICE( [use-api..... disabled] )
-     )
 
 dnl Note to self: use autoheader to regenerate config.h.in whenever new defines added 
-
 
 
 ###
@@ -472,34 +572,41 @@ dnl i2c-dev.h is in linux-headers
 dnl i2c-dev.h not found:
 dnl AC_CHECK_HEADERS([i2c-dev.h])
 
+dnl dnl libi2c and libi2c-dev have no .pc files.  Check for header file instead.
+dnl AC_CHECK_HEADER( [i2c/smbus.h],
+dnl                     AC_MSG_NOTICE( [header file i2c/smbus.h found.] ), 
+dnl                     AC_MSG_ERROR( [libi2c development package (e.g. libi2c-dev, name varies by distribution) >= 4.0 required.] )
+dnl 					)
+
 
 ###
 ### Required library tests
 ###
 
 dnl Notes on pkg_check_modules:
-dnl 1) appends to xxx_CFLAGS and xxx_LIBS the output of pkg-config --cflags|--lib 
+dnl 1) appends to xxx_CFLAGS and xxx_LIBS the output of pkg-config --cflags|--libs 
 dnl 2) if no action-if-false branch defined, pkg_check_modules terminates execution if not found
 
-dnl was 2.36, can we drop this to 2.14 to allow for Debian 7.0
 dnl 9/2017: need >= 2.32 for g_thread_...() functions
-PKG_CHECK_MODULES(GLIB,  glib-2.0 >= 2.32) 
-required_packages="$required_packages glib-2.0 >= 2.32"
+PKG_CHECK_MODULES(GLIB,  glib-2.0 >= 2.40) 
+required_packages="$required_packages glib-2.0 >= 2.40"
+PKG_CHECK_MODULES(JANSSON, jansson >= 2.0)
+required_packages="$required_packages jansson >= 2.0"
 
-PKG_CHECK_MODULES(UDEV,   libudev, 
-     [libudev_found=1],  
-     [libudev_found=0
-      AC_MSG_NOTICE( [The package providing libudev.h varies by Linux distribution and release.] )
-      AC_MSG_NOTICE( [It may be a udev specific package, e.g. libudev-dev, libudev-devel] )
-      AC_MSG_NOTICE( [or it may be part of systemd, e.g systemd-devel] )
-      AC_MSG_ERROR( [libudev not found] )
-     ] )
-required_packages="$required_packages xrandr x11"
+AS_IF( [test "x$enable_udev" = "xyes" ],
+  [   PKG_CHECK_MODULES(UDEV,   libudev, 
+       [ libudev_found=1],  
+       [ libudev_found=0
+           AC_MSG_NOTICE( [The package providing libudev.h varies by Linux distribution and release.] )
+           AC_MSG_NOTICE( [It may be a udev specific package, e.g. libudev-dev, libudev-devel] )
+           AC_MSG_NOTICE( [or it may be part of systemd, e.g systemd-devel] )
+           AC_MSG_ERROR( [libudev not found] )
+       ] )
+       ]
+     ,
+     )
+dnl required_packages="$required_packages xrandr x11"
 dnl how to handle libudev?   punt for now
-
-dnl disabled because systemd_util.c no longer needed:
-dnl PKG_CHECK_MODULES(SYSTEMD, libsystemd)
-
 
 
 ###
@@ -541,9 +648,9 @@ AS_IF([test "x$enable_drm" = "xyes"],
 AM_CONDITIONAL([USE_LIBDRM_COND], [test "x$enable_drm" = "xyes"] )
 AS_IF([test "x$enable_drm" = "xyes"],
         AC_DEFINE([USE_LIBDRM], [1], [Use libdrm])
-        AC_MSG_NOTICE( [drm... enabled]  )
+        AC_MSG_NOTICE( [drm...        enabled]  )
       ,
-        AC_MSG_NOTICE( [drm... disabled] )
+        AC_MSG_NOTICE( [drm...        disabled] )
      )
 
 AS_IF( [test 0$DBG -ne 0], 
@@ -588,53 +695,29 @@ dnl        ])
 dnl PKG_CHECK_MODULES(XRANDR, xrandr)
 dnl PKG_CHECK_MODULES(X11,    x11)
 
+dnl Duplicate of next section?
+
+dnl TODO: disable if enable-envcmds is false?
+
+dnl Force disable of options if environment commands disabled
+
 AS_IF([test "x$enable_x11" = "xyes"],
          [ PKG_CHECK_MODULES(LIBX11, x11)
+           PKG_CHECK_MODULES(XRANDR, xrandr)
+		   PKG_CHECK_MODULES(XEXT, xext)
          ]) 
 
 AM_CONDITIONAL([USE_X11_COND], [test "x$enable_x11" = "xyes"] )
 AS_IF([test "x$enable_x11" = "xyes"],
         AC_DEFINE([USE_X11], [1], [Use X11])
-        AC_MSG_NOTICE( [x11... enabled]  )
+        AC_MSG_NOTICE( [x11...        enabled]  )
       ,
-        AC_MSG_NOTICE( [x11... disabled] )
+        AC_MSG_NOTICE( [x11...        disabled] )
      )
 
-AS_IF([test "x$enable_x11" = "xyes"],
-         [ PKG_CHECK_MODULES(XRANDR, xrandr)  
-         ])
-
-
-dnl Note cflags and libs, but don't need to use in makefiles 
-AS_IF( [test 0$DBG -ne 0], 
-       [
-          AC_MSG_NOTICE( [LIBX11_CFLAGS:    $LIBX11_CFLAGS] )
-          AC_MSG_NOTICE( [LIBX11_LIBS:      $LIBX11_LIBS] )
-       ]) 
-
-
-
-
-### X11 
-
-dnl PKG_CHECK_MODULES(XRANDR, xrandr)
-dnl PKG_CHECK_MODULES(X11,    x11)
-
-AS_IF([test "x$enable_x11" = "xyes"],
-         [ PKG_CHECK_MODULES(LIBX11, x11)
-         ]) 
-
-AM_CONDITIONAL([USE_X11_COND], [test "x$enable_x11" = "xyes"] )
-AS_IF([test "x$enable_x11" = "xyes"],
-        AC_DEFINE([USE_X11], [1], [Use X11])
-        AC_MSG_NOTICE( [x11... enabled]  )
-      ,
-        AC_MSG_NOTICE( [x11... disabled] )
-     )
-
-AS_IF([test "x$enable_x11" = "xyes"],
-         [ PKG_CHECK_MODULES(XRANDR, xrandr)  
-         ])
+dnl AS_IF([test "x$enable_x11" = "xyes"],
+dnl          [ PKG_CHECK_MODULES(XRANDR, xrandr)  
+dnl         ])
 
 
 dnl Note cflags and libs, but don't need to use in makefiles 
@@ -710,8 +793,8 @@ AM_COND_IF([USE_DOXYGEN],
 
 ### DOC-BASE
 
-dnl n. doc-base is Debain specific
-dnl doc-base doesn't have pc file.
+dnl n. doc-base is Debian specific
+dnl doc-base does not have pc file.
 AC_CHECK_PROGS( [DOCBASE_INSTALL_DOCS], [install-docs])
 AS_IF( [test -n "$DOCBASE_INSTALL_DOCS"], 
           AC_MSG_NOTICE([doc-base execuable found])
@@ -721,17 +804,6 @@ AS_IF( [test -n "$DOCBASE_INSTALL_DOCS"],
 AM_CONDITIONAL( [HAVE_DOCBASE], [test -n "$DOCBASE_INSTALL_DOCS"])
 
 
-### GObject
-
-# Vestigial.  GObject interface no longer being developed.
-
-m4_ifdef([GOBJECT_INTROSPECTION_CHECK], [GOBJECT_INTROSPECTION_CHECK([1.30.0])])
-AM_CONDITIONAL(HAVE_INTROSPECTION, test "x$found_introspection" = xyes)
-
-AS_IF([test "x$enable_gobject" = "xyes"],
-     [ PKG_CHECK_MODULES(GOBJECT,  gobject-2.0 >= 2.14)  ],
-     )
-
 ### Library
 
 AS_IF([test "x$enable_lib" = "xyes"],
@@ -739,318 +811,14 @@ AS_IF([test "x$enable_lib" = "xyes"],
      )
 
 
-### Python and SWIG
 
-dnl Locate SWIG and PYTHON in case we need them
-
-dnl Python integration is a mess.   See for example:
-dnl   https://tschoonj.github.io/blog/2013/09/04/building-libtool-modules-python-bindings/
-dnl   https://gist.github.com/tschoonj/6441999
-dnl   https://lists.ubuntu.com/archives/ubuntu-devel/2009-February/027439.html
-dnl   https://bugzilla.redhat.com/show_bug.cgi?id=533920
-
-dnl Some of the issues: 
-dnl - Python 3 is a distint language from Python 2, yet AM_PYTHON treats it as an upwardly 
-dnl   compatible version Python 2. 
-dnl - How to build for multiple version fo Python 2 and Python 3? 
-dnl - Debian (and derivatives such as Ubuntu) have modified the directory scheme. 
-dnl   Directory names end with dist-packags instead of site-packages.  
-dnl   But this is incompletely implemented.   sysconfig.get_path() returns names
-dnl   ending with site-package on python 3
-dnl - sys.path is built using calls to site.get_site_packages().  But this function 
-dnl   hardcodes the paths.  There is no reference to sysconfig.get_path() or 
-dnl   distusils.sysconfig_get_python_lib().  So code that relies on the latter functions
-dnl   can return a library that is not in sys.path
-dnl - Where do local extensions to the distribution version of Python belong? 
-dnl   In a ditrectory under /usr/local or under /usr? 
-dnl - pkg-config names can vary. 
-dnl   Fedora 25:  python and python2 refer to current Python2 
-dnl               python3, python-3.5, python-3.5m refer to current Python 3
-dnl   openSUSE 42.2:  
-dnl            python3 not defined, python-3.4 refers to current Python 3 
-dnl   So need to know the version number of Python 3 to construct a name
-dnl   to pass to pkg-config
-
-
-AS_IF( [ test "x$enable_swig" = "xyes" || test "x$enable_cython" = "xyes" || test "x$enable_cffi" = "xyes"  ], [
-   AC_MSG_NOTICE( [SWIG, Cython, or CFFI  enabled, checking for Python and SWIG...] )
-
-   # Python 3 
-
-	 AC_MSG_NOTICE( [Calling ax_path_python3 for Python 3...] )
-	 AX_PATH_PYTHON3(3.1, [python3_found=yes], [python_found3=no]) 
-	 AS_IF( [test 0$DBG -ne 0], [
-      AC_MSG_NOTICE( [Set by ax_path_python3 for python3:] )
-      AC_MSG_NOTICE( [  python3_found        = $python3_found] )
-	    AC_MSG_NOTICE( [  PYTHON3              = $PYTHON3] )
-	    AC_MSG_NOTICE( [  PYTHON3_VERSION      = $PYTHON3_VERSION] )
-      AC_MSG_NOTICE( [  PYTHON3_PREFIX       = $PYTHON3_PREFIX] )
-      AC_MSG_NOTICE( [  PYTHON3_EXEC_PREFIX  = $PYTHON3_EXEC_PREFIX] )
-	    AC_MSG_NOTICE( [  python3dir           = $python3dir] )
-	    AC_MSG_NOTICE( [  pkgpython3dir        = $pkgpython3dir] )
-	    AC_MSG_NOTICE( [  py3execdir           = $py3execdir] )
-	    AC_MSG_NOTICE( [  pkgpy3execdir        = $pkgpy3execdir] )
-	 ])
-
-   AS_IF( [test "x$python3_found" = "xyes" ], [
-      AC_MSG_NOTICE( [Looking for Python 3 pkgconfig information...] )
-
-      PKG_CHECK_MODULES([PY3], [python-$PYTHON3_VERSION], [
-         enable_py3="yes"
-         AS_IF( [test 0$DBG -ne 0], [
-            AC_MSG_NOTICE( [  PY3_CFLAGS    = $PY3_CFLAGS ])
-            AC_MSG_NOTICE( [  PY3_LIBS      = $PY3_LIBS   ])
-         ])
-         dnl PY3_CFLAGS and PY3_LIBS are precious, no need to AC_SUBST() 
-         AC_SUBST(PY3_CFLAGS)
-         AC_SUBST(PY3_LIBS)
-      ],[
-         AC_MSG_WARN([Building without Python 3 support])
-         python3_found="no"
-         enable_py3="no"
-      ])
-   ],[
-      AC_MSG_NOTICE( [Skipping check for Python3 pkgconfig] )
+AS_IF( [test "x$enable_asan" = "xyes"], [
+   required_packages="asan $required_packages"
+   # has no effect on $CFLAGS
+   CFLAGS="$CFLAGS -fsanitize=address"
+   CFLAGS="$CFLAGS -fsanitize-address-use-after-scope -fno-omit-frame-pointer"
    ])
 
-   AS_IF( [test "x$enable_py3" = "xyes" ], [
-      AX_PYTHON_ENV($PYTHON3)
-      AC_MSG_NOTICE([PY3_EXTRA_LDFLAGS:  $PY3_EXTRA_LDFLAGS])   
-      AC_MSG_NOTICE([PY3_EXTRA_LIBS      $PY3_EXTRA_LIBS])
-      AC_MSG_NOTICE([usr_py3execdir:     $usr_py3execdir])
-
-      dnl AC_SUBST() unnecessary, precious variables
-      AC_SUBST(PY3_EXTRA_LDFLAGS)
-      AC_SUBST(PY3_EXTRA_LIBS)
-   ])
-
-
-   # Python 2
-
-   AC_MSG_NOTICE( [Calling am_path_python for Python 2...] )
-	 AM_PATH_PYTHON(2.6, [python_found=yes], [python_found=no]) 
-	 AS_IF( [test 0$DBG -ne 0], [
-      AC_MSG_NOTICE( [Set by am_path_python:] )
-	    AC_MSG_NOTICE( [  python_found        = $python_found] )
-	    AC_MSG_NOTICE( [  PYTHON              = $PYTHON] )
-  	  AC_MSG_NOTICE( [  PYTHON_VERSION      = $PYTHON_VERSION] )
-	    AC_MSG_NOTICE( [  PYTHON_PREFIX       = $PYTHON_PREFIX] )
-      AC_MSG_NOTICE( [  PYTHON_EXEC_PREFIX  = $PYTHON_EXEC_PREFIX] )
-	    AC_MSG_NOTICE( [  pythondir           = $pythondir] )
-	    AC_MSG_NOTICE( [  pkgpythondir        = $pkgpythondir] )
-	    AC_MSG_NOTICE( [  pyexecdir           = $pyexecdir] )
-	    AC_MSG_NOTICE( [  pkgpyexecdir        = $pkgpyexecdir] )
-   ])
-
-   AS_IF( [ test "x$python_found" = "xyes"], [
-	   AM_PYTHON_CHECK_VERSION($PYTHON, [3.0], [
-	      AC_MSG_NOTICE( [No Python 2.x found])
-	      python_found = "no"
-      ])
-   ])
-
-   AS_IF( [test "x$python_found" = "xyes" ], [
-      AC_MSG_NOTICE( [Looking for Python2 pkgconfig information...] )
-
-      PKG_CHECK_MODULES([PY2], [python-$PYTHON_VERSION], [
-         enable_py2="yes"
-         AS_IF( [test 0$DBG -ne 0], [
-            AC_MSG_NOTICE( [Set by pkg_check_modules:   ] )
-            AC_MSG_NOTICE( [  PY2_CFLAGS  = $PY2_CFLAGS ] )
-            AC_MSG_NOTICE( [  PY2_LIBS    = $PY2_LIBS   ] )
-         ])
-         dnl unnecessary, precious
-         AC_SUBST(PY2_CFLAGS, $PY2_CFLAGS)
-         AC_SUBST(PY2_LIBS,     $PY2_LIBS)
-      ],[
-         AC_MSG_WARN([Building without Python 2 support])
-         python2_found="no"
-         enable_py2="no"
-     ])
-   ],[
-      AC_MSG_NOTICE( [Skipping check for Python2 pkgconfig] )
-   ])
-
-
-   AS_IF( [test "x$enable_py2" = "xyes" ], [
-      AX_PYTHON_ENV($PYTHON)
-      AC_MSG_NOTICE([PY2_EXTRA_LDFLAGS:  $PY2_EXTRA_LDFLAGS])   
-      AC_MSG_NOTICE([PY2_EXTRA_LIBS      $PY3_EXTRA_LIBS])
-      AC_MSG_NOTICE([usr_py2execdir:     $usr_py2execdir])
-      AC_MSG_NOTICE([alt_py2execdir:     $alt_py2execdir])
-
-      dnl precious variables
-      AC_SUBST(PY2_EXTRA_LDFLAGS)
-      AC_SUBST(PY2_EXTRA_LIBS)
-   ])
-
-
-   # SWIG 
-
-   dnl enable_py2=no
-   dnl enable_py3=no
-   dnl AC_MSG_NOTICE( [enable_py2:    $enable_py2" ])
-   dnl AC_MSG_NOTICE( [enable_py3:    $enable_py3" ])
-   AS_IF( [ test "x$enable_py2" = "xyes" -o  "x$enable_py3" = "xyes"], 
-     enable_some_python="yes"
-   )
-   AC_MSG_NOTICE( [ enable_some_python:   $enable_some_python ])
-
-   AS_IF( [ test "x$enable_swig" = "xyes"   ], [
-
-      AS_IF( [test "x$enable_some_python" = "xyes"], [
-         AC_MSG_NOTICE( [Calling ax_pkg_swig...] )
-
-         dnl ax_pkg_swig respects SWIG_LIB, but overrides SWIG, so don't expose the possibility of overriding
-         dnl AC_ARG_VAR(SWIG, [swig executable])
-         dnl AC_ARG_VAR(SWIG_LIB, [linker flags for swig])
-         dnl AC_MSG_NOTICE( [Before ax_pkg_swig:] )
-         dnl AC_MSG_NOTICE( [  SWIG                    = $SWIG ] )
-         dnl AC_MSG_NOTICE( [  SWIG_LIB                = $SWIG_LIB ])
-
-         AX_PKG_SWIG(1.3.21, [swig_found=yes], [swig_found=no])
-         AS_IF( [test 0$DBG -ne 0], [
-            AC_MSG_NOTICE( [Set by ax_pkg_swig:] )
-            AC_MSG_NOTICE( [  swig_found              = $swig_found] )
-            AC_MSG_NOTICE( [  SWIG                    = $SWIG ] )
-            AC_MSG_NOTICE( [  SWIG_LIB                = $SWIG_LIB ])
-         ])
-
-         dnl AX_SWIG_MULTI_MODULE_SUPPORT
-
-         dnl dnl n.b. will fail if python2 not installed
-         dnl dnl AX_PYTHON_DEVEL Calls AC_PATH_PROG() to find $PYTHON, fails if python not found
-         dnl dnl PYTHON_SITE_PKG_EXEC set only in _alt version:
-         dnl AS_IF( [test "x$python_found" = "xyes" ], [
-         dnl    AC_MSG_NOTICE( [Calling ax_python_devel for informational purposes...])
-         dnl    AX_PYTHON_DEVEL
-
-         dnl    AS_IF( [test 0$DBG -ne 0], [
-         dnl       AC_MSG_NOTICE( [From ax_python_devel or ac_python_devel_alt..  ] )
-	   	    dnl       AC_MSG_NOTICE( [  PYTHON_CPPFLAGS      = $PYTHON_CPPFLAGS      ] )
-	   	     dnl       AC_MSG_NOTICE( [  PYTHON_SITE_PKG      = $PYTHON_SITE_PKG    ] )
-   
-		     dnl       AC_MSG_NOTICE( [From ax_python_devel only ...  ] )
-		     dnl       AC_MSG_NOTICE( [  PYTHON_LIBS          = $PYTHON_LIBS          ] )
-		     dnl       AC_MSG_NOTICE( [  PYTHON_EXTRA_LDFLAGS = $PYTHON_EXTRA_LDFLAGS    ] )
-		     dnl       AC_MSG_NOTICE( [  PYTHON_EXTRA_LIBS    = $PYTHON_EXTRA_LIBS    ] )
-
-		     dnl       AC_MSG_NOTICE( [From ax_python_devel_alt only ...  ] )
-		     dnl       AC_MSG_NOTICE( [  PYTHON_LDFLAGS       = $PYTHON_LDFLAGS       ] )
-		     dnl       AC_MSG_NOTICE( [  PYTHON_SITE_PKG_EXEC = $PYTHON_SITE_PKG_EXEC    ] )
-		     dnl       AC_MSG_NOTICE( [  PYTHON_CFLAGS       = $PYTHON_CFLAGS] )
-		     dnl    ])
-		     dnl ])
-
-         dnl dnl n. AX_SWIG_PYTHON does AC_REQUIRE of AX_PKG_SWIG, AX_PYTHON_DEVEL
-         dnl dnl AC_MSG_NOTICE( [Calling ax_swig_python...] )
-         dnl AX_SWIG_PYTHON
-         dnl AS_IF( [test 0$DBG -ne 0], [
-         dnl    AC_MSG_NOTICE( [ Set by ax_swig_python:] )
-         dnl    AC_MSG_NOTICE( [   AX_SWIG_PYTHON_CPPFLAGS = $AX_SWIG_PYTHON_CPPFLAGS ] )
-         dnl    AC_MSG_NOTICE( [   AX_SWIG_PYTHON_OPT      = $AX_SWIG_PYTHON_OPT ] )
-         dnl    AC_MSG_NOTICE( [   AX_SWIG_PYTHON_LIBS     = $AX_SWIG_PYTHON_LIBS ] )
-         dnl ])
-
-         AS_IF([ test "x$swig_found" = "xyes" -a "x$enable_some_python" = "xyes"],
-               [ python_and_swig_found="yes"],
-               [ python_and_swig_found="no"]
-              )
-         AC_MSG_NOTICE( [python_and_swig_found  = $python_and_swig_found ])
-
-         AS_IF([test "x$enable_swig" = "xyes" -a  "x$python_and_swig_found" != "xyes" ] ,
-               AC_MSG_ERROR( [--enable-swig requires some version of Python, its development package, and SWIG] ) 
-           )
-		],
-		[])
-
-   ],[
-     AC_MSG_NOTICE([Skipping SWIG check])
-   ])
-
-],
-[
-   AC_MSG_NOTICE( [SWIG disabled, skipping checks for Python and SWIG...])
-])
-
-AM_CONDITIONAL([ENABLE_PY2], [test x"$enable_py2" = xyes])
-AM_COND_IF([ENABLE_PY2], [AC_DEFINE([ENABLE_PY2], [1], [Python2 is enabled])])
-
-AM_CONDITIONAL([ENABLE_PY3], [test x"$enable_py3" = xyes])
-AM_COND_IF([ENABLE_PY3], [AC_DEFINE([ENABLE_PY3], [1], [Python3 is enabled])])
-
-
-dnl AC_MSG_NOTICE([prefix = ${prefix}])
-dnl AC_MSG_NOTICE(ac_default_[prefix = ${ac_default_prefix}])
-dnl AX_FIX_PYTHON_PATH($PYTHON, [pyexecdir], $pyexecdir, $prefix)
-
-if test "x$enable_swig" = "xyes" ; then
-  AC_MSG_NOTICE([Building with Python bindings])
-
-  dnl if test "x$enable_python_integration" = xyes ; then
-  dnl         pythondir=$PYTHON_SITE_PKG
-  dnl         pyexecdir=$PYTHON_SITE_PKG_EXEC
-  dnl fi
-
-
-  dnl AC_SUBST(PYTHONDIR,    $pythondir)
-  dnl AC_SUBST(PKGPYTHONDIR, $pkgpythondir)
-  dnl AC_SUBST(PYEXECDIR,    $pyexecdir)
-  dnl AC_SUBST(PKGPYEXECDIR, $pkgpyexecdir)
-
-	AS_IF([ test "x$swig_found" = "xyes" -a "x$python_found" = "xyes"],
-	  AC_MSG_NOTICE( [pythondir    = $pythondir]    )
-	  AC_MSG_NOTICE( [pkgpythondir = $pkgpythondir] )
-	  AC_MSG_NOTICE( [pyexecdir    = $pyexecdir]    )
-	  AC_MSG_NOTICE( [pkgpyexecdir = $pkgpyexecdir] )
-:
-    AC_SUBST(PYEXECDIR,$pyexecdir)
-    AC_CONFIG_FILES( [src/swig/pylocal] )
-    AC_CONFIG_FILES( [src/swig/set_pylocal_exec] )
-
-	)
-
-
-  AC_ARG_VAR([PY2_EXECDIR], [Python 2 C extension directory])
-  AC_ARG_VAR([PY3_EXECDIR], [Python 3 C extension directory])
-
-  AS_IF( [test 0$DBG -ne 0], [
-     AC_MSG_NOTICE( [PY2_EXECDIR    = $PY2_EXECDIR])
-     AC_MSG_NOTICE( [PY3_EXECDIR    = $PY3_EXECDIR])
-     AC_MSG_NOTICE( [py2execdir     = $py2execdir])
-     AC_MSG_NOTICE( [py3execdir     = $py3execdir])
-     AC_MSG_NOTICE( [usr_py2execdir     = $usr_py2execdir])
-     AC_MSG_NOTICE( [usr_py3execdir     = $usr_py3execdir])
-  ])
-
-  AS_IF( [ test -z "$PY2_EXECDIR" ], [
-     PY2_EXECDIR=${usr_py2execdir}
-  ] )
-  AS_IF( [ test -z "$PY3_EXECDIR" ], [
-     PY3_EXECDIR=${usr_py3execdir}
-  ] )
-
-  py2execdir=$PY2_EXECDIR
-  py3execdir=$PY3_EXECDIR
-
-  AS_IF( [test 0$DBG -ne 0], [
-     AC_MSG_NOTICE( [====================== Wolf 8])
-     AC_MSG_NOTICE( [py2execdir     = $py2execdir])
-     AC_MSG_NOTICE( [py3execdir     = $py3execdir])
-  ])
-
-  AC_SUBST(py2execdir,   $py2execdir)
-  AC_SUBST(py3execdir,   $py3execdir)
-
-fi
-
-AM_CONDITIONAL([ENABLE_PYTHON_SWIG],[test x$enable_swig   = xyes])
-dnl temporary crude flag:
-AM_CONDITIONAL([HAVE_PYTHON3],      [test x$enable_py3 = xyes])
-
-dnl temporary crude flag:
-AM_CONDITIONAL([ENABLE_CYTHON],[test x$enable_cython = xyes])
-AM_CONDITIONAL([ENABLE_CFFI],  [test x$enable_cffi   = xyes])
 
 dnl AC_MSG_NOTICE([======================== required_packages:   $required_packages])
 AC_SUBST(REQUIRED_PACKAGES,$required_packages)
@@ -1102,39 +870,45 @@ AS_IF( [ grep suse /etc/os-release > /dev/null], [
 ### Generate output   
 ###
 
+dnl called once at end of configure.ac, generates and runs config.status
 AC_OUTPUT
 
 dnl a brief summary
 AC_MSG_RESULT([
 	ddcutil $VERSION
+	version suffix:   ddcutil_version_suffix
 	=============
 
 	libtool version  	${LT_CURRENT}:${LT_REVISION}:${LT_AGE}
 
 	prefix:                 ${prefix}
-	exec_prefix:		${exec_prefix}
-	libexecdir:		${libexecdir}
+	exec_prefix:            ${exec_prefix}
+	libexecdir:             ${libexecdir}
 	bindir:                 ${bindir}
-	libdir:			${libdir}
+	libdir:                 ${libdir}
 	datarootdir:            ${datarootdir}
 	datadir:                ${datadir}
 	docdir:                 ${docdir}
 	mandir:               	${mandir}
-	includedir:		${includedir}
+	includedir:             ${includedir}
 	pkgconfigdir:           ${pkgconfigdir}
+	required_packages:      ${required_packages}
 
-	adl_header_dir:         ${adl_header_dir}
 	enable_lib:             ${enable_lib}
-	enable_swig:            ${enable_swig}
-	enable_cython:          ${enable_cython}
-	enable_cffi:            ${enable_cffi}
-	enable_gobject          ${enable_gobject}
+	enable_install_lib_only ${enable_install_lib_only}
+	enable_envcmds          ${enable_envcmds}
+	enable_udev             ${enable_udev}
 	enable_usb:             ${enable_usb}
 	enable_drm:             ${enable_drm}   
 	enable_x11:             ${enable_x11}   
+dnl	enable_trace:           ${enable_trace}
+	enable_asan:            ${enable_asan}
+	enable_static_functions_visible:  ${enable_static_functions_visible}
+
+	Developer-only options:
+	enable_targetbsd:       ${enable_targetbsd}
 	enable_doxygen:         ${enable_doxygen}
 	enable_failsim:         ${enable_failsim}
-	enable_use_api:         ${enable_use_api}
 	include_testcases:      ${include_testcases}
 
 	compiler:               ${CC}
@@ -1142,4 +916,4 @@ AC_MSG_RESULT([
 	CPPFLAGS:               ${CPPFLAGS}
 	LDFLAGS:                ${LDFLAGS}
 ])
-
+dnl cat config.h

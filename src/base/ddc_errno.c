@@ -2,7 +2,7 @@
  * Error codes internal to **ddcutil**.
  */
 
-// Copyright (C) 2014-2018 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 /** \cond */
@@ -11,6 +11,7 @@
 #include <stdio.h>
 /** \endcond */
 
+#include "util/debug_util.h"
 #include "util/glib_util.h"
 #include "util/string_util.h"
 
@@ -18,6 +19,8 @@
 
 //
 // DDCRC status code descriptions
+//
+// Keep in sync with status codes in ddcutil_status_codes.h
 //
 
 // TODO: Consider modifying EDENTRY generate doxygen comment as well using description field
@@ -28,11 +31,11 @@
 // small subset of DDCRC_PACKET_SIZE, DDCRC_RESPONSE_ENVELOPE, DDCRC_CHECKSUM
 
 static Status_Code_Info ddcrc_info[] = {
-      EDENTRY(DDCRC_OK                       , "success"                         ),
-      EDENTRY(DDCRC_DDC_DATA                 , "DDC data error"                  ),
-      EDENTRY(DDCRC_NULL_RESPONSE            , "received DDC null response"      ),
-      EDENTRY(DDCRC_MULTI_PART_READ_FRAGMENT , "error in fragment"               ),
-      EDENTRY(DDCRC_ALL_TRIES_ZERO           , "every try response 0x00"          ),    // applies to multi-try exchange
+      EDENTRY(DDCRC_OK                       , "success"                          ),
+      EDENTRY(DDCRC_DDC_DATA                 , "DDC data error"                   ),
+      EDENTRY(DDCRC_NULL_RESPONSE            , "received DDC null response"       ),
+      EDENTRY(DDCRC_MULTI_PART_READ_FRAGMENT , "error in fragment"                ),
+      EDENTRY(DDCRC_ALL_TRIES_ZERO           , "every try all response bytes 0x00" ),
       EDENTRY(DDCRC_REPORTED_UNSUPPORTED     , "DDC reports facility unsupported" ),
       EDENTRY(DDCRC_READ_ALL_ZERO            , "packet contents entirely 0x00"    ),
       EDENTRY(DDCRC_RETRIES                  , "maximum retries exceeded"         ),
@@ -56,10 +59,16 @@ static Status_Code_Info ddcrc_info[] = {
       EDENTRY(DDCRC_VERIFY                   , "VCP read after write failed"),
       EDENTRY(DDCRC_NOT_FOUND                , "not found"),
       EDENTRY(DDCRC_LOCKED                   , "display locked"),
+      EDENTRY(DDCRC_ALREADY_OPEN             , "already open in current thread"),
       EDENTRY(DDCRC_BAD_DATA                 , "invalid data"),
+      EDENTRY(DDCRC_INVALID_CONFIG_FILE      , "configuration file error"),
+      EDENTRY(DDCRC_DISCONNECTED             , "display no longer connected"),
+      EDENTRY(DDCRC_DPMS_ASLEEP              , "display is in a DPMS sleep mode"),
+      EDENTRY(DDCRC_FLOCKED                  , "another process holds flock"),
    // EDENTRY(DDCRC_CAP_FATAL                , "incorrect, unusable capabilities string"),
    // EDENTRY(DDCRC_CAP_WARNING              , "errors in capabilities string, but usable")
     };
+
 #undef EDENTRY
 static int ddcrc_desc_ct = sizeof(ddcrc_info)/sizeof(Status_Code_Info);
 
@@ -139,8 +148,8 @@ bool ddcrc_is_not_error(Public_Status_Code gsc) {
 }
 
 
-/* Returns a sting description of a **ddcutil** status code that is
- * intended for use in error messages.
+/* Returns a sting description of a **ddcutil** status code.
+ * This description is intended for use in error messages.
  *
  * @param rc  ddcutil status code
  * @return status code description
@@ -170,7 +179,7 @@ char * ddcrc_desc_t(int rc) {
 /** Gets the (unmodulated) ddcutil error number for a symbolic name.
  *
  * @param   error_name   symbolic name, e.g. DDCRC_CHECKSUM
- * @param   p_errnum     where to return error number
+ * @param   errnum_loc   where to return error number
  *
  * Returns:         true if found, false if not
  *
@@ -179,16 +188,19 @@ char * ddcrc_desc_t(int rc) {
  * the return value for this function is always identical to
  * ddc_error_name_to_modulated_number().
  */
-bool ddc_error_name_to_number(const char * error_name, Status_DDC * p_errnum) {
+bool ddc_error_name_to_number(const char * error_name, Status_DDC * errnum_loc) {
+   bool debug = false;
+   DBGF(debug, "Starting. error_name=%s", error_name);
    int found = false;
-   *p_errnum = 0;
+   *errnum_loc = 0;
    for (int ndx = 0; ndx < ddcrc_desc_ct; ndx++) {
        if ( streq(ddcrc_info[ndx].name, error_name) ) {
-          *p_errnum = ddcrc_info[ndx].code;
+          *errnum_loc = ddcrc_info[ndx].code;
           found = true;
           break;
        }
    }
+   DBGF(debug, "Done.     Returning: %s, *errnum_loc = %d", SBOOL(found), *errnum_loc);
    return found;
 }
 

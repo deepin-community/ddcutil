@@ -3,7 +3,7 @@
  *  VCP Feature Code Table and related functions
  */
 
-// Copyright (C) 2014-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 /** \cond */
@@ -132,11 +132,7 @@ vcp_interpret_global_feature_flags(
    return buf;
 }
 
-
-
 // End of VCPINFO related functions
-
-
 
 
 //
@@ -167,9 +163,9 @@ char * get_feature_name_by_id_and_vcp_version(Byte feature_id, DDCA_MCCS_Version
          result = get_non_version_specific_feature_name(vcp_entry);    // fallback
    }
    else if (0xe0 <= feature_id && feature_id <= 0xff)
-      result = "manufacturer specific feature";
+      result = "Manufacturer specific feature";
    else
-      result = "unrecognized feature";
+      result = "Unrecognized feature";
 
    DBGMSF(debug, "feature_id=0x%02x, vspec=%d.%d, returning: %s",
                  feature_id, vspec.major, vspec.minor, result);
@@ -462,6 +458,46 @@ get_version_sensitive_sl_values(
    return result;
 }
 
+#ifdef UNUSED
+DDCA_Feature_Value_Entry *
+get_highest_version_sl_values(
+       VCP_Feature_Table_Entry *  vfte)
+{
+   bool debug = false;
+
+   DDCA_MCCS_Version_Id version_found = DDCA_MCCS_VNONE;
+
+   DDCA_Feature_Value_Entry * result = vfte->v22_sl_values;
+   if (result)
+      version_found = DDCA_MCCS_V22;
+   else {
+      result = vfte->v30_sl_values;
+      if (result)
+         version_found = DDCA_MCCS_V30;
+
+      else {
+         result = vfte->v21_sl_values;
+         if (result)
+            version_found = DDCA_MCCS_V21;
+         else {
+            result = vfte->default_sl_values;
+            if (result)
+               version_found = DDCA_MCCS_V20;
+         }
+      }
+   }
+
+   if (debug) {
+      if (result)
+         DBGMSG("Feature = 0x%02x, Returning sl value list for version %s",
+                vfte->code, format_vcp_version_id(version_found));
+      else
+         DBGMSG("Feature = 0x%02x, No SL value table found", vfte->code);
+   }
+   return result;
+}
+#endif
+
 
 /** Returns the version specific feature name from a feature table entry.
  *
@@ -592,25 +628,27 @@ extract_version_feature_info_from_feature_table_entry(
          ? get_version_sensitive_feature_flags(vfte, vspec)
          : get_version_specific_feature_flags(vfte, vspec);
 
-   dfm->feature_desc = (dfm->feature_desc) ? strdup(vfte->desc) : NULL;
+   dfm->feature_desc = (dfm->feature_desc) ? g_strdup(vfte->desc) : NULL;
 
    char * feature_name = (version_sensitive)
            ? get_version_sensitive_feature_name(vfte, vspec)
            : get_version_specific_feature_name(vfte, vspec);
-   dfm->feature_name = strdup(feature_name);
+   dfm->feature_name = g_strdup(feature_name);
 
    dfm->feature_flags |= vfte->vcp_global_flags;
    DDCA_Feature_Value_Entry * sl_values = (version_sensitive)
          ? get_version_sensitive_sl_values(vfte, vspec)
+         // ? get_highest_version_sl_values(vfte)
          : get_version_specific_sl_values(vfte, vspec);
-   dfm->sl_values = (sl_values) ? copy_sl_value_table(sl_values) : NULL;
+   dfm->sl_values = copy_sl_value_table(sl_values);
+   // dfm->latest_sl_values = copy_sl_value_table(get_highest_version_sl_values(vfte));
 
-   DBG_RET_STRUCT(debug, Display_Feature_Metadata, dbgrpt_display_feature_metadata, dfm);
+   DBGMSF_RET_STRUCT(debug, Display_Feature_Metadata, dbgrpt_display_feature_metadata, dfm);
    return dfm;
 }
 
 
-#ifdef UNUSED
+#ifdef MCCS_VERSION_ID
 /** Gets information about a VCP feature.
  *
  *  @param feature_code
@@ -743,7 +781,7 @@ get_table_feature_detail_function(
 {
    assert(vfte);
 
-   // TODO:
+   // TODO: REVIEW COMMENT
    // if VCP_V2NC_V3T, then get version id
    // based on version id, choose .formatter or .formatter_v3
    // NO - test needs to be set in caller, this must return a Format_Feature_Detail_Function, which is not for Table
@@ -756,6 +794,20 @@ get_table_feature_detail_function(
 
 
 // Functions that apply formatting
+
+/** Obtains the formatting function from a feature table entry
+ *  based on the VCP version of the monitor, then applies that
+ *  function to a non-table value to return that value as a
+ *  string.
+ *
+ *  @param  vfte        feature table entry
+ *  @param  vcp_version VCP version of monitor
+ *  @param  code_info   non-table feature value
+ *  @param  buffer      address of buffer in which to return formatted value
+ *  @param  bufsz       buffer string
+ *
+ *  @return true if successful, false if not
+ */
 
 bool
 vcp_format_nontable_feature_detail(
@@ -834,7 +886,7 @@ vcp_format_feature_detail(
               200);
       free(nontable_value);
       if (ok)
-         formatted_data = strdup(workbuf);
+         formatted_data = g_strdup(workbuf);
    }
    else {        // TABLE_VCP_CALL
       DBGMSF(debug, "DDCA_TABLE_VCP_VALUE");
@@ -1124,9 +1176,9 @@ format_feature_detail_x73_lut_size(
    }
    else {
       Byte * bytes = data_bytes->bytes;
-      ushort red_entry_ct   = bytes[0] << 8 | bytes[1];
-      ushort green_entry_ct = bytes[2] << 8 | bytes[3];
-      ushort blue_entry_ct  = bytes[4] << 8 | bytes[5];
+      gushort red_entry_ct   = bytes[0] << 8 | bytes[1];
+      gushort green_entry_ct = bytes[2] << 8 | bytes[3];
+      gushort blue_entry_ct  = bytes[4] << 8 | bytes[5];
       int    red_bits_per_entry   = bytes[6];
       int    green_bits_per_entry = bytes[7];
       int    blue_bits_per_entry  = bytes[8];
@@ -1135,7 +1187,7 @@ format_feature_detail_x73_lut_size(
                "Number of entries: %d red, %d green, %d blue,  Bits per entry: %d red, %d green, %d blue",
                red_entry_ct,       green_entry_ct,       blue_entry_ct,
                red_bits_per_entry, green_bits_per_entry, blue_bits_per_entry);
-      *pformatted_result = strdup(buf);
+      *pformatted_result = g_strdup(buf);
    }
    return ok;
 }
@@ -1432,7 +1484,7 @@ bool format_feature_detail_ushort(
 
 // 0x02
 static bool
-format_feature_detail_new_control_value(    // 0x02
+format_feature_detail_x02_new_control_value(    // 0x02
         Nontable_Vcp_Value *    code_info,
         DDCA_MCCS_Version_Spec  vcp_version,
         char *                  buffer,
@@ -1454,7 +1506,7 @@ format_feature_detail_new_control_value(    // 0x02
 
 // 0x0b
 static bool
-x0b_format_feature_detail_color_temperature_increment(
+format_feature_detail_x0b_color_temperature_increment(
       Nontable_Vcp_Value *      code_info,
       DDCA_MCCS_Version_Spec    vcp_version,
       char *                    buffer,
@@ -1472,7 +1524,7 @@ x0b_format_feature_detail_color_temperature_increment(
 
 // 0x0c
 static bool
-x0c_format_feature_detail_color_temperature_request(
+format_feature_detail_x0c_color_temperature_request(
       Nontable_Vcp_Value *      code_info,
       DDCA_MCCS_Version_Spec    vcp_version,
       char *                    buffer,
@@ -1488,7 +1540,7 @@ x0c_format_feature_detail_color_temperature_request(
 
 // 0x14
 static bool
-format_feature_detail_select_color_preset(
+format_feature_detail_x14_select_color_preset(
       Nontable_Vcp_Value *      code_info,
       DDCA_MCCS_Version_Spec    vcp_version,
       char *                    buffer,
@@ -1609,7 +1661,7 @@ format_feature_detail_select_color_preset(
 
 // 0x62
 static bool
-format_feature_detail_audio_speaker_volume(
+format_feature_detail_x62_audio_speaker_volume(
       Nontable_Vcp_Value *   code_info,
       DDCA_MCCS_Version_Spec vcp_version,
       char *                 buffer,
@@ -1669,7 +1721,10 @@ format_feature_detail_x72_gamma(
       char   sgamma2[10];
       g_snprintf (sgamma, 10, "%d", igamma);
       int slen = strlen(sgamma);
-      g_snprintf(sgamma2, 10, "%s.%s", substr(sgamma, 0, slen-2), substr(sgamma, slen-2, 2) );
+      char * a =  substr(sgamma, 0, slen-2);
+      char * b = substr(sgamma, slen-2, 2);
+      g_snprintf(sgamma2, 10, "%s.%s",a, b);
+      free(a); free(b);
       g_snprintf(buffer, bufsz, "%s - Mode: %s (sl=0x%02x), gamma=%s (sh=0x%02x)",
                                  formatted_sh_sl,
                                  ssl, code_info->sl, sgamma2, code_info->sh);
@@ -1760,7 +1815,7 @@ format_feature_detail_x8d_mute_audio_blank_screen(
 
 // 0x8f, 0x91
 static bool
-format_feature_detail_audio_treble_bass(
+format_feature_detail_x8f_x91_audio_treble_bass(
       Nontable_Vcp_Value *    code_info,
       DDCA_MCCS_Version_Spec  vcp_version,
       char *                  buffer,
@@ -1768,30 +1823,31 @@ format_feature_detail_audio_treble_bass(
 {
   assert (code_info->vcp_code == 0x8f || code_info->vcp_code == 0x91);
   // Continuous in 2.0, assume 2.1 same as 2.0,
-  // NC with reserved x00 and special xff values in 3.0, 2.2
+  // NC with reserved values x00 and xff values reserved in VCP 3.0, 2.2
   // This function should not be called if VCP2_STD_CONT
 
+  // This function should not be called for VCP 2.0, 2.1
+  // Standard continuous processing should be applied.
+  // But as documentation, handle the C case as well.
   assert ( vcp_version_gt(vcp_version, DDCA_VSPEC_V21) );
-
-  // leave v2 code in in case things change
   bool ok = true;
   if ( vcp_version_le(vcp_version, DDCA_VSPEC_V21))
   {
      snprintf(buffer, bufsz, "%d", code_info->sl);
   }
   else {
-     if (code_info->sl == 0x00) {
-        snprintf(buffer, bufsz, "Invalid value: 0x00" );
+     if (code_info->sl == 0x00 || code_info->sl == 0xff) {
+        snprintf(buffer, bufsz, "Invalid value: 0x%02x", code_info->sl );
         ok = false;
      }
      else if (code_info->sl < 0x80)
-        snprintf(buffer, bufsz, "%d: Decreased (0x%02x, neutral - %d)",
+        snprintf(buffer, bufsz, "%d: Decreased (0x%02x = neutral - %d)",
                  code_info->sl, code_info->sl, 0x80 - code_info->sl);
      else if (code_info->sl == 0x80)
         snprintf(buffer, bufsz, "%d: Neutral (0x%02x)",
                  code_info->sl, code_info->sl);
      else
-        snprintf(buffer, bufsz, "%d: Increased (0x%02x, neutral + %d)",
+        snprintf(buffer, bufsz, "%d: Increased (0x%02x = neutral + %d)",
                  code_info->sl, code_info->sl, code_info->sl - 0x80);
   }
   return ok;
@@ -1799,33 +1855,40 @@ format_feature_detail_audio_treble_bass(
 
 // 0x93
 static bool
-format_feature_detail_audio_balance_v30(
-      Nontable_Vcp_Value * code_info, DDCA_MCCS_Version_Spec vcp_version, char * buffer, int bufsz)
+format_feature_detail_x93_audio_balance(
+      Nontable_Vcp_Value *    code_info,
+      DDCA_MCCS_Version_Spec  vcp_version,
+      char *                  buffer,
+      int                     bufsz)
 {
   assert (code_info->vcp_code == 0x93);
-  // Continous in 2.0, NC in 3.0, 2.2, assume 2.1 same as 2.0
+  // Continuous in 2.0, NC in 3.0, 2.2, assume 2.1 same as 2.0
   // NC with reserved x00 and special xff values in 3.0,
-  // This function should not be called if VCP2_STD_CONT
+
+  // This function should not be called if VCP_STD_CONT,
+  // but leave v2 code in for completeness
   assert ( vcp_version_gt(vcp_version, DDCA_VSPEC_V21) );
-  // leave v2 code in in case things change
   bool ok = true;
   if ( vcp_version_le(vcp_version, DDCA_VSPEC_V21))
   {
      snprintf(buffer, bufsz, "%d", code_info->sl);
   }
   else {
-     if (code_info->sl == 0x00) {
-        snprintf(buffer, bufsz, "Invalid value: 0x00" );
+     if (code_info->sl == 0x00 ||
+         // WTF: in VCP 2.2, value xff is reserved, in 3.0 it's part of the continuous range
+         (code_info->sl == 0xff && vcp_version_eq(vcp_version, DDCA_VSPEC_V22) ) )
+     {
+        snprintf(buffer, bufsz, "Invalid value: 0x%02x", code_info->sl );
         ok = false;
      }
      else if (code_info->sl < 0x80)
-        snprintf(buffer, bufsz, "%d: Left channel dominates (0x%02x, centered - %d)",
+        snprintf(buffer, bufsz, "%d: Left channel dominates (0x%02x = centered - %d)",
                  code_info->sl, code_info->sl, 0x80-code_info->sl);
      else if (code_info->sl == 0x80)
         snprintf(buffer, bufsz, "%d: Centered (0x%02x)",
                  code_info->sl, code_info->sl);
      else
-        snprintf(buffer, bufsz, "%d Right channel dominates (0x%02x, centered + %d)",
+        snprintf(buffer, bufsz, "%d Right channel dominates (0x%02x = centered + %d)",
                  code_info->sl, code_info->sl, code_info->sl-0x80);
   }
   return ok;
@@ -1834,7 +1897,10 @@ format_feature_detail_audio_balance_v30(
 // 0xac
 static bool
 format_feature_detail_xac_horizontal_frequency(
-      Nontable_Vcp_Value * code_info, DDCA_MCCS_Version_Spec vcp_version, char * buffer, int bufsz)
+      Nontable_Vcp_Value *    code_info,
+      DDCA_MCCS_Version_Spec  vcp_version,
+      char *                  buffer,
+      int                     bufsz)
 {
   assert (code_info->vcp_code == 0xac);
   // this is R/O field, so max value is irrelevant
@@ -1864,10 +1930,10 @@ format_feature_detail_xac_horizontal_frequency(
 // 0x9b..0xa0
 static bool
 format_feature_detail_6_axis_hue(
-      Nontable_Vcp_Value * code_info,
-      DDCA_MCCS_Version_Spec                   vcp_version,
-      char *                         buffer,
-      int                            bufsz)
+      Nontable_Vcp_Value *     code_info,
+      DDCA_MCCS_Version_Spec   vcp_version,
+      char *                   buffer,
+      int                      bufsz)
 {
    Byte vcp_code = code_info->vcp_code;
    Byte sl       = code_info->sl;
@@ -1901,14 +1967,16 @@ format_feature_detail_6_axis_hue(
    else
       snprintf(buffer, bufsz, "%d Shift towards %s (0x%02x, nominal+%d)",
                sl, curnames.more_name, sl, sl-0x7f);
-
    return true;
 }
 
 // 0xae
 static bool
 format_feature_detail_xae_vertical_frequency(
-      Nontable_Vcp_Value * code_info, DDCA_MCCS_Version_Spec vcp_version, char * buffer, int bufsz)
+      Nontable_Vcp_Value *    code_info,
+      DDCA_MCCS_Version_Spec  vcp_version,
+      char *                  buffer,
+      int                     bufsz)
 {
   assert (code_info->vcp_code == 0xae);
   if (code_info->mh == 0xff &&
@@ -1932,10 +2000,10 @@ format_feature_detail_xae_vertical_frequency(
 // 0xbe
 static bool
 format_feature_detail_xbe_link_control(
-        Nontable_Vcp_Value * code_info,
-        DDCA_MCCS_Version_Spec vcp_version,
-        char * buffer,
-        int bufsz)
+        Nontable_Vcp_Value *    code_info,
+        DDCA_MCCS_Version_Spec  vcp_version,
+        char *                  buffer,
+        int                     bufsz)
 {
    // test bit 0
    // but in MCCS spec is bit 0 the high order bit or the low order bit?,
@@ -1944,7 +2012,6 @@ format_feature_detail_xbe_link_control(
    // significant bit
    char * s = (code_info->sl & 0x01) ? "enabled" : "disabled";
    snprintf(buffer, bufsz, "Link shutdown is %s (0x%02x)", s, code_info->sl);
-
    return true;
 }
 
@@ -1954,7 +2021,7 @@ format_feature_detail_xc0_display_usage_time(
         Nontable_Vcp_Value * code_info, DDCA_MCCS_Version_Spec vcp_version, char * buffer, int bufsz)
 {
    assert (code_info->vcp_code == 0xc0);
-   uint usage_time;
+   guint usage_time;
    // DBGMSG("vcp_version=%d.%d", vcp_version.major, vcp_version.minor);
 
    // TODO: Control with Output_Level
@@ -1976,7 +2043,7 @@ format_feature_detail_xc0_display_usage_time(
 
 // 0xc6
 static bool
-format_feature_detail_application_enable_key(
+format_feature_detail_x6c_application_enable_key(
         Nontable_Vcp_Value * code_info,
         DDCA_MCCS_Version_Spec vcp_version,
         char * buffer,
@@ -1990,11 +2057,11 @@ format_feature_detail_application_enable_key(
 
 // 0xc8
 static bool
-format_feature_detail_display_controller_type(
+format_feature_detail_xc8_display_controller_type(
         Nontable_Vcp_Value * info,  DDCA_MCCS_Version_Spec vcp_version, char * buffer, int bufsz)
 {
    bool debug = false;
-   DBGTRC(debug, TRACE_GROUP, "Starting");
+   DBGTRC_STARTING(debug, TRACE_GROUP, "");
    assert(info->vcp_code == 0xc8);
    bool ok = true;
    Byte mfg_id = info->sl;
@@ -2005,19 +2072,19 @@ format_feature_detail_display_controller_type(
       ok = true;
    }
 
-   // ushort controller_number = info->ml << 8 | info->sh;
+   // gushort controller_number = info->ml << 8 | info->sh;
    // spec is inconsistent, controller number can either be ML/SH or MH/ML
    // observation suggests it's ml and sh
    snprintf(buffer, bufsz,
             "Mfg: %s (sl=0x%02x), controller number: mh=0x%02x, ml=0x%02x, sh=0x%02x",
             sl_msg, mfg_id, info->mh, info->ml, info->sh);
-   DBGTRC(debug, TRACE_GROUP, "Returning: %s, buffer = |%s|", sbool(ok), buffer);
+   DBGTRC_RET_BOOL(debug, TRACE_GROUP, ok, "buffer = |%s|", buffer);
    return ok;
 }
 
 // xc9, xdf
 static bool
-format_feature_detail_version(
+format_feature_detail_xc9_xdf_version(
         Nontable_Vcp_Value * code_info, DDCA_MCCS_Version_Spec vcp_version, char * buffer, int bufsz)
 {
    int version_number  = code_info->sh;
@@ -2599,7 +2666,7 @@ VCP_Feature_Table_Entry vcp_code_table[] = {
    {  .code=0x02,
       .vcp_spec_groups = VCP_SPEC_MISC,
       // defined in 2.0, identical in 3.0, 2.2
-      .nontable_formatter = format_feature_detail_new_control_value,   // ??
+      .nontable_formatter = format_feature_detail_x02_new_control_value,   // ??
       .default_sl_values = x02_new_control_values,  // ignored, hardcoded in nontable_formatter
       .desc = "Indicates that a display user control (other than power) has been "
               "used to change and save (or autosave) a new value.",
@@ -2615,7 +2682,7 @@ VCP_Feature_Table_Entry vcp_code_table[] = {
    },
    {  .code=0x04,                        // Defined in 2.0, identical in 3.0
       .vcp_spec_groups = VCP_SPEC_PRESET,
-      .desc = "Restore all factor presets including brightness/contrast, "
+      .desc = "Restore all factory presets including brightness/contrast, "
               "geometry, color, and TV defaults.",
       .vcp_subsets = VCP_SUBSET_COLOR,                // but note WO
       .v20_flags =  DDCA_WO | DDCA_WO_NC,
@@ -2651,7 +2718,7 @@ VCP_Feature_Table_Entry vcp_code_table[] = {
    {  .code=0x0b,
       .vcp_spec_groups = VCP_SPEC_IMAGE,
       // Defined in 2.0
-      .nontable_formatter=x0b_format_feature_detail_color_temperature_increment,
+      .nontable_formatter=format_feature_detail_x0b_color_temperature_increment,
       // from 2.0 spec:
       // .desc="Allows the display to specify the minimum increment in which it can "
       //       "adjust the color temperature.",
@@ -2665,7 +2732,7 @@ VCP_Feature_Table_Entry vcp_code_table[] = {
       //.name="Color temperature request",
       .vcp_spec_groups = VCP_SPEC_IMAGE,
       // Defined in 2.0
-      .nontable_formatter=x0c_format_feature_detail_color_temperature_request,
+      .nontable_formatter=format_feature_detail_x0c_color_temperature_request,
       .desc="Specifies a color temperature (degrees Kelvin)",   // my desc
       .vcp_subsets = VCP_SUBSET_COLOR,
       .v20_flags = DDCA_RW | DDCA_COMPLEX_CONT,
@@ -2724,7 +2791,7 @@ VCP_Feature_Table_Entry vcp_code_table[] = {
       // Defined in 2.0, different in 3.0, 2.2
       // what is appropriate choice for 2.1 ?
       // interpretation varies depending on VCP version
-      .nontable_formatter=format_feature_detail_select_color_preset,
+      .nontable_formatter=format_feature_detail_x14_select_color_preset,
       .default_sl_values= x14_color_preset_absolute_values,  // ignored, referenced in nontable_formatter
       .desc="Select a specified color temperature",
       .vcp_subsets = VCP_SUBSET_COLOR | VCP_SUBSET_PROFILE,
@@ -3193,7 +3260,7 @@ VCP_Feature_Table_Entry vcp_code_table[] = {
       // 8.6 Audio Adjustments lists it as type NC and documents
       // reserved values.  Treat as NC.
       // .nontable_formatter=format_feature_detail_standard_continuous,
-      .nontable_formatter=format_feature_detail_audio_speaker_volume,
+      .nontable_formatter=format_feature_detail_x62_audio_speaker_volume,
       // requires special handling for V3, mix of C and NC, SL byte only
       .desc = "Adjusts speaker volume",
       .v20_flags = DDCA_RW | DDCA_STD_CONT,
@@ -3508,7 +3575,7 @@ VCP_Feature_Table_Entry vcp_code_table[] = {
       // reserved values.  Treat as NC.
       .v20_name="Audio Treble",
       // requires special handling for V3, mix of C and NC, SL byte only
-      .nontable_formatter=format_feature_detail_audio_treble_bass,
+      .nontable_formatter=format_feature_detail_x8f_x91_audio_treble_bass,
       .v20_flags = DDCA_RW | DDCA_STD_CONT,
       .v30_flags = DDCA_RW | DDCA_NC_CONT,
       .v22_flags = DDCA_RW | DDCA_NC_CONT,
@@ -3531,7 +3598,7 @@ VCP_Feature_Table_Entry vcp_code_table[] = {
       // feature as type C, but detailed documentation in section
       // 8.6 Audio Adjustments lists it as type NC and documents
       // reserved values.  Treat as NC.
-      .nontable_formatter=format_feature_detail_audio_treble_bass,
+      .nontable_formatter=format_feature_detail_x8f_x91_audio_treble_bass,
       .v20_flags = DDCA_RW | DDCA_STD_CONT,
       .v30_flags = DDCA_RW | DDCA_NC_CONT,
       .v22_flags = DDCA_RW | DDCA_NC_CONT,
@@ -3550,7 +3617,7 @@ VCP_Feature_Table_Entry vcp_code_table[] = {
       .desc="Controls left/right audio balance",
       .v20_name="Audio Balance L/R",
       // requires special handling for V3 and v2.2, mix of C and NC, SL byte only
-      .nontable_formatter=format_feature_detail_audio_treble_bass,
+      .nontable_formatter=format_feature_detail_x93_audio_balance,
       .v20_flags = DDCA_RW | DDCA_STD_CONT,
       .v30_flags = DDCA_RW | DDCA_NC_CONT,
       .v22_flags = DDCA_RW | DDCA_NC_CONT,
@@ -3602,7 +3669,7 @@ VCP_Feature_Table_Entry vcp_code_table[] = {
             "from the desktop.",
       .v20_flags= DDCA_RW | DDCA_SIMPLE_NC,
       .v20_name="Window control on/off",
-      .v30_flags = DDCA_DEPRECATED | DDCA_RW | DDCA_SIMPLE_NC,
+      .v22_flags = DDCA_DEPRECATED | DDCA_RW | DDCA_SIMPLE_NC,
       .v30_flags = DDCA_DEPRECATED | DDCA_RW | DDCA_SIMPLE_NC,
    },
    {  .code=0x9a,
@@ -3891,14 +3958,14 @@ VCP_Feature_Table_Entry vcp_code_table[] = {
    },
    {  .code=0xc6,
       .vcp_spec_groups = VCP_SPEC_MISC, // 2.0
-      .nontable_formatter=format_feature_detail_application_enable_key,
+      .nontable_formatter=format_feature_detail_x6c_application_enable_key,
       .desc = "A 2 byte value used to allow an application to only operate with known products.",
       .v20_flags = DDCA_RO | DDCA_COMPLEX_NC,
       .v20_name = "Application enable key",
    },
    {  .code=0xc8,
       .vcp_spec_groups = VCP_SPEC_MISC | VCP_SPEC_CONTROL,    // 2.0: MISC, 3.0: CONTROL
-      .nontable_formatter=format_feature_detail_display_controller_type,
+      .nontable_formatter=format_feature_detail_xc8_display_controller_type,
       .default_sl_values=xc8_display_controller_type_values, // ignored, hardcoded in nontable_formatter
       .desc = "Mfg id of controller and 2 byte manufacturer-specific controller type",
       .v20_flags = DDCA_RO | DDCA_COMPLEX_NC,
@@ -3906,7 +3973,7 @@ VCP_Feature_Table_Entry vcp_code_table[] = {
    },
    {  .code=0xc9,
       .vcp_spec_groups = VCP_SPEC_MISC | VCP_SPEC_CONTROL,    // 2.: MISC, 3.0: CONTROL
-      .nontable_formatter=format_feature_detail_version,
+      .nontable_formatter=format_feature_detail_xc9_xdf_version,
       .desc = "2 byte firmware level",
       .v20_flags = DDCA_RO | DDCA_COMPLEX_NC,
       .v20_name = "Display firmware level",
@@ -4018,6 +4085,7 @@ VCP_Feature_Table_Entry vcp_code_table[] = {
       //.name="Display application",
       .default_sl_values=xdc_display_application_values,
       .desc="Type of application used on display",  // my desc
+      .vcp_subsets = VCP_SUBSET_COLOR,         // observed on U32H750 to interact with color settings
       .v20_flags = DDCA_RW | DDCA_SIMPLE_NC,
       .v20_name = "Display Mode",
       .v30_name = "Display Application",
@@ -4039,7 +4107,7 @@ VCP_Feature_Table_Entry vcp_code_table[] = {
    },
    {  .code=0xdf,
       .vcp_spec_groups = VCP_SPEC_MISC,   // 2.0
-      .nontable_formatter=format_feature_detail_version,
+      .nontable_formatter=format_feature_detail_xc9_xdf_version,
       .desc = "MCCS version",
       .v20_flags = DDCA_RO | DDCA_COMPLEX_NC,
       .v20_name  = "VCP Version",
@@ -4214,7 +4282,7 @@ struct {
    Format_Normal_Feature_Detail_Function nontable_formatter;
    Format_Table_Feature_Detail_Function  table_formatter;
    DDCA_Global_Feature_Flags             vcp_global_flags;
-   ushort                                vcp_spec_groups;
+   gushort                               vcp_spec_groups;
    VCP_Feature_Subset                    vcp_subsets;
    char *                                v20_name;
    char *                                v21_name;
@@ -4270,78 +4338,61 @@ void dbgrpt_vcp_entry(VCP_Feature_Table_Entry * pfte, int depth) {
    rpt_vstring(d1, "v20_flags:         0x%04x - %s",
                    pfte->v20_flags,
                    interpret_feature_flags_t(pfte->v20_flags));
-
 //   rpt_vstring(d1, "v21_flags:         0x%04x - %s",
 //                   pfte->v21_flags,
 //                   vcp_interpret_version_feature_flags(pfte->v21_flags, buf, bufsz));
    rpt_vstring(d1, "v21_flags:         0x%04x - %s",
                    pfte->v21_flags,
                    interpret_feature_flags_t(pfte->v21_flags));
-
 //   rpt_vstring(d1, "v30_flags:         0x%04x - %s",
 //                   pfte->v30_flags,
 //                   vcp_interpret_version_feature_flags(pfte->v30_flags, buf, bufsz));
    rpt_vstring(d1, "v30_flags:         0x%04x - %s",
                    pfte->v30_flags,
                    interpret_feature_flags_t(pfte->v30_flags));
-
 //   rpt_vstring(d1, "v22_flags:         0x%04x - %s",
 //                   pfte->v22_flags,
 //                   vcp_interpret_version_feature_flags(pfte->v22_flags, buf, bufsz));
    rpt_vstring(d1, "v22_flags:         0x%04x - %s",
                    pfte->v22_flags,
                    interpret_feature_flags_t(pfte->v22_flags));
-
-   rpt_vstring(d1, "default_sl_values: %p", pfte->default_sl_values);
-   if (pfte->default_sl_values)
-      dbgrpt_sl_value_table(pfte->default_sl_values, d1+1);
-
-   rpt_vstring(d1, "v21_sl_values: %p", pfte->v21_sl_values);
-   if (pfte->v21_sl_values)
-      dbgrpt_sl_value_table(pfte->v21_sl_values, d1+1);
-
-   rpt_vstring(d1, "v30_values: %p", pfte->v30_sl_values);
-   if (pfte->v30_sl_values)
-      dbgrpt_sl_value_table(pfte->v30_sl_values, d1+1);
-
-   rpt_vstring(d1, "v22_sl_values: %p", pfte->v22_sl_values);
-   if (pfte->v22_sl_values)
-      dbgrpt_sl_value_table(pfte->v22_sl_values, d1+1);
+   dbgrpt_sl_value_table(pfte->default_sl_values, "default_sl_values", d1);
+   dbgrpt_sl_value_table(pfte->v21_sl_values, "v21_sl_values", d1);
+   dbgrpt_sl_value_table(pfte->v30_sl_values, "v30_sl_values", d1);
+   dbgrpt_sl_value_table(pfte->v22_sl_values, "v22_sl_values", d1);
 }
 
 
 static void init_func_name_table() {
-#define ADD_FUNC(_NAME) rtti_func_name_table_add(_NAME, #_NAME);
-   ADD_FUNC(vcp_format_nontable_feature_detail);
-   ADD_FUNC(vcp_format_table_feature_detail);
-   ADD_FUNC(vcp_format_feature_detail);
-   ADD_FUNC(default_table_feature_detail_function);
-   ADD_FUNC(format_feature_detail_x73_lut_size);
-   ADD_FUNC(format_feature_detail_debug_sl_sh);
-   ADD_FUNC(format_feature_detail_debug_continuous);
-   ADD_FUNC(format_feature_detail_debug_bytes );
-   ADD_FUNC(format_feature_detail_sl_byte);
-   ADD_FUNC(format_feature_detail_sl_lookup);
-   ADD_FUNC(format_feature_detail_standard_continuous);
-   ADD_FUNC(format_feature_detail_ushort);
-   ADD_FUNC(format_feature_detail_new_control_value);
-   ADD_FUNC(x0b_format_feature_detail_color_temperature_increment);
-   ADD_FUNC(x0c_format_feature_detail_color_temperature_request);
-   ADD_FUNC(format_feature_detail_select_color_preset);
-   ADD_FUNC(format_feature_detail_audio_speaker_volume);
-   ADD_FUNC(format_feature_detail_x8d_mute_audio_blank_screen);
-   ADD_FUNC(format_feature_detail_audio_treble_bass);
-   ADD_FUNC(format_feature_detail_audio_balance_v30);
-   ADD_FUNC(format_feature_detail_xac_horizontal_frequency);
-   ADD_FUNC(format_feature_detail_6_axis_hue);
-   ADD_FUNC(format_feature_detail_xae_vertical_frequency);
-   ADD_FUNC(format_feature_detail_xbe_link_control);
-   ADD_FUNC(format_feature_detail_xc0_display_usage_time);
-   ADD_FUNC(format_feature_detail_xca_osd_button_control);
-   ADD_FUNC(format_feature_detail_application_enable_key);
-   ADD_FUNC(format_feature_detail_display_controller_type);
-   ADD_FUNC(format_feature_detail_version);
-#undef ADD_FUNC
+   RTTI_ADD_FUNC(vcp_format_nontable_feature_detail);
+   RTTI_ADD_FUNC(vcp_format_table_feature_detail);
+   RTTI_ADD_FUNC(vcp_format_feature_detail);
+   RTTI_ADD_FUNC(default_table_feature_detail_function);
+   RTTI_ADD_FUNC(format_feature_detail_x73_lut_size);
+   RTTI_ADD_FUNC(format_feature_detail_debug_sl_sh);
+   RTTI_ADD_FUNC(format_feature_detail_debug_continuous);
+   RTTI_ADD_FUNC(format_feature_detail_debug_bytes );
+   RTTI_ADD_FUNC(format_feature_detail_sl_byte);
+   RTTI_ADD_FUNC(format_feature_detail_sl_lookup);
+   RTTI_ADD_FUNC(format_feature_detail_standard_continuous);
+   RTTI_ADD_FUNC(format_feature_detail_ushort);
+   RTTI_ADD_FUNC(format_feature_detail_x02_new_control_value);
+   RTTI_ADD_FUNC(format_feature_detail_x0b_color_temperature_increment);
+   RTTI_ADD_FUNC(format_feature_detail_x0c_color_temperature_request);
+   RTTI_ADD_FUNC(format_feature_detail_x14_select_color_preset);
+   RTTI_ADD_FUNC(format_feature_detail_x62_audio_speaker_volume);
+   RTTI_ADD_FUNC(format_feature_detail_x8d_mute_audio_blank_screen);
+   RTTI_ADD_FUNC(format_feature_detail_x8f_x91_audio_treble_bass);
+   RTTI_ADD_FUNC(format_feature_detail_x93_audio_balance);
+   RTTI_ADD_FUNC(format_feature_detail_xac_horizontal_frequency);
+   RTTI_ADD_FUNC(format_feature_detail_6_axis_hue);
+   RTTI_ADD_FUNC(format_feature_detail_xae_vertical_frequency);
+   RTTI_ADD_FUNC(format_feature_detail_xbe_link_control);
+   RTTI_ADD_FUNC(format_feature_detail_xc0_display_usage_time);
+   RTTI_ADD_FUNC(format_feature_detail_xca_osd_button_control);
+   RTTI_ADD_FUNC(format_feature_detail_x6c_application_enable_key);
+   RTTI_ADD_FUNC(format_feature_detail_xc8_display_controller_type);
+   RTTI_ADD_FUNC(format_feature_detail_xc9_xdf_version);
 }
 
 

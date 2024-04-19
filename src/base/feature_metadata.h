@@ -4,13 +4,14 @@
  * display-specific feature metadata.
  */
 
-// Copyright (C) 2018-2019 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2018-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef FEATURE_METADATA_H_
 #define FEATURE_METADATA_H_
 
 /** \cond */
+#include <glib-2.0/glib.h>
 #include <stdbool.h>
 /** \endcond */
 
@@ -18,13 +19,15 @@
 
 #include "util/data_structures.h"
 
+#include "base/dynamic_features.h"
+
 
 /** Simple stripped-down version of Parsed_Nontable_Vcp_Response */
 typedef
 struct {
    DDCA_Vcp_Feature_Code   vcp_code;
-   ushort max_value;
-   ushort cur_value;
+   gushort max_value;
+   gushort cur_value;
    // for new way
    Byte   mh;
    Byte   ml;
@@ -32,6 +35,7 @@ struct {
    Byte   sl;
 } Nontable_Vcp_Value;
 
+char * nontable_vcp_value_repr_t(Nontable_Vcp_Value * vcp_value);
 
 // Prototypes for functions that format feature values
 
@@ -78,7 +82,7 @@ bool (*Format_Normal_Feature_Detail_Function3) (
 // Feature value table functions
 
 void
-dbgrpt_sl_value_table(DDCA_Feature_Value_Entry * table, int depth);
+dbgrpt_sl_value_table(DDCA_Feature_Value_Entry * table, char * title, int depth);
 
 DDCA_Feature_Value_Entry *
 copy_sl_value_table(DDCA_Feature_Value_Entry * oldtable);
@@ -101,16 +105,22 @@ interpret_feature_flags_t(DDCA_Version_Feature_Flags flags);
 void
 dbgrpt_ddca_feature_metadata(DDCA_Feature_Metadata * md, int depth);
 
+
+void
+dbgrpt_dyn_feature_metadata(Dyn_Feature_Metadata * md, int depth);
+
 void
 free_ddca_feature_metadata(DDCA_Feature_Metadata * metadata);
 
 
 // Display_Feature_Metadata
 
-// merges DDCA_Version_Feature_Info, DDCA_Feature_Metadata, Internal_Feature_Metadata
-
 #define DISPLAY_FEATURE_METADATA_MARKER "DFMD"
-/** Internal version of display specific feature metadata, includes formatting functions */
+/** Internal version of display specific feature metadata, includes formatting functions
+ *
+ *  Represents merged internal metadata from vcp_code_tables.c, synthetic metadata,
+ *  and user defined features, for a specific VCP version.
+ * */
 typedef
 struct {
    char                                    marker[4];
@@ -126,7 +136,6 @@ struct {
    Format_Normal_Feature_Detail_Function3  nontable_formatter_universal;   // the future
    Format_Table_Feature_Detail_Function    table_formatter;
 } Display_Feature_Metadata;
-
 
 void
 dbgrpt_display_feature_metadata(Display_Feature_Metadata * meta, int depth);
@@ -148,6 +157,8 @@ DDCA_Feature_Metadata *
 dfm_to_ddca_feature_metadata(Display_Feature_Metadata * dfm);
 
 Display_Feature_Metadata *
-dfm_from_ddca_feature_metadata(DDCA_Feature_Metadata * meta);
+dfm_from_dyn_feature_metadata(Dyn_Feature_Metadata * meta);
+
+void init_feature_metadata();
 
 #endif /* FEATURE_METADATA_H_ */

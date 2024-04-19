@@ -3,7 +3,7 @@
  * Get and set VCP feature codes for USB connected monitors.
  */
 
-// Copyright (C) 2016-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2016-2022 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 /** \cond */
@@ -92,7 +92,7 @@ usb_get_usage_value_by_report_type_and_ucode(
       }
 
       if (debug) {
-         DBGMSG0("After hid_get_usage_value():");
+         DBGMSG("After hid_get_usage_value():");
          dbgrpt_hiddev_usage_ref(&uref, 1);
       }
       goto bye;
@@ -182,7 +182,7 @@ set_control_value(int fd,
       .value       = value,
    };
    if (debug) {
-      DBGMSG0("Before HIDIOCSUSAGE");
+      DBGMSG("Before HIDIOCSUSAGE");
       dbgrpt_hiddev_usage_ref(&uref, 1);
    }
    if (ioctl(fd, HIDIOCSUSAGE, &uref) < 0) {
@@ -235,7 +235,7 @@ set_usage_value_by_report_type_and_ucode(
       .value       = value,
    };
    if (debug) {
-      DBGMSG0("Before HIDIOCSUSAGE");
+      DBGMSG("Before HIDIOCSUSAGE");
       dbgrpt_hiddev_usage_ref(&uref, 1);
    }
    if (ioctl(fd, HIDIOCSUSAGE, &uref) < 0) {
@@ -441,7 +441,7 @@ usb_get_nontable_vcp_value(
    // Output_Level output_level = get_output_level();
    Parsed_Nontable_Vcp_Response * parsed_response = NULL;
 
-   Usb_Monitor_Info * moninfo = usb_find_monitor_by_display_handle(dh);
+   Usb_Monitor_Info * moninfo = usb_find_monitor_by_dh(dh);
    assert(moninfo);
 
    __s32 maxval = 0;    // initialization logically unnecessary, but avoids clang scan warning
@@ -491,8 +491,8 @@ usb_get_nontable_vcp_value(
       parsed_response->vcp_code = feature_code;
       parsed_response->valid_response = true;
       parsed_response->supported_opcode = true;
-      parsed_response->cur_value = curval;
-      parsed_response->max_value = maxval;
+      // parsed_response->cur_value = curval;
+      // parsed_response->max_value = maxval;
       parsed_response->mh = (maxval >> 8) & 0xff;
       parsed_response->ml = maxval & 0xff;
       parsed_response->sh = (curval >> 8) & 0xff;
@@ -602,7 +602,7 @@ usb_set_nontable_vcp_value(
 
    Public_Status_Code psc =  DDCRC_REPORTED_UNSUPPORTED;  // = 0;
    assert(dh->dref->io_path.io_mode == DDCA_IO_USB);
-   Usb_Monitor_Info * moninfo = usb_find_monitor_by_display_handle(dh);
+   Usb_Monitor_Info * moninfo = usb_find_monitor_by_dh(dh);
    assert(moninfo);
 
    bool use_alt = true;
@@ -626,7 +626,7 @@ usb_set_nontable_vcp_value(
          psc = DDCRC_REPORTED_UNSUPPORTED;
       }
       else {
-         DBGMSF0(debug, "setting value");
+         DBGMSF(debug, "setting value");
          // for testing purposes, try using each entry
          // for reading, usage 0 returns correct value, usage 1 returns 0
          // is usage 1 for writing?

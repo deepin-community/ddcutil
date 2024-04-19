@@ -1,6 +1,6 @@
 # Watch control file for uscan
 
-version=3
+version=4
 
 # Use rockowitz.github.io instead of www.ddcutil.com because github doesn't
 # support https for custom domain names.

@@ -11,7 +11,7 @@
  * - destination stack
  */
 
-// Copyright (C) 2014-2018 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 /** \cond */
@@ -25,8 +25,8 @@
 #include <unistd.h>
 /** \endcond */
 
-#include "coredefs.h"
-#include "file_util.h"
+#include "coredefs_base.h"
+#include "file_util_base.h"
 #include "string_util.h"
 
 #include "report_util.h"
@@ -47,6 +47,18 @@ static int   output_dest_stack_pos = -1;
 static FILE* alt_initial_output_dest = NULL;
 static bool  initial_output_dest_changed = false;
 #endif
+
+static FILE* default_output_dest;
+
+/** Sets the initial report output destination for newly created threads.
+ *
+ *  Note this does not change the report output destination for existing threads.
+ *
+ *  @param output_dest  default output destination
+ */
+void rpt_set_default_output_dest(FILE* output_dest) {
+   default_output_dest = output_dest;
+}
 
 
 //* Thread specific state */
@@ -78,6 +90,9 @@ static Per_Thread_Settings *  get_thread_settings() {
       settings = g_new0(Per_Thread_Settings, 1);
       settings->indent_spaces_stack_pos = -1;
       settings->output_dest_stack_pos   = -1;
+
+      if (default_output_dest)
+         settings->output_dest_stack[++settings->output_dest_stack_pos] = default_output_dest;
 
       g_private_set(&per_thread_settings_key, settings);
    }
@@ -133,10 +148,12 @@ void rpt_reset_indent_stack() {
 /** Given a logical indentation depth, returns the number of spaces
  *  of indentation to be used.
  *
- *  @param depth logical indentation depth
+ *  @param depth logical indentation depth, if < 0 perform no indentation
  *  @return number of indentation spaces
  */
 int rpt_get_indent(int depth) {
+   if (depth < 0)
+      depth = 0;
    Per_Thread_Settings * settings = get_thread_settings();
    int spaces_ct = DEFAULT_INDENT_SPACES_PER_DEPTH;
    if (settings->indent_spaces_stack_pos >= 0)
@@ -203,8 +220,9 @@ void rpt_debug_output_dest() {
     FILE * dest = rpt_cur_output_dest();
     char * addl = (dest == stdout) ? " (stdout)" : "";
     printf("(%s) output_dest_stack[%d] = %p %s\n",
-          __func__, settings->output_dest_stack_pos, dest, addl);
+          __func__, settings->output_dest_stack_pos, (void*)dest, addl);
 }
+
 
 /** Changes the current output destination, without saving
  * the current output destination on the destination stack.
@@ -237,7 +255,35 @@ void rpt_nl() {
 }
 
 
-/* Writes a constant string to the current output destination.
+/** Writes a constant string to the current output destination, or adds
+ *  the string to a specified GPtrArray.
+ *
+ * A newline is appended to the string specified.
+ *
+ * The output is indented per the specified indentation depth.
+ *
+ * @param title     string to write
+ * @param collector if non-NULL, add string to this GPtrArray instead of
+ *                  writing it to the current output destination
+ * @param depth     logical indentation depth.
+ *
+ * @remark This is the core function through which all output is funneled.
+ */
+void rpt_title_collect(const char * title, GPtrArray * collector, int depth) {
+   bool debug = false;
+   if (debug)
+      printf("(%s) Writing to %p\n", __func__, (void*)rpt_cur_output_dest());
+
+   if (collector) {
+      g_ptr_array_add(collector, g_strdup_printf("%*s%s\n", rpt_get_indent(depth), "", title));
+   }
+   else {
+      f0printf(rpt_cur_output_dest(), "%*s%s\n", rpt_get_indent(depth), "", title);
+   }
+}
+
+
+/** Writes a constant string to the current output destination.
  *
  * A newline is appended to the string specified.
  *
@@ -245,18 +291,30 @@ void rpt_nl() {
  *
  * @param title string to write
  * @param depth logical indentation depth.
- *
- * @remark This is the core function through which all output is funneled.
  */
 void rpt_title(const char * title, int depth) {
-   bool debug = false;
-   if (debug)
-      printf("(%s) Writing to %p\n", __func__, rpt_cur_output_dest());
-   f0printf(rpt_cur_output_dest(), "%*s%s\n", rpt_get_indent(depth), "", title);
+   rpt_title_collect(title, NULL, depth);
 }
 
 
-/* Writes a constant string to the current output destination.
+/** Writes a constant string to the current output destination, or
+ *  adds it to a GPtrArray if one is given.
+ *
+ * A newline is appended to the string specified.
+ *
+ * The output is indented per the specified indentation depth.
+ *
+ * @param depth     logical indentation depth.
+ * @param collector if non-NULL, append string to this GPtrArray
+ *                  instead of writing it to the current output device
+ * @param title     string to write
+ */
+void rpt_label_collect(int depth, GPtrArray * collector, const char * text) {
+   rpt_title_collect(text, collector, depth);
+}
+
+
+/** Writes a constant string to the current output destination.
  *
  * A newline is appended to the string specified.
  *
@@ -275,6 +333,7 @@ void rpt_title(const char * title, int depth) {
 void rpt_label(int depth, const char * text) {
    rpt_title(text, depth);
 }
+
 
 /** Writes a formatted string to the current output destination.
  *
@@ -309,11 +368,52 @@ void rpt_vstring(int depth, char * format, ...) {
 }
 
 
+/** Writes a formatted string to the current output destination, or
+ *  adds the string to a collector array.
+ *
+ * A newline is appended to the string specified
+ *
+ * @param  depth     logical indentation depth
+ * @param  collector if non-NULL, add string to GPtrArray instead of
+ *                   writing to current output destination
+ * @param  format    format string (normal printf argument)
+ * @param  ap        va_list array of arguments
+ *
+ * @remark Note that the depth parm is first on this function because of variable args
+ */
+void vrpt_vstring_collect(int depth, GPtrArray * collector, char * format, va_list ap) {
+   char * s = g_strdup_vprintf(format, ap);
+   rpt_title_collect(s, collector, depth);
+   free(s);
+}
+
+
+/** Writes a formatted string to the current output destination.
+ *
+ * A newline is appended to the string specified
+ *
+ * @param  depth     logical indentation depth
+ * @param  collector if non-NULL, add string to GPtrArray instead of
+ *                   writing to current output destination
+ * @param  format    format string (normal printf argument)
+ * @param  ...       arguments
+ *
+ * @remark Note that the depth parm is first on this function because of variable args
+ */
+void rpt_vstring_collect(int depth, GPtrArray* collector, char * format, ...) {
+   va_list(args);
+   va_start(args, format);
+   vrpt_vstring_collect(depth, collector, format, args);
+   va_end(args);
+}
+
+
+
 /** Convenience function that writes multiple constant strings.
  *
- *   @param depth    logical indentation depth
- *   @param ...      pointers to constant strings,
- *                   last pointer is NULL to terminate list
+ *  @param depth    logical indentation depth
+ *  @param ...      pointers to constant strings,
+ *                  last pointer is NULL to terminate list
  */
 void rpt_multiline(int depth, ...) {
    va_list args;
@@ -342,40 +442,55 @@ void rpt_g_ptr_array(int depth, GPtrArray * strings) {
 /** Writes a hex dump with indentation.
  *  Output is written to the current report destination
  *
- * @param data  start of bytes to dump
- * @param size  number of bytes to dump
- * @param depth logical indentation depth
+ *  @param data  start of bytes to dump
+ *  @param size  number of bytes to dump
+ *  @param depth logical indentation depth
  */
 void rpt_hex_dump(const Byte * data, int size, int depth) {
    fhex_dump_indented(rpt_cur_output_dest(), data, size, rpt_get_indent(depth));
 }
 
 
+/** Writes a Null_Terminated_String_Array with indentation.
+ *  Output is written to the current report destination.
+ *
+ *  @param ntsa  array to report
+ *  @param depth logical indentation depth
+ */
+void rpt_ntsa(Null_Terminated_String_Array ntsa, int depth) {
+   assert(ntsa);
+   for (int ndx=0; ntsa[ndx]; ndx++) {
+      rpt_vstring(depth, "%s", ntsa[ndx]);
+   }
+}
+
+
 /** Writes a string to the current output destination, describing a pointer
- * to a named data structure.
+ *  to a named data structure.
  *
- * The output is indented per the specified indentation depth.
+ *  The output is indented per the specified indentation depth.
  *
- * @param name  struct name
- * @param ptr   pointer to struc
- * @param depth logical indentation depth
+ *  @param name  struct name
+ *  @param ptr   pointer to struc
+ *  @param depth logical indentation depth
  */
 void rpt_structure_loc(const char * name, const void * ptr, int depth) {
    // fprintf(rpt_cur_output_dest(), "%*s%s at: %p\n", rpt_indent(depth), "", name, ptr);
    rpt_vstring(depth, "%s at: %p", name, ptr);
 }
 
+
 /** Writes a pair of strings to the current output destination.
  *
- * If offset_absolute is true, then the s2 value will start in the same column,
- * irrespective of the line indentation.   This may make some reports easier to read.
+ *  If offset_absolute is true, then the s2 value will start in the same column,
+ *  irrespective of the line indentation.   This may make some reports easier to read.
  *
- * @param s1 first string
- * @param s2 second string
- * @param col2offset  offset from start of line where s2 starts
- * @param offset_absolute  if true,  col2offset is relative to the start of the line, before indentation
- *                         if false, col2offset is relative to the indented start of s1
- * @param depth logical indentation depth
+ *  @param s1 first string
+ *  @param s2 second string
+ *  @param col2offset  offset from start of line where s2 starts
+ *  @param offset_absolute  if true,  col2offset is relative to the start of the line, before indentation
+ *                          if false, col2offset is relative to the indented start of s1
+ *  @param depth logical indentation depth
  */
 void rpt_2col(char * s1,  char * s2,  int col2offset, bool offset_absolute, int depth) {
    int col1sz = col2offset;
@@ -386,11 +501,13 @@ void rpt_2col(char * s1,  char * s2,  int col2offset, bool offset_absolute, int 
 }
 
 
-/* Reports the contents of a file.
+/** Reports the contents of a file.
  *
- * @param   fn        name of file
- * @param   verbose   if true, emit message if error reading file
- * @depth   depth     logical indentation depth
+ *  @param   fn        name of file
+ *  @param   verbose   if true, emit message if error reading file
+ *  @param   depth     logical indentation depth
+ *  @retval >=0        number of lines read
+ *  @retval <0         -errno from fopen() or getline()
  */
 int rpt_file_contents(const char * fn, bool verbose, int depth) {
    GPtrArray * line_array = g_ptr_array_new();
@@ -442,7 +559,7 @@ int rpt_file_contents(const char * fn, bool verbose, int depth) {
 void rpt_str(const char * name, char * info, const char * val, int depth) {
    bool debug = false;
    if (debug)
-      printf("(%s) Writing to %p\n", __func__, rpt_cur_output_dest());
+      printf("(%s) Writing to %p\n", __func__, (void*)rpt_cur_output_dest());
 
    char infobuf[100];
    if (info)

@@ -3,7 +3,7 @@
  *  Functions and strings that are independent of the parser package used.
  */
 
-// Copyright (C) 2014-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <config.h>
@@ -27,40 +27,59 @@
 //
 
 static Cmd_Desc cmdinfo[] = {
- // cmd_id              cmd_name   minchars min_arg_ct max_arg_ct
-   {CMDID_DETECT,       "detect",         3,  0,       0},
-   {CMDID_CAPABILITIES, "capabilities",   3,  0,       0},
-   {CMDID_GETVCP,       "getvcp",         3,  1,       1},
-   {CMDID_SETVCP,       "setvcp",         3,  2,       MAX_SETVCP_VALUES*2},
-   {CMDID_LISTVCP,      "listvcp",        5,  0,       0},
+ // cmd_id              cmd_name   minchars min_arg_ct max_arg_ct          supported_options
+   {CMDID_DETECT,       "detect",         3,  0,       0,                  Option_None},
+   {CMDID_CAPABILITIES, "capabilities",   3,  0,       0,                  Option_Explicit_Display},
+   {CMDID_GETVCP,       "getvcp",         3,  1,       MAX_GETVCP_VALUES,  Option_Explicit_Display},
+   {CMDID_SETVCP,       "setvcp",         3,  2,       MAX_SETVCP_VALUES*2,Option_Explicit_Display},
+   {CMDID_LISTVCP,      "listvcp",        5,  0,       0,                  Option_None},
 #ifdef INCLUDE_TESTCASES
-   {CMDID_TESTCASE,     "testcase",       3,  1,       1},
-   {CMDID_LISTTESTS,    "listtests",      5,  0,       0},
+   {CMDID_TESTCASE,     "testcase",       3,  1,       1,                  Option_None},
+   {CMDID_LISTTESTS,    "listtests",      5,  0,       0,                  Option_None},
 #endif
-   {CMDID_LOADVCP,      "loadvcp",        3,  1,       1},
-   {CMDID_DUMPVCP,      "dumpvcp",        3,  0,       1},
-   {CMDID_INTERROGATE,  "interrogate",    3,  0,       0},
-   {CMDID_ENVIRONMENT,  "environment",    3,  0,       0},
-   {CMDID_USBENV,       "usbenvironment", 6,  0,       0},
-   {CMDID_VCPINFO,      "vcpinfo",        5,  0,       1},
-   {CMDID_READCHANGES,  "watch",          3,  0,       0},
-#ifdef USE_USB
-   {CMDID_CHKUSBMON,    "chkusbmon",      3,  1,       1},
+   {CMDID_LOADVCP,      "loadvcp",        3,  1,       1,                  Option_Explicit_Display},
+   {CMDID_DUMPVCP,      "dumpvcp",        3,  0,       1,                  Option_Explicit_Display},
+#ifdef ENABLE_ENVCMDS
+   {CMDID_INTERROGATE,  "interrogate",    3,  0,       0,                  Option_None},
+   {CMDID_ENVIRONMENT,  "environment",    3,  0,       0,                  Option_None},
+   {CMDID_USBENV,       "usbenvironment", 6,  0,       0,                  Option_None},
 #endif
-   {CMDID_PROBE,        "probe",          5,  0,       0},
-   {CMDID_SAVE_SETTINGS,"scs",            3,  0,       0},
+   {CMDID_VCPINFO,      "vcpinfo",        5,  0,       MAX_GETVCP_VALUES,  Option_None},
+// #ifdef WATCH_COMMAND
+   {CMDID_READCHANGES,  "watch",          3,  0,       0,                  Option_Explicit_Display},
+//#endif
+   {CMDID_CHKUSBMON,    "chkusbmon",      3,  1,       1,                  Option_None},
+   {CMDID_PROBE,        "probe",          5,  0,       0,                  Option_Explicit_Display},
+   {CMDID_SAVE_SETTINGS,"scs",            3,  0,       0,                  Option_Explicit_Display},
+   {CMDID_DISCARD_CACHE,"discard",        4,  1,       2,                  Option_None},
+   {CMDID_LIST_RTTI,    "traceable-functions",
+                                          2,  0,       0,                  Option_None},
+   {CMDID_C1,           "c1",             2,  0,       9,                  Option_None},
+   {CMDID_C2,           "c2",             2,  0,       9,                  Option_None},
+   {CMDID_C3,           "c3",             2,  0,       9,                  Option_None},
+   {CMDID_C4,           "c4",             2,  0,       9,                  Option_None},
 };
 static int cmdct = sizeof(cmdinfo)/sizeof(Cmd_Desc);
 
 
+#ifndef NDEBUG
+/** Validates the Cmd_Desc data structure.
+ *  Called during parser initialization.
+ */
 void validate_cmdinfo() {
    int ndx = 0;
    for (; ndx < cmdct; ndx++) {
       assert( cmdinfo[ndx].max_arg_ct <= MAX_ARGS);
    }
 }
+#endif
 
 
+/** Reports the contents of the Cmd_Desc data structure.
+ *  For debugging.
+ *
+ *  @param  cmd_desc pointer to command table
+ */
 void show_cmd_desc(Cmd_Desc * cmd_desc) {
    printf("CmdDesc at %p\n", (void*)cmd_desc);
    printf("   cmd_id:     0x%04x\n", cmd_desc->cmd_id);
@@ -71,6 +90,11 @@ void show_cmd_desc(Cmd_Desc * cmd_desc) {
 }
 
 
+/** Looks for a command in the command table, allowing for valid abbreviations.
+ *
+ *  @param  cmd  pointer to command specified by the user, in lower case
+ *  @return pointer to #Cmd_Desc struct for the command, NULL if not found
+ */
 Cmd_Desc * find_command(char * cmd) {
    Cmd_Desc * result = NULL;
    int ndx = 0;
@@ -80,11 +104,14 @@ Cmd_Desc * find_command(char * cmd) {
          result = &cmdinfo[ndx];
       }
    }
-   // DBGMSG("cmd=|%s|, returning %p", cmd, result);
    return result;
 }
 
 
+/** Looks for a command in the command table by its command id.
+ *  @param  cmdid id number of command
+ *  @return pointer to #Cmd_Desc struct for the command, NULL if not found
+ */
 Cmd_Desc * get_command(int cmdid) {
    bool debug = false;
    Cmd_Desc * result = NULL;
@@ -102,11 +129,12 @@ Cmd_Desc * get_command(int cmdid) {
    return result;
 }
 
+// End of command description data structure
 
-void init_cmd_parser_base() {
-   validate_cmdinfo();
-}
 
+//
+// Parsers for specific argument types
+//
 
 bool all_digits(char * val, int ct) {
    bool debug = false;
@@ -131,7 +159,23 @@ bool parse_dot_separated_arg(const char * val, int * piAdapterIndex, int * piDis
    return ok;
 }
 
-bool parse_colon_separated_arg(const char * val, int * pv1, int * pv2) {
+
+bool parse_colon_separated_vid_pid(const char * val, uint16_t * pv1, uint16_t * pv2) {
+   Null_Terminated_String_Array parts = strsplit(val, ":");
+   bool ok = false;
+   if (ntsa_length(parts) == 2 && strlen(parts[0]) == 4 && strlen(parts[1]) == 4) {
+      ok = true;
+      // DBGMSG("parts[0] = |%s|", parts[0]);
+      // DBGMSG("parts[1] = |%s|",  parts[1]);
+      ok &= hhs4_to_uint16(parts[0], pv1);
+      ok &= hhs4_to_uint16(parts[1], pv2);
+   }
+   ntsa_free(parts,  true);
+   // DBGMSG("Returning %s *pv1=0x%04x, *pv2=0x%04x", sbool(ok), *pv1, *pv2);
+   return ok;
+}
+
+bool parse_colon_separated_arg(const char * val, int* pv1, int* pv2) {
    int rc = sscanf(val, "%d:%d", pv1, pv2);
    // DBGMSG("val=|%s| sscanf() returned %d  ", val, rc );
    bool ok = (rc == 2);
@@ -144,6 +188,11 @@ bool parse_int_arg(char * val, int * pIval) {
    return (ct == 1);
 }
 
+
+//
+// Feature subset table and functions
+//
+
 typedef struct feature_subset_table_entry_s {
    VCP_Feature_Subset   subset_id;
    Cmd_Id_Type          valid_commands;
@@ -152,6 +201,7 @@ typedef struct feature_subset_table_entry_s {
    char *               subset_desc;
 } Feature_Subset_Table_Entry;
 
+// Valid subset identifiers for commands that can take a subset id as an argument
 const Feature_Subset_Table_Entry subset_table[] = {
    // special handling
    {VCP_SUBSET_KNOWN,     CMDID_GETVCP|CMDID_VCPINFO, 3, "KNOWN",     "All features known to ddcutil that are valid for the display"},
@@ -161,8 +211,8 @@ const Feature_Subset_Table_Entry subset_table[] = {
    {VCP_SUBSET_SCAN,      CMDID_GETVCP,               3, "SCAN",      "All feature codes 00..FF, except those known to be WO"},
    {VCP_SUBSET_MFG,       CMDID_GETVCP,               3, "MANUFACTURER", "Manufacturer specific codes"},
    {VCP_SUBSET_MFG,       CMDID_GETVCP,               3, "MFG",        "Same as MANUFACTURER"},
-   {VCP_SUBSET_DYNAMIC,   CMDID_GETVCP|CMDID_VCPINFO, 3, "UDF",        "User defined features"},
-   {VCP_SUBSET_DYNAMIC,   CMDID_GETVCP|CMDID_VCPINFO, 3, "USER",       "User defined features"},
+   {VCP_SUBSET_UDF,   CMDID_GETVCP|CMDID_VCPINFO, 3, "UDF",        "User defined features"},
+   {VCP_SUBSET_UDF,   CMDID_GETVCP|CMDID_VCPINFO, 3, "USER",       "User defined features"},
 
    // ddcutil defined groups
    {VCP_SUBSET_PROFILE,   CMDID_GETVCP|CMDID_VCPINFO, 3, "PROFILE",   "Features for color profile management"},
@@ -190,15 +240,21 @@ const Feature_Subset_Table_Entry subset_table[] = {
 };
 const int subset_table_ct = sizeof(subset_table)/sizeof(Feature_Subset_Table_Entry);
 
-
-char * assemble_command_argument_help() {
+#ifndef NDEBUG
+void validate_subset_table() {
    // quick and dirty check that tables are in sync
-   // +2 for VCP_SUBSET_SINGLE_FEATURE, VCP_SUBSET_NONE
+   // +3 for VCP_SUBSET_SINGLE_FEATURE, VCP_SUBSET_MULTI_FEATURE, VCP_SUBSET_NONE
    // -2 for triple VCP_SUBSET_KNOWN
    // -1 for double VCP_SUBSET_MFG
    // -1 for double VCP_SUBSET_DYNAMIC
-   assert(subset_table_ct+(2-4) == vcp_subset_count);
+   assert(subset_table_ct+(3-4) == vcp_subset_count);
+}
+#endif
 
+/** Assemble a help message listing valid feature subsets.
+ *  @return multi-line help string
+ */
+char * assemble_command_argument_help() {
    GString * buf = g_string_sized_new(1000);
    g_string_append(buf,
          "Command Arguments\n"
@@ -210,7 +266,6 @@ char * assemble_command_argument_help() {
    for (int ndx = 0; ndx < subset_table_ct; ndx++) {
       g_string_append_printf(buf, "      - %-10s - %s\n",  subset_table[ndx].subset_name, subset_table[ndx].subset_desc);
    }
-
    g_string_append(buf,
    "    Keywords can be abbreviated to the first 3 characters.\n"
    "    Case is ignored.  e.g. \"COL\", \"pro\"\n"
@@ -229,6 +284,10 @@ char * assemble_command_argument_help() {
 }
 
 
+/** Finds a subset identifier description.
+ *  Given a command
+ */
+
 VCP_Feature_Subset find_subset(char * name, int cmd_id) {
    assert(name && (cmd_id == CMDID_GETVCP || cmd_id == CMDID_VCPINFO));
    VCP_Feature_Subset result = VCP_SUBSET_NONE;
@@ -245,9 +304,9 @@ VCP_Feature_Subset find_subset(char * name, int cmd_id) {
    return result;
 }
 
-
+#ifdef OLD
 bool parse_feature_id_or_subset(char * val, int cmd_id, Feature_Set_Ref * fsref) {
-   bool debug = false;
+   bool debug = true;
    bool ok = true;
    VCP_Feature_Subset subset_id = find_subset(val, cmd_id);
    if (subset_id != VCP_SUBSET_NONE)
@@ -258,6 +317,7 @@ bool parse_feature_id_or_subset(char * val, int cmd_id, Feature_Set_Ref * fsref)
      if (ok) {
         fsref->subset = VCP_SUBSET_SINGLE_FEATURE;
         fsref->specific_feature = feature_hexid;
+        bs256_insert(fsref->features, feature_hexid);     // for future
      }
    }
    DBGMSF(debug, "Returning: %s", sbool(ok));
@@ -266,32 +326,102 @@ bool parse_feature_id_or_subset(char * val, int cmd_id, Feature_Set_Ref * fsref)
    return ok;
 }
 
-
-// n. this function used to set the default output level based on the command
-// this is no longer necessary
-bool validate_output_level(Parsed_Cmd* parsed_cmd) {
-   // printf("(%s) parsed_cmd->cmdid = %d, parsed_cmd->output_level = %s\n",
-   //        __func__, parsed_cmd->cmd_id,
-   //        output_level_name(parsed_cmd->output_level));
+bool parse_feature_ids(char ** vals, int vals_ct, int cmd_id, Feature_Set_Ref * fsref) {
+   bool debug = true;
+   DBGMSF(debug, "Starting. vals_ct=%d, cmd_id=%d, fsref=%p", vals_ct, cmd_id, fsref);
    bool ok = true;
-   // check that output_level consistent with cmd_id
+   assert(cmd_id == CMDID_GETVCP || cmd_id == CMDID_VCPINFO);
+   assert(vals_ct > 0);
+   fsref->subset = VCP_SUBSET_NONE;
+   for (int ndx = 0; ndx < vals_ct; ndx++) {
+      Byte feature_hexid = 0;   // temp
+      ok = any_one_byte_hex_string_to_byte_in_buf(vals[ndx], &feature_hexid);
+      DBGMSF(debug, "vals[ndx]=%s, ok=%s, feature_hexid=0x%02x", vals[ndx], sbool(ok), feature_hexid);
+      if (ok) {
+         fsref->features = bs256_insert(fsref->features, feature_hexid);
+      }
+   }
+   if (ok)
+      fsref->subset = VCP_SUBSET_MULTI_FEATURES;
+
+   DBGMSF(debug, "Returning: %s", sbool(ok));
+   if (ok && debug)
+      dbgrpt_feature_set_ref(fsref, 0);
+
+   return ok;
+}
+#endif
+
+
+Feature_Set_Ref * parse_feature_ids_or_subset(int cmd_id, char **vals, int vals_ct) {
+   bool debug = false;
+   DBGMSF(debug, "cmd_id=%d, vals[0]=%s, vals_ct=%d", cmd_id, vals[0], vals_ct);
+
+   Feature_Set_Ref * fsref = calloc(1, sizeof(Feature_Set_Ref));
+   bool ok = false;
+   if (vals_ct <= 1) {
+      char * val = (vals_ct > 0) ? vals[0] : "ALL";
+      VCP_Feature_Subset subset_id = find_subset(val, cmd_id);
+      if (subset_id != VCP_SUBSET_NONE) {
+         fsref->subset = subset_id;
+         ok = true;
+      }
+      else {
+         Byte feature_hexid = 0;   // temp
+         ok = any_one_byte_hex_string_to_byte_in_buf(val, &feature_hexid);
+         if (ok) {
+            fsref->subset = VCP_SUBSET_SINGLE_FEATURE;
+            // fsref->specific_feature = feature_hexid;
+            fsref->features = bs256_insert(fsref->features, feature_hexid);     // for future
+         }
+      }
+   }
+   else {   // ct > 1
+      // ok = parse_feature_ids(vals, vals_ct, cmd_id, fsref);
+      assert(cmd_id == CMDID_GETVCP || cmd_id == CMDID_VCPINFO);
+      fsref->subset = VCP_SUBSET_NONE;
+      for (int ndx = 0; ndx < vals_ct; ndx++) {
+         Byte feature_hexid = 0;   // temp
+         ok = any_one_byte_hex_string_to_byte_in_buf(vals[ndx], &feature_hexid);
+         DBGMSF(debug, "vals[ndx]=%s, ok=%s, feature_hexid=0x%02x", vals[ndx], sbool(ok), feature_hexid);
+         if (ok) {
+            fsref->features = bs256_insert(fsref->features, feature_hexid);
+         }
+      }
+      if (ok)
+         fsref->subset = VCP_SUBSET_MULTI_FEATURES;
+   }
+
+   if (!ok) {
+      free(fsref);
+      fsref = NULL;
+   }
+   DBGMSF(debug, "Done.  Returning: %p", (void*) fsref);
+   if (ok && debug)
+      dbgrpt_feature_set_ref(fsref, 1);
+   return fsref;
+}
+
+
+
+/** Checks that the output level, after parsing, is appropriate for a command.
+ *  Writes a message to stdout if not.
+ *
+ *  @param   parsed_cmd  pointer to a #Parsed_Cmd
+ *  @return  true/false
+ */
+bool validate_output_level(Parsed_Cmd* parsed_cmd) {
+   bool ok = true;
    Byte valid_output_levels;
-   // Byte default_output_level = OL_NORMAL;
+   // once upon a time the switch statement really had multiple cases
    switch(parsed_cmd->cmd_id) {
-      case (CMDID_DETECT):
-         valid_output_levels = DDCA_OL_TERSE | DDCA_OL_NORMAL | DDCA_OL_VERBOSE;
-         break;
-      case (CMDID_GETVCP):
-         valid_output_levels = DDCA_OL_TERSE | DDCA_OL_NORMAL | DDCA_OL_VERBOSE;
-         break;
       case (CMDID_PROBE):
          // don't want to deal with how to report errors, handle write-only features
          // of machine readable output triggered by --terse
-         valid_output_levels =                 DDCA_OL_NORMAL | DDCA_OL_VERBOSE;
+         valid_output_levels =                 DDCA_OL_NORMAL | DDCA_OL_VERBOSE | DDCA_OL_VV;
          break;
       default:
-         // default_output_level = OL_NORMAL;
-         valid_output_levels = DDCA_OL_TERSE | DDCA_OL_NORMAL | DDCA_OL_VERBOSE;
+         valid_output_levels = DDCA_OL_TERSE | DDCA_OL_NORMAL | DDCA_OL_VERBOSE | DDCA_OL_VV;
    }
    if (!(parsed_cmd->output_level & valid_output_levels)) {
       printf("Output level invalid for command %s: %s\n",
@@ -303,6 +433,9 @@ bool validate_output_level(Parsed_Cmd* parsed_cmd) {
 }
 
 
+//
+// Help message fragments
+//
 char * commands_list_help =
        "Commands:\n"
        "   detect                                  Detect monitors\n"
@@ -319,17 +452,24 @@ char * commands_list_help =
        "   testcase <testcase-number>\n"
        "   listtests\n"
 #endif
+#ifdef ENABLE_ENVCMDS
        "   environment                             Probe execution environment\n"
-#ifdef USE_USB
+#ifdef ENABLE_USB
        "   usbenv                                  Probe for USB connected monitors\n"
 #endif
+#endif
        "   probe                                   Probe monitor abilities\n"
+#ifdef ENABLE_ENVCMDS
        "   interrogate                             Report everything possible\n"
-#ifdef USE_USB
+#endif
+#ifdef ENABLE_USB
        "   chkusbmon                               Check if USB device is monitor (for UDEV)\n"
 #endif
+#ifdef DEPRECATED
        "   watch                                   Watch display for reported changes (under development)\n"
-       "\n";
+#endif
+       "   discard (all|capabilities|dsa) cache(s) Delete cache files\n"
+       "   traceable-functions                     List traceable functions\n";
 
 #ifdef OLD
 char * command_argument_help =
@@ -376,13 +516,10 @@ char * monitor_selection_option_help =
        "  The monitor to be communicated with can be specified using the following options:\n"
        "  --display <display_number>, where <display_number> ranges from 1 to the number of\n"
        "    displays detected\n"
-       "  --bus <bus number>, for /dev/i2c-<bus number>\n"
-#ifdef HAVE_ADL
-       "  --adl <adapter_number>.<display_number>, for monitors connected to an AMD video card\n"
-       "          running AMD's proprietary video driver (ADL is an acronym for AMD Display Library)\n"
-#endif
-#ifdef USE_USB
+       "  --bus <i2c bus number>, /dev/"I2C" bus number\n"
+#ifdef ENABLE_USB
        "  --usb <usb bus number>.<usb device number>, for monitors communicating via USB\n"
+       "  --hiddev <hiddev device number>, for monitors communicationg via USB\n"
 #endif
        "  --edid <hex string>, where <hex string> is a 256 hex character representation of the\n"
        "          128 byte first block of the EDID\n"
@@ -408,7 +545,7 @@ char * tracing_comma_separated_option_help =
 char * tracing_multiple_call_option_help =
        "Trace by trace class:\n"
        "  The argument to --trace is a trace class.  Specify the --trace option multiple\n"
-       "  times to activate multiple trace classes, e.g. \"--trace i2c --trace ddc\"\n"
+       "  times to activate multiple trace classes, e.g. \"--trace "I2C" --trace ddc\"\n"
        "  Valid trace classes are:  BASE, I2C, ADL, DDC, DDCIO, VCP, TOP, ENV, API, UDF, SLEEP, RETRY, ALL.\n"
        "  Trace class names are not case sensitive.\n"
        "  (Some trace classes are more useful than others.)\n"
@@ -432,7 +569,7 @@ char * stats_multiple_call_option_help =
        "Stats:\n"
        "  The argument to --stats is a statistics class.  Specify the --stats option multiple\n"
        "  times to activate multiple statistics classes, e.g. \"--stats calls --stats errors\"\n"
-       "  Valid statistics classes are:  TRY, TRIES, ERRS, ERRORS, CALLS, ALL.\n"
+       "  Valid statistics classes are:  TRY, TRIES, ERRS, ERRORS, CALLS, ELAPSED, ALL.\n"
        "  Statistics class names are not case sensitive and can abbreviated to 3 characters.\n"
        "  If no argument is specified, or ALL is specified, then all statistics classes are\n"
        "  output.\n"
@@ -444,6 +581,19 @@ char * maxtries_option_help =
       "    maximum write-only exchange count\n"
       "    maximum write-read exchange count\n"
       "    maximum multi-part-read exchange count\n"
-      "  A value of \"\" or \".\" leaves the default value unchanged\n"
-      "  e.g. --retries \",.,15\" changes only the maximum multi-part-read exchange count"
+      "  A value of \"0\" or \".\" leaves the default value unchanged\n"
+      "  e.g. --maxtries \".,.,15\" changes only the maximum multi-part-read exchange count"
       ;
+
+//
+// Initialization
+//
+
+#ifndef NDEBUG
+void init_cmd_parser_base() {
+   validate_cmdinfo();
+   validate_subset_table();
+}
+#endif
+
+

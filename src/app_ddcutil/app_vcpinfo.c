@@ -1,10 +1,12 @@
-/** \file app_vcpinfo.c
+/** @file app_vcpinfo.c
  *
- *  vcpinfo and (deprecated) listvcp commands
+ *  Implement VCPINFO and (deprecated) LISTVCP commands
  */
 
-// Copyright (C) 2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2020-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
+
+#include "config.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -13,6 +15,10 @@
 #include "public/ddcutil_types.h"
 
 #include "util/report_util.h"
+
+#include "base/core.h"
+#include "base/rtti.h"
+#include "base/vcp_version.h"
 
 #include "vcp/vcp_feature_set.h"
 #include "vcp/vcp_feature_codes.h"
@@ -23,11 +29,10 @@
 /** Creates humanly readable interpretation of VCP feature flags.
  *  The result is returned in a buffer supplied by the caller.
  *
- *  \param  flags   version specific feature flags
- *  \param  buf     pointer to buffer
- *  \param  buflen  buffer size
- *
- * Returns:   buf
+ *  @param  flags   version specific feature flags
+ *  @param  buf     pointer to buffer
+ *  @param  buflen  buffer size
+ *  @return buf
  */
 static char *
 vcp_interpret_version_feature_flags(
@@ -44,7 +49,7 @@ vcp_interpret_version_feature_flags(
    else if (flags & DDCA_RW)
       rwmsg = "ReadWrite";
 
-   char * typemsg = "";
+   char * typemsg = NULL;
    // NEED TO ALSO HANDLE TABLE TYPE
    if (flags & DDCA_CONT)
       typemsg = "Continuous";
@@ -73,7 +78,7 @@ vcp_interpret_version_feature_flags(
 
 /** Mainline for deprecated command LISTVCP
  *
- *  \param fh  where to write output
+ *  @param fh  where to write output
  */
 void
 app_listvcp(FILE * fh) {
@@ -106,10 +111,10 @@ app_listvcp(FILE * fh) {
 /** Returns a byte of flags indicating those MCCS versions for which the
  *  specified VCP feature is defined.
  *
- *  \param  pentry pointer to VCP_Feature_Table_Entry for VCP feature
- *  \return byte of flags
+ *  @param  pentry pointer to VCP_Feature_Table_Entry for VCP feature
+ *  @return byte of flags
  *
- * \remark
+ * @remark
  * Move back to vcp_feature_codes.c?
  */
 static Byte
@@ -119,46 +124,44 @@ valid_versions(
    Byte result = 0x00;
 
    if (pentry->v20_flags)
-      result |= DDCA_MCCS_V20;
+      result |= MCCS_SPEC_V20;
    if (pentry->v21_flags) {
       if ( !(pentry->v21_flags & DDCA_DEPRECATED) )
-         result |= DDCA_MCCS_V21;
+         result |= MCCS_SPEC_V21;
    }
    else {
-      if (result & DDCA_MCCS_V20)
-         result |= DDCA_MCCS_V21;
+      if (result & MCCS_SPEC_V20)
+         result |= MCCS_SPEC_V21;
    }
    if (pentry->v30_flags) {
       if ( !(pentry->v30_flags & DDCA_DEPRECATED) )
-         result |= DDCA_MCCS_V30;
+         result |= MCCS_SPEC_V30;
    }
    else {
-      if (result & DDCA_MCCS_V21)
-         result |= DDCA_MCCS_V30;
+      if (result & MCCS_SPEC_V21)
+         result |= MCCS_SPEC_V30;
    }
    if (pentry->v22_flags) {
       if ( !(pentry->v22_flags & DDCA_DEPRECATED) )
-         result |= DDCA_MCCS_V22;
+         result |= MCCS_SPEC_V22;
    }
    else {
-      if (result & DDCA_MCCS_V21)
-         result |= DDCA_MCCS_V22;
+      if (result & MCCS_SPEC_V21)
+         result |= MCCS_SPEC_V22;
    }
    return result;
 }
 
 
-/* Given a byte of flags indicating MCCS versions, return a string containing a
- * comma delimited list of MCCS version names.
+/** Given a byte of flags indicating MCCS versions, return a string containing a
+ *  comma delimited list of MCCS version names.
  *
- * Arguments:
- *   valid_version_flags
- *   version_name_buf      buffer in which to return string
- *   bufsz                 buffer size
+ *  @param  valid_version_flags
+ *  @param  version_name_buf      buffer in which to return string
+ *  @param  bufsz                 buffer size
+ *  @return version_name_buf
  *
- * Returns:                version_name_buf
- *
- * Note: MCCS 1.0 is not reported
+ *  Note: MCCS 1.0 is not reported
  */
 static char *
 valid_version_names_r(
@@ -169,19 +172,19 @@ valid_version_names_r(
    assert(bufsz >= (4*5));        // max 4 version names, 5 chars/name
    *version_name_buf = '\0';
 
-   if (valid_version_flags & DDCA_MCCS_V20)
+   if (valid_version_flags & MCCS_SPEC_V20)
       strcpy(version_name_buf, "2.0");
-   if (valid_version_flags & DDCA_MCCS_V21) {
+   if (valid_version_flags & MCCS_SPEC_V21) {
       if (strlen(version_name_buf) > 0)
          strcat(version_name_buf, ", ");
       strcat(version_name_buf, "2.1");
    }
-   if (valid_version_flags & DDCA_MCCS_V30) {
+   if (valid_version_flags & MCCS_SPEC_V30) {
       if (strlen(version_name_buf) > 0)
          strcat(version_name_buf, ", ");
       strcat(version_name_buf, "3.0");
    }
-   if (valid_version_flags & DDCA_MCCS_V22) {
+   if (valid_version_flags & MCCS_SPEC_V22) {
       if (strlen(version_name_buf) > 0)
          strcat(version_name_buf, ", ");
       strcat(version_name_buf, "2.2");
@@ -259,6 +262,7 @@ interpret_feature_flags_r(
 {
    bool debug = false;
    DBGMSF(debug, "vflags=0x%04x", vflags);
+
    assert(bufsz >= 100);     //  bigger than we'll need
    *workbuf = '\0';
    if (vflags & DDCA_DEPRECATED) {
@@ -275,7 +279,6 @@ interpret_feature_flags_r(
         strcat(workbuf, ", ");
         strcat(workbuf, s);
      }
-
    }
    return workbuf;
 }
@@ -300,10 +303,10 @@ report_feature_table_entry_flags(
 /** Emits a report on a VCP_Feature_Table_Entry.  This function is used by the
  *  VCPINFO command.  The report is written to the current report destination.
  *
- *  \param   pentry   pointer to feature table entry
- *  \param   depth    logical indentation depth
+ *  @param   pentry   pointer to feature table entry
+ *  @param   depth    logical indentation depth
  *
- *  \remark
+ *  @remark
  *  More properly in vcp_feature_codes.c?
  */
 void
@@ -319,68 +322,86 @@ report_vcp_feature_table_entry(
    DDCA_Version_Feature_Flags vflags = get_version_specific_feature_flags(pentry, vspec);
    char * feature_name = get_non_version_specific_feature_name(pentry);
    rpt_vstring(depth, "VCP code %02X: %s", pentry->code, feature_name);
-   rpt_vstring(d1, "%s", pentry->desc);
-   valid_version_names_r(valid_versions(pentry), workbuf, sizeof(workbuf));
-   rpt_vstring(d1, "MCCS versions: %s", workbuf);
-   if (output_level >= DDCA_OL_VERBOSE)
-      rpt_vstring(d1, "MCCS specification groups: %s",
-                      spec_group_names_r(pentry, workbuf, sizeof(workbuf)));
-   char * subset_names = feature_subset_names(pentry->vcp_subsets);
-   rpt_vstring(d1, "ddcutil feature subsets: %s", subset_names);
-   free(subset_names);
-   if (has_version_specific_features(pentry)) {
-      // rpt_vstring(d1, "VERSION SPECIFIC FLAGS");
-      report_feature_table_entry_flags(pentry, DDCA_VSPEC_V20, d1);
-      report_feature_table_entry_flags(pentry, DDCA_VSPEC_V21, d1);
-      report_feature_table_entry_flags(pentry, DDCA_VSPEC_V30, d1);
-      report_feature_table_entry_flags(pentry, DDCA_VSPEC_V22, d1);
-   }
-   else {
-      interpret_feature_flags_r(vflags, workbuf, sizeof(workbuf));
-      rpt_vstring(d1, "Attributes: %s", workbuf);
-   }
+   if (!(pentry->vcp_global_flags & DDCA_SYNTHETIC)) {
+      rpt_vstring(d1, "%s", pentry->desc);
+      valid_version_names_r(valid_versions(pentry), workbuf, sizeof(workbuf));
+      rpt_vstring(d1, "MCCS versions: %s", workbuf);
+      if (output_level >= DDCA_OL_VERBOSE)
+         rpt_vstring(d1, "MCCS specification groups: %s",
+                         spec_group_names_r(pentry, workbuf, sizeof(workbuf)));
+      char * subset_names = feature_subset_names(pentry->vcp_subsets);
+      rpt_vstring(d1, "ddcutil feature subsets: %s", subset_names);
+      free(subset_names);
+      if (has_version_specific_features(pentry)) {
+         // rpt_vstring(d1, "VERSION SPECIFIC FLAGS");
+         report_feature_table_entry_flags(pentry, DDCA_VSPEC_V20, d1);
+         report_feature_table_entry_flags(pentry, DDCA_VSPEC_V21, d1);
+         report_feature_table_entry_flags(pentry, DDCA_VSPEC_V30, d1);
+         report_feature_table_entry_flags(pentry, DDCA_VSPEC_V22, d1);
+      }
+      else {
+         interpret_feature_flags_r(vflags, workbuf, sizeof(workbuf));
+         rpt_vstring(d1, "Attributes: %s", workbuf);
+      }
 
-   if (pentry->default_sl_values && output_level >= DDCA_OL_VERBOSE) {
-      rpt_vstring(d1, "Simple NC values:");
-      report_sl_values(pentry->default_sl_values, d1+1);
+      if (pentry->default_sl_values && output_level >= DDCA_OL_VERBOSE) {
+         rpt_vstring(d1, "Simple NC values:");
+         report_sl_values(pentry->default_sl_values, d1+1);
+      }
    }
 }
 
 
 /** Mainline for VCPINFO command
  *
- *  \param  fref        feature set reference
- *  \param  mccs_vspec  VCP version spec
- *  \param  fsflags     feature set flags
- *  \return false if no features shown, true otherwise
+ *  @param  parsed_cmd  parsed command line
+ *  @return false if no features shown, true otherwise
  */
 bool
-app_vcpinfo(
-      Feature_Set_Ref * fref,
-      DDCA_MCCS_Version_Spec mccs_vspec,
-      Feature_Set_Flags fsflags)
+app_vcpinfo(Parsed_Cmd * parsed_cmd)
 {
+   bool debug = false;
+   DBGTRC_STARTING(debug, DDCA_TRC_VCP | DDCA_TRC_TOP, "feature set: %s",
+         fsref_repr_t(parsed_cmd->fref));
+
    bool vcpinfo_ok = true;
 
-   VCP_Feature_Set * fset = create_feature_set_from_feature_set_ref(
-                               fref,
-                               mccs_vspec,
+   Feature_Set_Flags fsflags = 0;
+   if (parsed_cmd->flags & CMD_FLAG_RW_ONLY)
+      fsflags |= FSF_RW_ONLY;
+   if (parsed_cmd->flags & CMD_FLAG_RO_ONLY)
+      fsflags |= FSF_RO_ONLY;
+   if (parsed_cmd->flags & CMD_FLAG_WO_ONLY)
+      fsflags |= FSF_WO_ONLY;
+
+   VCP_Feature_Set * fset = create_vcp_feature_set_from_feature_set_ref(
+                               parsed_cmd->fref,
+                               parsed_cmd->mccs_vspec,
                                fsflags);
-     if (!fset) {
-        vcpinfo_ok = false;
-     }
-     else {
-        if ( get_output_level() <= DDCA_OL_TERSE)
-           report_feature_set(fset, 0);
-        else {
-           int ct =  get_feature_set_size(fset);
-           int ndx = 0;
-           for (;ndx < ct; ndx++) {
-              VCP_Feature_Table_Entry * pentry = get_feature_set_entry(fset, ndx);
-              report_vcp_feature_table_entry(pentry, 0);
-           }
-        }
-        free_vcp_feature_set(fset);
-     }
+   if (IS_DBGTRC(debug, (DDCA_TRC_TOP | DDCA_TRC_VCP)) )
+      dbgrpt_vcp_feature_set(fset, 2);
+
+   if (!fset) {
+      vcpinfo_ok = false;
+   }
+   else {
+      if ( get_output_level() <= DDCA_OL_TERSE)
+         report_vcp_feature_set(fset, 0);
+      else {
+         int ct =  get_vcp_feature_set_size(fset);
+         int ndx = 0;
+         for (;ndx < ct; ndx++) {
+            VCP_Feature_Table_Entry * pentry = get_vcp_feature_set_entry(fset, ndx);
+            report_vcp_feature_table_entry(pentry, 0);
+         }
+      }
+      free_vcp_feature_set(fset);
+   }
+
+   DBGTRC_RET_BOOL(debug, DDCA_TRC_VCP|DDCA_TRC_TOP, vcpinfo_ok, "");
    return vcpinfo_ok;
+}
+
+void init_app_vcpinfo() {
+   RTTI_ADD_FUNC(app_vcpinfo);
 }

@@ -7,7 +7,7 @@
  *  within the code that implements the API.
  */
 
-// Copyright (C) 2014-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DDCUTIL_TYPES_H_
@@ -18,10 +18,10 @@ extern "C"
 {
 #endif
 
-/** \cond */
+/** @cond */
 #include <stdbool.h>
 #include <stdint.h>                // for uint8_t, unit16_t
-/** \endcond */
+/** @endcond */
 
 
 //
@@ -34,19 +34,19 @@ extern "C"
  *  Most public **ddcutil** functions return a status code.
  *  These status codes have 3 sources:
  *  - Linux
- *  - ADL (AMD Display Library)
+ *  - ADL (AMD Display Library) (no longer used)
  *  - **ddcutil** itself
  *
  *  These multiple status code sources are consolidated by "modulating"
  *  the raw values into non-overlapping ranges.
  *  - Linux errno values are returned as negative numbers (e.g. -EIO)
  *  - ADL values are modulated by 2000 (i.e., 2000 subtracted from negative ADL status codes,
- *         or added to positive ADL status codes)
+ *         or added to positive ADL status codes) (no longer used)
  *  - ddcutil errors are always in the -3000 range
  *
  *  In summary:
  *  - 0 always indicates a normal successful status
- *  - Positive values (possible with ADL) represent qualified success of some sort
+ *  - Positive values (possible with ADL) represent qualified success of some sort (no longer used)
  *  - Negative values indicate an error condition.
  */
 typedef int DDCA_Status;
@@ -67,8 +67,7 @@ typedef struct {
 //! Build option flags, as returned by #ddca_build_options()
 //! The enum values are defined as 1,2,4 etc so that they can be or'd.
 typedef enum {
-   /** @brief ddcutil was built with support for AMD Display Library connected monitors */
-   DDCA_BUILT_WITH_ADL     = 0x01,
+   DDCA_BUILT_WITH_NONE    = 0x00,
    /** @brief ddcutil was built with support for USB connected monitors */
    DDCA_BUILT_WITH_USB     = 0x02,
   /** @brief ddcutil was built with support for failure simulation */
@@ -92,21 +91,16 @@ typedef struct ddca_error_detail {
 
 
 //
-// I2C Protocol Control
+// Initialization
 //
 
-//! I2C timeout types
-typedef enum{
-   DDCA_TIMEOUT_STANDARD,      /**< Normal retry interval */
-   DDCA_TIMEOUT_TABLE_RETRY    /**< Special timeout for Table reads and writes */
-} DDCA_Timeout_Type;
-
-//! I2C retry limit types
-typedef enum{
-   DDCA_WRITE_ONLY_TRIES,     /**< Maximum write-only operation tries */
-   DDCA_WRITE_READ_TRIES,     /**< Maximum read-write operation tries */
-   DDCA_MULTI_PART_TRIES      /**< Maximum multi-part operation tries */
-} DDCA_Retry_Type;
+//! Options passed to #ddca_init()
+typedef enum {
+   DDCA_INIT_OPTIONS_NONE                  = 0,
+   DDCA_INIT_OPTIONS_DISABLE_CONFIG_FILE   = 1,  ///< Do not process configuration file
+   DDCA_INIT_OPTIONS_CLIENT_OPENED_SYSLOG  = 2,  ///< Client has already opened syslog
+   DDCA_INIT_OPTIONS_ENABLE_INIT_MSGS      = 4   ///< Emit msgs re how config file and passed options merged
+} DDCA_Init_Options;
 
 
 //
@@ -121,7 +115,8 @@ typedef enum{
 typedef enum {
    DDCA_OL_TERSE  =0x04,         /**< Brief   output  */
    DDCA_OL_NORMAL =0x08,         /**< Normal  output */
-   DDCA_OL_VERBOSE=0x10          /**< Verbose output */
+   DDCA_OL_VERBOSE=0x10,         /**< Verbose output */
+   DDCA_OL_VV     =0x20          /**< Very verbose output */
 } DDCA_Output_Level;
 
 
@@ -129,33 +124,19 @@ typedef enum {
 // Tracing
 //
 
-//! Trace Control
+//! ddcutil message severity maps to syslog() severity.
 //!
-//! Used as bitflags to specify multiple trace types
+//! Gaps in values allow for further refinement
 typedef enum {
- DDCA_TRC_BASE  = 0x0080,       /**< base functions          */
- DDCA_TRC_I2C   = 0x0040,       /**< I2C layer               */
- DDCA_TRC_ADL   = 0x0020,       /**< ADL layer               */
- DDCA_TRC_DDC   = 0x0010,       /**< DDC layer               */
- DDCA_TRC_USB   = 0x0008,       /**< USB connected display functions */
- DDCA_TRC_TOP   = 0x0004,       /**< ddcutil mainline        */
- DDCA_TRC_ENV   = 0x0002,       /**< environment command     */
- DDCA_TRC_API   = 0x0001,       /**< top level API functions */
- DDCA_TRC_UDF   = 0x0100,       /**< user-defined, aka dynamic, features */
- DDCA_TRC_VCP   = 0x0200,       /**< VCP layer, feature definitions */
- DDCA_TRC_DDCIO = 0x0400,       /**< DDC IO functions */
- DDCA_TRC_SLEEP = 0x0800,       /**< low level sleeps */
- DDCA_TRC_RETRY = 0x1000,       /**< successful retries, subset of DDCA_TRC_SLEEP */
-
- DDCA_TRC_NONE = 0x0000,        /**< all tracing disabled    */
- DDCA_TRC_ALL  = 0xffff         /**< all tracing enabled     */
-} DDCA_Trace_Group;
-
-
-typedef enum {
-   DDCA_TRCOPT_TIMESTAMP = 0x01,
-   DDCA_TRCOPT_THREAD_ID = 0x02,
-} DDCA_Trace_Options;
+   DDCA_SYSLOG_NOT_SET  =  -1,
+   DDCA_SYSLOG_NEVER    =   0,
+   DDCA_SYSLOG_ERROR    =   3,
+   DDCA_SYSLOG_WARNING  =   6,
+   DDCA_SYSLOG_NOTICE   =   9,
+   DDCA_SYSLOG_INFO     =  12,
+   DDCA_SYSLOG_VERBOSE  =  15,
+   DDCA_SYSLOG_DEBUG    =  18,
+} DDCA_Syslog_Level;
 
 
 //
@@ -173,6 +154,12 @@ typedef enum {
    DDCA_STATS_ALL      = 0xFF     ///< indicates all statistics types
 } DDCA_Stats_Type;
 
+
+//
+// Miscellaneous types
+//
+
+typedef double DDCA_Sleep_Multiplier;
 
 //
 // Output capture
@@ -193,7 +180,7 @@ typedef enum {
 //  Display Specification
 //
 
-/** \defgroup api_display_spec API Display Specification */
+/** @defgroup api_display_spec API Display Specification */
 
 /** Opaque display identifier
  *
@@ -203,12 +190,12 @@ typedef enum {
  * It can take several forms:
  * - the display number assigned by **dccutil**
  * - an I2C bus number
- * - an ADL (adapter index, display index) pair
+ * - an ADL (adapter index, display index) pair (deprecated)
  * - a  USB (bus number, device number) pair or USB device number
  * - an EDID
  * - manufacturer, model, and serial number strings
  *
- * \ingroup api_display_spec
+ * @ingroup api_display_spec
  * */
 typedef void * DDCA_Display_Identifier;
 
@@ -216,8 +203,8 @@ typedef void * DDCA_Display_Identifier;
  *
  * A #DDCA_Display_Ref describes a monitor.  It contains 3 kinds of information:
  * - Assigned ddcutil display number
- * - The operating system path to the monitor, which is an I2C bus number, an
- *   ADL identifier, or a USB device number.
+ * - The operating system path to the monitor, which is an I2C bus number or
+ *   a USB device number.
  * - Accumulated information about the monitor, such as the EDID or capabilities string.
  *
  * @remark
@@ -228,7 +215,7 @@ typedef void * DDCA_Display_Identifier;
  * - From the DDCA_Display_List returned by #ddca_get_display_info_list2()
  * - Searching based on #DDCA_Display_Identifier using #ddca_get_display_ref()
  *
- * \ingroup api_display_spec
+ * @ingroup api_display_spec
  */
 typedef void * DDCA_Display_Ref;
 
@@ -242,23 +229,12 @@ typedef void * DDCA_Display_Ref;
  * For I2C and USB connected displays, an operating system open is performed by
  * # ddca_open_display2().  #DDCA_Display_Handle then contains the file handle
  * returned by the operating system.
- * For ADL displays, no actual operating system open is performed when creating
- * a DDCA_Display_Handle.  The adapter number.device number pair are simply copied
- * from the #DDCA_Display_Ref.
  *
- * \ingroup api_display_spec
+ * @ingroup api_display_spec
  */
 typedef void * DDCA_Display_Handle;
 
 ///@}
-
-
-/** ADL adapter number/display number pair, which identifies a display */
-typedef struct {
-   int iAdapterIndex;  /**< adapter number */
-   int iDisplayIndex;  /**< display number */
-} DDCA_Adlno;
-// uses -1,-1 for unset
 
 
 //
@@ -322,7 +298,6 @@ typedef enum {
 /** Indicates how MCCS communication is performed */
 typedef enum {
    DDCA_IO_I2C,     /**< Use DDC to communicate with a /dev/i2c-n device */
-   DDCA_IO_ADL,     /**< Use ADL API */
    DDCA_IO_USB      /**< Use USB reports for a USB connected monitor */
 } DDCA_IO_Mode;
 
@@ -332,7 +307,6 @@ typedef struct {
    DDCA_IO_Mode io_mode;        ///< physical access mode
    union {
       int        i2c_busno;     ///< I2C bus number
-      DDCA_Adlno adlno;         ///< ADL iAdapterIndex/iDisplayIndex pair
       int        hiddev_devno;  ///* USB hiddev device  number
    } path;
 } DDCA_IO_Path;
@@ -345,7 +319,10 @@ typedef struct {
 
 
 #define DDCA_DISPLAY_INFO_MARKER "DDIN"
-/** Describes one monitor detected by ddcutil. */
+/** Describes one monitor detected by ddcutil.
+ *
+ *  This struct is copied to the caller and can simply be freed.
+ */
 typedef struct {
    char                   marker[4];        ///< always "DDIN"
    int                    dispno;           ///< ddcutil assigned display number
@@ -358,9 +335,6 @@ typedef struct {
    uint16_t               product_code;     ///< model product number
    uint8_t                edid_bytes[128];  ///< first 128 bytes of EDID
    DDCA_MCCS_Version_Spec vcp_version;      ///< VCP version as pair of numbers
-#ifdef OLD
-   DDCA_MCCS_Version_Id   vcp_version_id;   ///< VCP version identifier (deprecated)
-#endif
    DDCA_Display_Ref       dref;             ///< opaque display reference
 } DDCA_Display_Info;
 
@@ -426,10 +400,11 @@ typedef uint16_t DDCA_Version_Feature_Flags;
 typedef uint16_t DDCA_Global_Feature_Flags;
 
 // Bits in DDCA_Global_Feature_Flags:
+// Lifecycle:
 #define DDCA_SYNTHETIC_VCP_FEATURE_TABLE_ENTRY  0x8000 /**< Used internally to indicate a temporary VCP_Feature_Table_Entry */
-#define DDCA_USER_DEFINED 0x4000      /**< User provided feature definition */
-// #define DDCA_SYNTHETIC_DDCA_FEATURE_METADATA 0x2000
 #define DDCA_PERSISTENT_METADATA 0x1000  /**< Part of internal feature tables, do not free */
+// Describe Provenance:
+#define DDCA_USER_DEFINED  0x4000        /**< User provided feature definition */
 #define DDCA_SYNTHETIC     0x2000        /**< Generated feature definition  */
 
 typedef uint16_t DDCA_Feature_Flags;    // union (DDCA_Version_Feature_Flags, DDCA_Global_Feature_Flags)
@@ -459,6 +434,7 @@ struct {
    DDCA_MCCS_Version_Spec                vcp_version;    /**< MCCS version    */
    DDCA_Feature_Flags                    feature_flags;  /**< feature type description */
    DDCA_Feature_Value_Entry *            sl_values;      /**< valid when DDCA_SIMPLE_NC set */
+   void *                                unused;         /** no longer used, was latest_sl_values */
    char *                                feature_name;   /**< feature name */
    char *                                feature_desc;   /**< feature description */
    // possibly add pointers to formatting functions
@@ -546,6 +522,82 @@ typedef struct {
 
 #define VALREC_CUR_VAL(valrec) ( valrec->val.c_nc.sh << 8 | valrec->val.c_nc.sl )
 #define VALREC_MAX_VAL(valrec) ( valrec->val.c_nc.mh << 8 | valrec->val.c_nc.ml )
+
+
+//
+// For reporting display status changes to client
+//
+
+//! Type of event being reported
+//!
+//!  @since 2.1.0
+typedef enum {
+   DDCA_EVENT_DPMS_AWAKE,
+   DDCA_EVENT_DPMS_ASLEEP,
+   DDCA_EVENT_DISPLAY_CONNECTED,
+   DDCA_EVENT_DISPLAY_DISCONNECTED,
+   DDCA_EVENT_UNUSED1,
+   DDCA_EVENT_UNUSED2,
+} DDCA_Display_Event_Type;
+
+
+//! Specifies groups of Display_Status_Event_Type to watch for
+//!
+//! The enum values are defined as 1,2,4 etc so that they can be or'd.
+//!
+//!  @since 2.1.0
+typedef enum {
+   DDCA_EVENT_CLASS_NONE               = 0,
+   DDCA_EVENT_CLASS_DPMS               = 1,
+   DDCA_EVENT_CLASS_DISPLAY_CONNECTION = 2,
+   DDCA_EVENT_CLASS_UNUSED1            = 4,
+} DDCA_Display_Event_Class;
+
+#define DDCA_EVENT_CLASS_ALL (DDCA_EVENT_CLASS_DPMS | DDCA_EVENT_CLASS_DISPLAY_CONNECTION)
+
+
+/** Event record passed by a display status callback function.
+ *
+ *  @remark
+ *  Strictly speaking, connector names can have a maximum length of 32 characters.
+ *  In practice, no connector names longer than 16 characters have ever been
+ *  seen.  Therefore, it should be safe for connector_name to allow for a
+ *  maximum of 31 printable characters and a termination byte.
+ *
+ *  @remark
+ *  The DDCA_Display_Status_Event is defined with two unused fields to allow
+ *  for future extension without breaking the ABI.
+ *
+ *  @since 2.1.0
+ */
+typedef struct {
+   uint64_t                timestamp_nanos;
+   DDCA_Display_Event_Type event_type;
+   DDCA_IO_Path            io_path;
+   char                    connector_name[32];
+   DDCA_Display_Ref        dref;
+   void *                  unused[2];
+} DDCA_Display_Status_Event;
+
+
+/** Signature of a function to be invoked by the shared library notifying the
+ *  client that a change in connected displays has been detected.
+ *
+ *  The client program should call #ddca_redetect_displays() and then
+ *  #ddca_get_display_refs() to get the currently valid display references.
+ *
+ *  @remark
+ *  The DDCA_Display_Status_Event is passed on the stack, not allocated on
+ *  the heap. Callback invocation is extremely infrequent, the struct size is
+ *  not large, and passing the event on the stack relieves clients of
+ *  responsibility for memory management.
+ *
+ *  @since 2.1.0
+ */
+typedef
+void (*DDCA_Display_Status_Callback_Func)(DDCA_Display_Status_Event event);
+
+
 
 #ifdef __cplusplus
 }

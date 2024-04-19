@@ -1,22 +1,24 @@
-/** \file dumpload.c
+/** @file dumpload.c
  *
- * Load/store VCP settings from/to file.
+ *  Load/store VCP settings from/to file.
  */
 
-// Copyright (C) 2014-2019 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
+
+#include "config.h"
 
 /** \cond */
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <glib.h>
-#include <linux/limits.h>    // PATH_MAX, NAME_MAX
+#include <glib-2.0/glib.h>
 #include <stdbool.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
 
+#include "util/error_info.h"
 #include "util/file_util.h"
 #include "util/glib_util.h"
 #include "util/glib_string_util.h"
@@ -31,6 +33,7 @@
 #include "base/displays.h"
 #include "base/monitor_model_key.h"
 #include "base/parms.h"
+#include "base/rtti.h"
 #include "base/status_code_mgt.h"
 #include "base/vcp_version.h"
 
@@ -39,6 +42,7 @@
 #include "i2c/i2c_bus_core.h"
 
 #include "ddc/ddc_displays.h"
+#include "ddc/ddc_display_selection.h"
 #include "ddc/ddc_output.h"
 #include "ddc/ddc_packet_io.h"
 #include "ddc/ddc_read_capabilities.h"
@@ -47,6 +51,7 @@
 
 #include "ddc/ddc_dumpload.h"
 
+static DDCA_Trace_Group TRACE_GROUP = DDCA_TRC_DDC;
 
 /** Frees a #Dumpload_Data struct.  The underlying Vcp_Value_set is also freed.
  *
@@ -55,13 +60,13 @@
  */
 void free_dumpload_data(Dumpload_Data * data) {
    bool debug = false;
-   DBGMSF(debug, "Starting. data=%p", data);
+   DBGTRC_STARTING(debug, TRACE_GROUP, "data=%p", data);
    if (data) {
       if (data->vcp_values)
          free_vcp_value_set(data->vcp_values);
       free(data);
    }
-   DBGMSF(debug, "Done.");
+   DBGTRC_DONE(debug, TRACE_GROUP, "");
 }
 
 
@@ -89,10 +94,11 @@ void dbgrpt_dumpload_data(Dumpload_Data * data, int depth) {
       dbgrpt_vcp_value_set(data->vcp_values, d1);
 }
 
+
 #define ADD_DATA_ERROR(_expl) \
       errinfo_add_cause(  \
          errs,            \
-         errinfo_new2(    \
+         errinfo_new(    \
             DDCRC_BAD_DATA, __func__, \
             _expl " at line %d: %s", linectr, line) );
 
@@ -111,13 +117,15 @@ create_dumpload_data_from_g_ptr_array(
       Dumpload_Data ** dumpload_data_loc)
 {
    bool debug = false;
-   DBGMSF(debug, "Starting.");
+   DBGTRC_STARTING(debug, TRACE_GROUP, "");
 
-   Error_Info * errs = errinfo_new(DDCRC_BAD_DATA, __func__);
+   Error_Info * errs = errinfo_new(DDCRC_BAD_DATA, __func__, NULL);
    *dumpload_data_loc = NULL;
 
    Dumpload_Data * data = calloc(1, sizeof(Dumpload_Data));
+#ifndef NDEBUG
    bool valid_data = true;
+#endif
    // default:
    data->vcp_version.major = 2;
    data->vcp_version.minor = 0;
@@ -147,7 +155,9 @@ create_dumpload_data_from_g_ptr_array(
             //                       "Invalid data at line %d: %s", linectr, line);
             // errinfo_add_cause(errs, err);
             ADD_DATA_ERROR("Invalid data");
+#ifndef NDEBUG
             valid_data = false;
+#endif
          }
          else {
             rest = head + strlen(s0);;
@@ -172,20 +182,22 @@ create_dumpload_data_from_g_ptr_array(
                bool ok = str_to_int(s1, &ival, 10);
                if (ok && ival >= 0 && ival <= 65535)
                   data->product_code = (uint16_t) ival;
+#ifndef NDEBUG
                else
                   valid_data = false;
+#endif
             }
             else if (streq(s0, "EDID") || streq(s0, "EDIDSTR")) {
-               g_strlcpy(data->edidstr, s1, sizeof(data->edidstr));
+               STRLCPY(data->edidstr, s1, sizeof(data->edidstr));
             }
             else if (streq(s0, "MFG_ID")) {
-               g_strlcpy(data->mfg_id, s1, sizeof(data->mfg_id));
+               STRLCPY(data->mfg_id, s1, sizeof(data->mfg_id));
             }
             else if (streq(s0, "MODEL")) {
-               g_strlcpy(data->model, rest, sizeof(data->model));
+               STRLCPY(data->model, rest, sizeof(data->model));
             }
             else if (streq(s0, "SN")) {
-               g_strlcpy(data->serial_ascii, rest, sizeof(data->serial_ascii));
+               STRLCPY(data->serial_ascii, rest, sizeof(data->serial_ascii));
             }
             else if (streq(s0, "VCP_VERSION")) {
                data->vcp_version = parse_vspec(s1);
@@ -199,7 +211,9 @@ create_dumpload_data_from_g_ptr_array(
                   //                  DDCRC_BAD_DATA, __func__,
                   //                  "Invalid VCP VERSION at line %d: %s\n", linectr, line) );
                   ADD_DATA_ERROR("Invalid VCP VERSION");
+#ifndef NDEBUG
                   valid_data = false;
+#endif
                }
             }
             else if (streq(s0, "TIMESTAMP_TEXT")   ||
@@ -212,7 +226,9 @@ create_dumpload_data_from_g_ptr_array(
                if (ct != 3) {
                   // f0printf(ferr(), "Invalid VCP data at line %d: %s\n", linectr, line);
                   ADD_DATA_ERROR("Invalid VCP data");
+#ifndef NDEBUG
                   valid_data = false;
+#endif
                }
                else {   // found feature id and value
                   Byte feature_id;
@@ -220,7 +236,9 @@ create_dumpload_data_from_g_ptr_array(
                   if (!ok) {
                      // f0printf(ferr(), "Invalid opcode at line %d: %s", linectr, s1);
                      ADD_DATA_ERROR("Invalid  opcode");
+#ifndef NDEBUG
                      valid_data = false;
+#endif
                   }
                   else {     // valid opcode
                      DDCA_Any_Vcp_Value * valrec = NULL;
@@ -233,11 +251,11 @@ create_dumpload_data_from_g_ptr_array(
                      // One solution: rework data structures to parse later
                      // second solution: vcp version in dumpload data
 
-                     DDCA_Monitor_Model_Key mmk = monitor_model_key_value(
+                     Monitor_Model_Key mmk = monitor_model_key_value(
                            data->mfg_id, data->model, data->product_code);
 
                      Display_Feature_Metadata * dfm =
-                                              dyn_get_feature_metadata_by_mmk_and_vspec_dfm(
+                                              dyn_get_feature_metadata_by_mmk_and_vspec(
                                                    feature_id,
                                                    mmk,
                                                    data->vcp_version,
@@ -253,7 +271,9 @@ create_dumpload_data_from_g_ptr_array(
                            //          "Invalid hex string value for opcode at line %d: %s\n",
                            //          linectr, line);
                            ADD_DATA_ERROR("Invalid hex string value for opcode");
+#ifndef NDEBUG
                            valid_data = false;
+#endif
                         }
                         else {
                            valrec = create_table_vcp_value_by_bytes(
@@ -264,12 +284,14 @@ create_dumpload_data_from_g_ptr_array(
                         }
                      }
                      else {   // non-table feature
-                        ushort feature_value;
+                        gushort feature_value;
                         ct = sscanf(s2, "%hu", &feature_value);
                         if (ct == 0) {
                            // f0printf(ferr(), "Invalid value for opcode at line %d: %s\n", linectr, line);
                            ADD_DATA_ERROR("Invalid value for opcode");
+#ifndef NDEBUG
                            valid_data = false;
+#endif
                         }
                         else {
                            // good opcode and value
@@ -294,10 +316,12 @@ create_dumpload_data_from_g_ptr_array(
                // f0printf(ferr(), "Unexpected field \"%s\" at line %d: %s\n", s0, linectr, line );
                errinfo_add_cause(
                           errs,
-                          errinfo_new2(
+                          errinfo_new(
                                 DDCRC_BAD_DATA, __func__,
                                 "Unexpected field \"%s\" at line %d: %s", s0, linectr, line) );
+#ifndef NDEBUG
                valid_data = false;
+#endif
             }
          }    // more than 1 field on line
       }       // non-comment line
@@ -316,6 +340,7 @@ create_dumpload_data_from_g_ptr_array(
       }
    }
    *dumpload_data_loc = data;
+   DBGTRC_RET_ERRINFO(debug, TRACE_GROUP, errs, "");
    return errs;
 }
 
@@ -330,12 +355,17 @@ create_dumpload_data_from_g_ptr_array(
  *
  * This function stops applying values on the first error encountered, and
  * returns the value of that error as its status code.
+ *
+ * @remark
+ * Consider not stopping on error, instead accumulate errors in Error_Info.
  */
 Error_Info *
 ddc_set_multiple(
       Display_Handle* dh,
       Vcp_Value_Set   vset)
 {
+   bool debug = false;
+   DBGTRC_STARTING(debug, TRACE_GROUP, "");
    Public_Status_Code psc = 0;
    Error_Info *        ddc_excp = NULL;
    int value_ct = vcp_value_set_size(vset);
@@ -355,16 +385,18 @@ ddc_set_multiple(
       ddc_excp = ddc_set_vcp_value(dh, vrec, NULL);
       psc = (ddc_excp) ? ddc_excp->status_code : 0;
       if (ddc_excp) {
-         f0printf(ferr(), "Error setting value for VCP feature code 0x%02x: %s\n",
+         SYSLOG2(DDCA_SYSLOG_ERROR, "Error setting value for VCP feature code 0x%02x: %s",
                          feature_code, psc_desc(psc) );
          if (psc == DDCRC_RETRIES)
-            f0printf(ferr(), "    Try errors: %s\n", errinfo_causes_string(ddc_excp));
-         f0printf(ferr(), "Terminating.");
+            SYSLOG2(DDCA_SYSLOG_ERROR, "    Try errors: %s", errinfo_causes_string(ddc_excp));
+         if (ndx < value_ct-1)
+            SYSLOG2(DDCA_SYSLOG_ERROR, "Not attempt to set additional values.");
          break;
       }
 
    } // for loop
 
+   DBGTRC_RET_ERRINFO(debug, TRACE_GROUP, ddc_excp, "");
    return ddc_excp;
 }
 
@@ -385,16 +417,13 @@ loadvcp_by_dumpload_data(
       Display_Handle *  dh)
 {
    assert(pdata);
-   FILE * errf = ferr();
 
    bool debug = false;
-   if (debug) {
-        DBGMSG("Loading VCP settings for monitor \"%s\", sn \"%s\", dh=%p \n",
+   DBGTRC_STARTING(debug, TRACE_GROUP, "Loading VCP settings for monitor \"%s\", sn \"%s\", dh=%p \n",
                pdata->model, pdata->serial_ascii, dh);
+   if ( IS_DBGTRC(debug, TRACE_GROUP) )
         dbgrpt_dumpload_data(pdata, 0);
-   }
 
-   Public_Status_Code psc = 0;
    Error_Info * ddc_excp = NULL;
    Display_Handle * dh_argument = dh;
 
@@ -403,27 +432,28 @@ loadvcp_by_dumpload_data(
       assert(dh->dref->pedid);
       bool ok = true;
       if ( !streq(dh->dref->pedid->model_name, pdata->model) ) {
-         f0printf(errf,
-            "Monitor model in data (%s) does not match that for specified device (%s)\n",
-            pdata->model, dh->dref->pedid->model_name);
+         const char * fmt =
+            "Monitor model in data (%s) does not match that for specified device (%s)";
+         MSG_W_SYSLOG(DDCA_SYSLOG_ERROR, fmt, pdata->model, dh->dref->pedid->model_name);
+         ddc_excp = errinfo_new(DDCRC_INVALID_DISPLAY, __func__, fmt, pdata->model, dh->dref->pedid->model_name);
          ok = false;
       }
       if (!streq(dh->dref->pedid->serial_ascii, pdata->serial_ascii) ) {
-         f0printf(errf,
-            "Monitor serial number in data (%s) does not match that for specified device (%s)\n",
-            pdata->serial_ascii, dh->dref->pedid->serial_ascii);
+         const char * fmt = "Monitor serial number in data (%s) does not match that for specified device (%s)";
+         MSG_W_SYSLOG(DDCA_SYSLOG_ERROR, fmt, pdata->serial_ascii, dh->dref->pedid->serial_ascii);
+         ddc_excp = errinfo_new(DDCRC_INVALID_DISPLAY, pdata->serial_ascii, dh->dref->pedid->serial_ascii);
          ok = false;
       }
       if (!ok) {
-         psc = DDCRC_INVALID_DISPLAY;
          goto bye;
       }
    }
 
    else if ( strlen(pdata->mfg_id) + strlen(pdata->model) + strlen(pdata->serial_ascii) == 0) {
       // Pathological.  Someone's been messing with the VCP file.
-      f0printf(errf, "Monitor manufacturer id, model, and serial number all missing from input.\n");
-      psc = DDCRC_INVALID_DISPLAY;
+      MSG_W_SYSLOG(DDCA_SYSLOG_ERROR, "Monitor manufacturer id, model, and serial number all missing from input.");
+      ddc_excp = errinfo_new(DDCRC_INVALID_DISPLAY, __func__,
+            "Monitor manufacturer id, model, and serial number all missing from input.");
       goto bye;
    }
 
@@ -434,34 +464,32 @@ loadvcp_by_dumpload_data(
                              pdata->model,
                              pdata->serial_ascii);
       assert(did);
-      Display_Ref * dref = get_display_ref_for_display_identifier(
-                              did, CALLOPT_NONE);
+      Display_Ref * dref = get_display_ref_for_display_identifier(did, CALLOPT_NONE);
       free_display_identifier(did);
       if (!dref) {
-         f0printf(errf, "Monitor not connected: %s - %s   \n", pdata->model, pdata->serial_ascii );
-         psc = DDCRC_INVALID_DISPLAY;
+         SYSLOG2(DDCA_SYSLOG_ERROR, "Monitor not connected: %s - %s", pdata->model, pdata->serial_ascii );
+         ddc_excp = errinfo_new(DDCRC_INVALID_DISPLAY, __func__,
+               "Monitor not connected: %s - %s", pdata->model, pdata->serial_ascii );
          goto bye;
       }
 
       // return code == 0 iff dh set
-      ddc_open_display(dref, CALLOPT_ERR_MSG, &dh);
-      if (!dh) {
-         psc = DDCRC_INVALID_DISPLAY;
+      ddc_excp = ddc_open_display(dref, CALLOPT_NONE, &dh);
+      ASSERT_IFF(dh, !ddc_excp);    // avoid bogus coverity error
+      if (ddc_excp) {
+         SYSLOG2(DDCA_SYSLOG_ERROR, "Error opening display %s: %s", dref_repr_t(dref), ddcrc_desc_t(ddc_excp->status_code));
          goto bye;
       }
    }
 
    ddc_excp = ddc_set_multiple(dh, pdata->vcp_values);
-   psc = (ddc_excp) ? ddc_excp->status_code : 0;
 
    // close the display only if this function opened it
    if (!dh_argument)
-      ddc_close_display(dh);
+      ddc_excp = ddc_close_display(dh);
 
 bye:
-   DBGMSF(debug, "Returning: %s", psc_desc(psc));
-   if (psc == DDCRC_RETRIES && debug)
-      DBGMSG("        Try errors: %s", errinfo_causes_string(ddc_excp));
+   DBGTRC_RET_ERRINFO(debug, TRACE_GROUP, ddc_excp, "");
    return ddc_excp;;
 }
 
@@ -479,19 +507,10 @@ loadvcp_by_ntsa(
       Display_Handle *             dh)
 {
    bool debug = false;
-
-   DDCA_Output_Level output_level = get_output_level();
-   bool verbose = (output_level >= DDCA_OL_VERBOSE);
-   // DBGMSG("output_level=%d, verbose=%d", output_level, verbose);
-   if (debug) {
-      DBGMSG("Starting.  ntsa=%p", ntsa);
-      verbose = true;
-   }
-   // Public_Status_Code psc = 0;
+   DBGTRC_STARTING(debug, TRACE_GROUP, "ntsa=%p", ntsa);
+   bool verbose = (get_output_level() >= DDCA_OL_VERBOSE) || debug;
    Error_Info * ddc_excp = NULL;
-
    GPtrArray * garray = ntsa_to_g_ptr_array(ntsa);
-
    Dumpload_Data * pdata = NULL;
    ddc_excp = create_dumpload_data_from_g_ptr_array(garray, &pdata);
    DBGMSF(debug, "create_dumpload_data_from_g_ptr_array() returned %p", pdata);
@@ -513,6 +532,7 @@ loadvcp_by_ntsa(
       ddc_excp = loadvcp_by_dumpload_data(pdata, dh);
       free_dumpload_data(pdata);
    }
+   DBGTRC_RET_ERRINFO(debug, TRACE_GROUP, ddc_excp, "");
    return ddc_excp;
 }
 
@@ -540,11 +560,11 @@ loadvcp_by_string(
 
 
 //
-// Dumpvcp
+// DUMPVCP
 //
 
 //
-// Support for dumpvcp command and returning profile info as string in API
+// Support for the DUMPVCP command and for returning profile info in the API
 //
 
 /** Formats a timestamp in a way usable in a filename, specifically:
@@ -561,9 +581,12 @@ loadvcp_by_string(
  */
 char *
 format_timestamp(time_t time_millis, char * buf, int bufsz) {
+   bool debug = false;
+   DBGTRC_STARTING(debug, DDCA_TRC_NONE, "buf=%p, bufsz=%d", buf, bufsz);
    if (bufsz == 0 || buf == NULL) {
       bufsz = 128;
       buf = calloc(1, bufsz);
+      DBGTRC_NOPREFIX(debug, DDCA_TRC_NONE, "Allocated new buffer: %p", buf);
    }
    struct tm tm = *localtime(&time_millis);
    snprintf(buf, bufsz, "%4d%02d%02d-%02d%02d%02d",
@@ -574,6 +597,7 @@ format_timestamp(time_t time_millis, char * buf, int bufsz) {
                   tm.tm_min,
                   tm.tm_sec
                  );
+   DBGTRC_DONE(debug, DDCA_TRC_NONE, "Returning: %p", buf);
    return buf;
 }
 
@@ -592,13 +616,13 @@ void collect_machine_readable_monitor_id(Display_Handle * dh, GPtrArray * vals) 
    char buf[400];
    int bufsz = sizeof(buf)/sizeof(char);
 
-   Parsed_Edid * edid = ddc_get_parsed_edid_by_display_handle(dh);
+   Parsed_Edid * edid = ddc_get_parsed_edid_by_dh(dh);
    snprintf(buf, bufsz, "MFG_ID  %s",  edid->mfg_id);
-   g_ptr_array_add(vals, strdup(buf));
+   g_ptr_array_add(vals, g_strdup(buf));
    snprintf(buf, bufsz, "MODEL   %s",  edid->model_name);
-   g_ptr_array_add(vals, strdup(buf));
+   g_ptr_array_add(vals, g_strdup(buf));
    snprintf(buf, bufsz, "SN      %s",  edid->serial_ascii);
-   g_ptr_array_add(vals, strdup(buf));
+   g_ptr_array_add(vals, g_strdup(buf));
 
    char hexbuf[257];
    hexstring2(edid->bytes, 128,
@@ -606,7 +630,7 @@ void collect_machine_readable_monitor_id(Display_Handle * dh, GPtrArray * vals) 
               true /* uppercase */,
               hexbuf, 257);
    snprintf(buf, bufsz, "EDID    %s", hexbuf);
-   g_ptr_array_add(vals, strdup(buf));
+   g_ptr_array_add(vals, g_strdup(buf));
 }
 #endif
 
@@ -619,6 +643,8 @@ void collect_machine_readable_monitor_id(Display_Handle * dh, GPtrArray * vals) 
  */
 void
 collect_machine_readable_timestamp(time_t time_millis, GPtrArray* vals) {
+   bool debug = false;
+   DBGTRC_STARTING(debug, DDCA_TRC_NONE, "");
    // temporarily use same output format as filename, but format the
    // date separately here for flexibility
    char timestamp_buf[30];
@@ -627,13 +653,15 @@ collect_machine_readable_timestamp(time_t time_millis, GPtrArray* vals) {
    char buf[400];
    int bufsz = sizeof(buf)/sizeof(char);
    snprintf(buf, bufsz, "TIMESTAMP_TEXT %s", timestamp_buf );
-   g_ptr_array_add(vals, strdup(buf));
+   g_ptr_array_add(vals, g_strdup(buf));
 
    // time_t is problematic.  %jd handles x32_abi where time_t is of type long long
    // but per the c11 spec time_t can be a real type
    // Value is ignored on input, so just don't output it and avoid the issues. (11/2018)
    // snprintf(buf, bufsz, "TIMESTAMP_MILLIS %jd", time_millis);
-   // g_ptr_array_add(vals, strdup(buf));
+   // g_ptr_array_add(vals, g_strdup(buf));
+
+   DBGTRC_DONE(debug, DDCA_TRC_NONE, "Appended %s", buf);
 }
 
 #ifdef UNUSED
@@ -686,33 +714,35 @@ collect_profile_related_values(
 
 /** Primary function for the DUMPVCP command.
  *
- * Writes DUMPVCP data to the in-core Dumpload_Data structure
+ *  Writes DUMPVCP data to the in-core Dumpload_Data structure
  *
- * \param   dh              display handle for connected display
- * \param   pdumpload_data  address at which to return pointer to newly allocated
- *                    Dumpload_Data struct.  It is the responsibility of the
- *                    caller to free this data structure.
- * \return status code
+ *  \param   dh                 display handle for connected display
+ *  \param   dumpload_data_loc  address at which to return pointer to newly allocated
+ *                             Dumpload_Data struct.  It is the responsibility of the
+ *                             caller to free this data structure.
+ *  \return status code
  */
 Public_Status_Code
 dumpvcp_as_dumpload_data(
       Display_Handle * dh,
-      Dumpload_Data** pdumpload_data)
+      Dumpload_Data** dumpload_data_loc)
 {
    bool debug = false;
-   DBGMSF(debug, "Starting");
+   DBGTRC_STARTING(debug, TRACE_GROUP, "dh=%s", dh_repr(dh));
    Public_Status_Code psc = 0;
    Dumpload_Data * dumped_data = calloc(1, sizeof(Dumpload_Data));
 
    // timestamp:
    dumped_data->timestamp_millis = time(NULL);
 
-   dumped_data->vcp_version = get_vcp_version_by_display_handle(dh);  // use function to ensure set
+   DBGMSF(debug, "Before get_vcp_version_by_dh()");
+   dumped_data->vcp_version = get_vcp_version_by_dh(dh);  // use function to ensure set
 
    // identification information from edid:
-   // Parsed_Edid * edid = ddc_get_parsed_edid_by_display_handle(dh);
+   // Parsed_Edid * edid = ddc_get_parsed_edid_by_dh(dh);
    Parsed_Edid * edid = dh->dref->pedid;
    assert(edid);
+   DBGMSF(debug, "Have EDID");
 
    dumped_data->product_code = edid->product_code;
    memcpy(dumped_data->mfg_id, edid->mfg_id, sizeof(dumped_data->mfg_id));
@@ -741,11 +771,11 @@ dumpvcp_as_dumpload_data(
    if (psc != 0 && dumped_data)
       free(dumped_data);
    else
-      *pdumpload_data = dumped_data;
-   if (debug) {
-      DBGMSG("Returning: %s, *pdumpload_data=%p", psc_desc(psc), *pdumpload_data);
-      dbgrpt_dumpload_data(*pdumpload_data, 1);
-   }
+      *dumpload_data_loc = dumped_data;
+
+   DBGTRC_RET_DDCRC(debug, TRACE_GROUP, psc, "*dumpload_data_loc = %p", *dumpload_data_loc);
+   if ( *dumpload_data_loc && IS_DBGTRC(debug, TRACE_GROUP) )
+      dbgrpt_dumpload_data(*dumpload_data_loc, 1);
    return psc;
 }
 
@@ -753,7 +783,7 @@ dumpvcp_as_dumpload_data(
 /** Converts a Dumpload_Data structure to an array of strings
  *
  *  \param data     pointer to Dumpload_Data instance
- *  \return         array of strings
+ *  \return         array of strings, caller must free
  *
  * \remark
  * Note that the result shares no memory with data
@@ -774,13 +804,13 @@ convert_dumpload_data_to_string_array(Dumpload_Data * data) {
    char buf[300];
    int bufsz = sizeof(buf)/sizeof(char);
    snprintf(buf, bufsz, "MFG_ID  %s",  data->mfg_id);
-   g_ptr_array_add(strings, strdup(buf));
+   g_ptr_array_add(strings, g_strdup(buf));
    snprintf(buf, bufsz, "MODEL   %s",  data->model);
-   g_ptr_array_add(strings, strdup(buf));
+   g_ptr_array_add(strings, g_strdup(buf));
    snprintf(buf, bufsz, "PRODUCT_CODE  %d", data->product_code);
-   g_ptr_array_add(strings, strdup(buf));
+   g_ptr_array_add(strings, g_strdup(buf));
    snprintf(buf, bufsz, "SN      %s",  data->serial_ascii);
-   g_ptr_array_add(strings, strdup(buf));
+   g_ptr_array_add(strings, g_strdup(buf));
 
    char hexbuf[257];
    hexstring2(data->edidbytes, 128,
@@ -788,11 +818,11 @@ convert_dumpload_data_to_string_array(Dumpload_Data * data) {
               true /* uppercase */,
               hexbuf, 257);
    snprintf(buf, bufsz, "EDID    %s", hexbuf);
-   g_ptr_array_add(strings, strdup(buf));
+   g_ptr_array_add(strings, g_strdup(buf));
 
    if (!vcp_version_eq(data->vcp_version, DDCA_VSPEC_UNKNOWN)) {
       snprintf(buf, bufsz, "VCP_VERSION %d.%d", data->vcp_version.major, data->vcp_version.minor);
-      g_ptr_array_add(strings, strdup(buf));
+      g_ptr_array_add(strings, g_strdup(buf));
    }
 
    for (int ndx=0; ndx < data->vcp_values->len; ndx++) {
@@ -802,38 +832,51 @@ convert_dumpload_data_to_string_array(Dumpload_Data * data) {
       snprintf(buf, 200, "VCP %02X %5d",
                          vrec->opcode,
                          VALREC_CUR_VAL(vrec));
-      g_ptr_array_add(strings, strdup(buf));
+      g_ptr_array_add(strings, g_strdup(buf));
    }
    return strings;
 }
 
 
-/** Returns the output of the DUMPVCP command a single string.
+/** Returns the output of the DUMPVCP command in a single string.
  *  Each field is separated by a semicolon.
  *
  *  The caller is responsible for freeing the returned string.
  *
- *  \param  dh       display handle of open monitor
- *  \param  pstring  location at which to return string
+ *  \param  dh          display handle of open monitor
+ *  \param  result_loc  location at which to return string
  *  \return status code
  */
-// n. called from ddct_public.c
-// move to glib_util.c?
+// n. called from api_feature_access.c
 Public_Status_Code
-dumpvcp_as_string(Display_Handle * dh, char ** pstring) {
+dumpvcp_as_string(Display_Handle * dh, char ** result_loc) {
    bool debug = false;
-   DBGMSF(debug, "Starting");
+   DBGTRC_STARTING(debug, TRACE_GROUP, "dh=%s", dh_repr(dh));
 
    Public_Status_Code psc    = 0;
    Dumpload_Data *    data   = NULL;
-   *pstring = NULL;
+   *result_loc = NULL;
 
    psc = dumpvcp_as_dumpload_data(dh, &data);
    if (psc == 0) {
       GPtrArray * strings = convert_dumpload_data_to_string_array(data);
-      *pstring = join_string_g_ptr_array(strings, ";");
+      *result_loc = join_string_g_ptr_array(strings, ";");
+      g_ptr_array_free(strings, true);
       free_dumpload_data(data);
    }
-   DBGMSF(debug, "Returning: %s, *pstring=|%s|", psc_desc(psc), *pstring);
+   DBGTRC_RET_DDCRC(debug, TRACE_GROUP, psc, "*result_loc=|%s|", *result_loc);
    return psc;
+}
+
+
+void init_ddc_dumpload() {
+   RTTI_ADD_FUNC(free_dumpload_data);
+   RTTI_ADD_FUNC(create_dumpload_data_from_g_ptr_array);
+   RTTI_ADD_FUNC(ddc_set_multiple);
+   RTTI_ADD_FUNC(loadvcp_by_dumpload_data);
+   RTTI_ADD_FUNC(loadvcp_by_ntsa);
+   RTTI_ADD_FUNC(format_timestamp);
+   RTTI_ADD_FUNC(collect_machine_readable_timestamp);
+   RTTI_ADD_FUNC(dumpvcp_as_dumpload_data);
+   RTTI_ADD_FUNC(dumpvcp_as_string);
 }

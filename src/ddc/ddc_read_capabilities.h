@@ -1,7 +1,7 @@
 /** @file ddc_read_capabilities.h
  */
 
-// Copyright (C) 2014-2018 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DDC_READ_CAPABILITIES_H_
@@ -12,14 +12,14 @@
 /** \endcond */
 
 #include "base/displays.h"
-#include "base/status_code_mgt.h"
-
 
 // Get capability string for monitor.
 
 Error_Info *
-get_capabilities_string(
+ddc_get_capabilities_string(
       Display_Handle * dh,
       char**           caps_loc);
+
+void init_ddc_read_capabilities();
 
 #endif /* DDC_READ_CAPABILITIES_H_ */

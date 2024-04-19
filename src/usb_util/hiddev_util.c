@@ -1,7 +1,6 @@
-/** @file hiddev_util.c
- */
+/** @file hiddev_util.c */
 
-// Copyright (C) 2016-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2016-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 
@@ -11,7 +10,6 @@
 #include <assert.h>
 #include <dirent.h>
 #include <errno.h>
-// #include <glib.h>
 #include <glib-2.0/glib.h>
 #include <libudev.h>
 #include <linux/hiddev.h>
@@ -20,10 +18,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
+#include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
-// #include <wchar.h>
 
 #include "util/coredefs.h"
 #include "util/file_util.h"
@@ -37,7 +34,6 @@
 #include "usb_util/hiddev_reports.h"
 #include "usb_util/hiddev_util.h"
 
-#include "base/core.h"
 
 static const char* report_type_id_table[] = {
       "invalid value",
@@ -109,7 +105,7 @@ get_hiddev_device_names_using_udev() {
    if (debug) printf("(%s) Starting...\n", __func__);
 
    GPtrArray * dev_names = g_ptr_array_sized_new(10);
-   g_ptr_array_set_free_func(dev_names, free);
+   g_ptr_array_set_free_func(dev_names, g_free);
 
    struct udev *udev;
    struct udev_enumerate *enumerate;
@@ -143,7 +139,7 @@ get_hiddev_device_names_using_udev() {
        dev = udev_device_new_from_syspath(udev, path);
        const char * sysname = udev_device_get_sysname(dev);
        if (str_starts_with(sysname, "hiddev")) {
-          g_ptr_array_add(dev_names, strdup(udev_device_get_devnode(dev)));
+          g_ptr_array_add(dev_names, g_strdup(udev_device_get_devnode(dev)));
        }
        udev_device_unref(dev);
     }
@@ -734,9 +730,11 @@ get_multibyte_value_by_uref_multi(
    int      rc;
    Buffer * result = NULL;
 
+#ifndef NDEBUG
    __u32 report_type = uref_multi->uref.report_type;
    assert(report_type == HID_REPORT_TYPE_FEATURE ||
           report_type == HID_REPORT_TYPE_INPUT);   // *** CG19 ***
+#endif
 
    rc = ioctl(fd, HIDIOCGUSAGES, uref_multi);  // Fills in usage value
    if (rc != 0) {
@@ -754,9 +752,9 @@ get_multibyte_value_by_uref_multi(
 
 bye:
    if (debug) {
-      DBGMSG("Returning: %p", result);
+      printf("Returning: %p\n", result);
       if (result) {
-         dbgrpt_buffer(result, 1);
+         buffer_dump(result);
       }
    }
    return result;
@@ -936,7 +934,9 @@ Buffer * hiddev_get_edid(int fd)  {
  *               NULL if ioctl call fails (should never happen)
  */
 char * get_hiddev_name(int fd) {
-   // printf("(%s) Starting. fd=%d\n", __func__, fd);
+   bool debug = false;
+   if (debug)
+      printf("(%s) Starting. fd=%d\n", __func__, fd);
    const int blen = 256;
    char buf1[blen];
    for (int ndx=0; ndx < blen; ndx++)
@@ -947,7 +947,8 @@ char * get_hiddev_name(int fd) {
    // hex_dump(buf1,64);
    char * result = NULL;
    if (rc >= 0)
-      result = strdup(buf1);
-   // printf("(%s) Returning |%s|\n", __func__, result);
+      result = g_strdup(buf1);
+   if (debug)
+      printf("(%s) Returning |%s|\n", __func__, result);
    return result;
 }

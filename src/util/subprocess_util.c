@@ -3,17 +3,23 @@
  * Functions to execute shell commands
  */
 
-// Copyright (C) 2014-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
+
+#define _GNU_SOURCE
 
 /** \cond */
 #include <assert.h>
+#include <glib-2.0/glib.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 /** \endcond */
 
+#include "config.h"
+
+#include "file_util.h"
 #include "glib_util.h"
 #include "report_util.h"
 #include "string_util.h"
@@ -31,7 +37,7 @@
  * @return   true           command succeeded
  *           false          failed, e.g. command not found
  */
-bool execute_shell_cmd_rpt(char * shell_cmd, int depth) {
+bool execute_shell_cmd_rpt(const char * shell_cmd, int depth) {
    bool debug = false;
    if (debug)
       printf("(%s) Starting. shell_cmd = |%s|\n", __func__, shell_cmd);
@@ -42,13 +48,11 @@ bool execute_shell_cmd_rpt(char * shell_cmd, int depth) {
    snprintf(cmdbuf, bufsz, "(%s) 2>&1", shell_cmd);
    // printf("(%s) cmdbuf=|%s|\n", __func__, cmdbuf);
    fp = popen(cmdbuf, "r");
-   // printf("(%s) open. errno=%d\n", __func__, errno);
-    if (!fp) {
-       // int errsv = errno;
-       printf("Unable to execute command \"%s\": %s\n", shell_cmd, strerror(errno));
-       ok = false;
-    }
-    else {
+   if (!fp) {
+      printf("Unable to execute command \"%s\": %s\n", shell_cmd, strerror(errno));
+      ok = false;
+   }
+   else {
        char * a_line = NULL;
        size_t len = 0;
        bool first_line = true;
@@ -92,7 +96,7 @@ bool execute_shell_cmd_rpt(char * shell_cmd, int depth) {
           a_line = NULL;
           len = 0;
        }
-       // per getline() doc, buffer is allocated even if getline(),
+       // per getline() doc, buffer is allocated even if getline() fails
        free(a_line);
        int pclose_rc = pclose(fp);
        int errsv = errno;
@@ -111,7 +115,7 @@ bool execute_shell_cmd_rpt(char * shell_cmd, int depth) {
  * @return  true           command succeeded
  *          false          failed, e.g. command not found
  */
-bool execute_shell_cmd(char * shell_cmd) {
+bool execute_shell_cmd(const char * shell_cmd) {
    return execute_shell_cmd_rpt(shell_cmd, -1);
 }
 
@@ -123,12 +127,12 @@ bool execute_shell_cmd(char * shell_cmd) {
  *  @return :GPtrArray of response lines if command succeeded
  *           NULL                        if command failed, e.g. command not found
  */
-GPtrArray * execute_shell_cmd_collect(char * shell_cmd) {
+GPtrArray * execute_shell_cmd_collect(const char * shell_cmd) {
    bool debug = false;
    GPtrArray * result = g_ptr_array_new();
    g_ptr_array_set_free_func(result, g_free);
    if (debug)
-      printf("(%s) Starting. shell_cmd = |%s|", __func__, shell_cmd);
+      printf("(%s) Starting. shell_cmd = |%s|\n", __func__, shell_cmd);
    bool ok = true;
    FILE * fp;
    int bufsz = strlen(shell_cmd) + 50;
@@ -147,8 +151,11 @@ GPtrArray * execute_shell_cmd_collect(char * shell_cmd) {
        size_t len = 0;
        bool first_line = true;
        while ( getline(&a_line, &len, fp) >= 0) {
+
           if (strlen(a_line) > 0)
              a_line[strlen(a_line)-1] = '\0';
+          if (debug)
+             printf("(%s) a_line = |%s|\n", __func__, a_line);
           if (first_line) {
              if (str_ends_with(a_line, "not found")) {
                 // printf("(%s) found \"not found\"\n", __func__);
@@ -157,7 +164,7 @@ GPtrArray * execute_shell_cmd_collect(char * shell_cmd) {
              }
              first_line = false;
           }
-          g_ptr_array_add(result, strdup(a_line));
+          g_ptr_array_add(result, g_strdup(a_line));
           free(a_line);
           a_line = NULL;
           len = 0;
@@ -176,6 +183,58 @@ GPtrArray * execute_shell_cmd_collect(char * shell_cmd) {
  }
 
 
+/** Execute a shell command and return the contents in a newly allocated
+ *  #GPtrArray of lines. Optionally, keep only those lines containing at least
+ *  one in a list of terms.  After filtering, the set of returned lines may
+ *  be further reduced to either the first or last n number of lines.
+ *
+ *  \param  cmd        command to execute
+ *  \param  fn         file name
+ *  \param  filter_terms  #Null_Terminated_String_Array of filter terms
+ *  \param  ignore_case   ignore case when testing filter terms
+ *  \param  limit if 0, return all lines that pass filter terms
+ *                if > 0, return at most the first #limit lines that satisfy the filter terms
+ *                if < 0, return at most the last  #limit lines that satisfy the filter terms
+ *  \param  result_loc  address at which to return a pointer to the newly allocate #GPtrArray
+ *  \return if >= 0, number of lines before filtering and limit applied
+ *          if < 0,  -errno
+ */
+int execute_cmd_collect_with_filter(
+      const char * shell_cmd,
+      char **      filter_terms,
+      bool         ignore_case,
+      int          limit,
+      GPtrArray ** result_loc)
+{
+   bool debug = false;
+   if (debug)
+      printf("(%s) cmd|%s|, ct(filter_terms)=%d, ignore_case=%s, limit=%d\n",
+            __func__, shell_cmd, ntsa_length(filter_terms), sbool(ignore_case), limit);
+
+   int rc = 0;
+   GPtrArray *line_array = execute_shell_cmd_collect(shell_cmd);
+   if (!line_array) {
+      rc = -1;
+   }
+   else {
+      rc = line_array->len;
+      if (rc > 0) {
+         filter_and_limit_g_ptr_array(
+            line_array,
+            filter_terms,
+            ignore_case,
+            limit,
+            false);     // line_array has free function set
+      }
+   }
+   *result_loc = line_array;
+
+   if (debug)
+      printf("(%s) Returning: %d\n", __func__, rc);
+   return rc;
+}
+
+
 /** Executes a shell command that always outputs a single line and returns the
  * output as a newly allocated character string
  *
@@ -187,11 +246,11 @@ GPtrArray * execute_shell_cmd_collect(char * shell_cmd) {
  *  @remark
  *  Caller is responsible for freeing the returned string.
  */
-char * execute_shell_cmd_one_line_result(char * shell_cmd) {
+char * execute_shell_cmd_one_line_result(const char * shell_cmd) {
    char * result = NULL;
    GPtrArray * response = execute_shell_cmd_collect(shell_cmd);
    if (response) {
-      result = strdup(g_ptr_array_index(response, 0));
+      result = g_strdup(g_ptr_array_index(response, 0));
       g_ptr_array_free(response, true);
    }
    return result;
@@ -207,7 +266,7 @@ char * execute_shell_cmd_one_line_result(char * shell_cmd) {
  *  TODO: Check that actually executable,
  *        e.g. could be in /sbin and not running privileged
  */
-bool is_command_in_path(char * cmd) {
+bool is_command_in_path(const char * cmd) {
    bool result = false;
    char shell_cmd[100];
    snprintf(shell_cmd, sizeof(shell_cmd), "which %s", cmd);
@@ -229,7 +288,7 @@ bool is_command_in_path(char * cmd) {
  *  \retval   2    command requires sudo
  *  \retval   1    command executed, but with some error
  */
-int test_command_executability(char * cmd) {
+int test_command_executability(const char * cmd) {
    assert(cmd);
    char * full_cmd = calloc(1, strlen(cmd) + 20);
    strcpy(full_cmd, cmd);
@@ -245,5 +304,9 @@ int test_command_executability(char * cmd) {
    // 2 on i2cdetect - not sudo
    // 1 on i2cdetect - sudo, but some error
 
+#ifdef TARGET_BSD
+   return (rc & 0xff00) >> 8;
+#else
    return WEXITSTATUS(rc);
+#endif
 }

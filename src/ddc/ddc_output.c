@@ -1,7 +1,7 @@
-/** \file ddc_output.c
+/** @file ddc_output.c
  */
 
-// Copyright (C) 2014-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 
@@ -10,16 +10,14 @@
 /** \cond */
 #include <assert.h>
 #include <errno.h>
-#include <glib.h>
+#include <glib-2.0/glib.h>
 #include <string.h>
 #include <time.h>
 
-#include "../i2c/i2c_strategy_dispatcher.h"
 #include "util/error_info.h"
 #include "util/report_util.h"
 /** \endcond */
 
-#include "base/adl_errors.h"
 #include "base/ddc_errno.h"
 #include "base/ddc_packets.h"
 #include "base/linux_errno.h"
@@ -28,7 +26,7 @@
 #include "base/sleep.h"
 
 #include "i2c/i2c_bus_core.h"
-#include "adl/adl_shim.h"
+#include "i2c/i2c_strategy_dispatcher.h"
 
 #ifdef USE_USB
 #include "usb/usb_displays.h"
@@ -77,13 +75,13 @@ const char* FMT_CODE_NAME_DETAIL_W_NL  = "VCP code 0x%02x (%-30s): %s\n";
  *    false if not
  */
 bool
-is_table_feature_by_display_handle(
+is_table_feature_by_dh(
       VCP_Feature_Table_Entry *  frec,
       Display_Handle *           dh)
 {
    // bool debug = false;
    bool result = false;
-   DDCA_MCCS_Version_Spec vcp_version = get_vcp_version_by_display_handle(dh);
+   DDCA_MCCS_Version_Spec vcp_version = get_vcp_version_by_dh(dh);
    DDCA_Version_Feature_Flags feature_flags = get_version_sensitive_feature_flags(frec, vcp_version);
    assert(feature_flags);
    result = (feature_flags & DDCA_TABLE);
@@ -124,7 +122,7 @@ check_valid_operation_by_feature_id_and_dh(
    if (!frec)
       result = DDCRC_UNKNOWN_FEATURE;
    else {
-      DDCA_MCCS_Version_Spec vcp_version = get_vcp_version_by_display_handle(dh);
+      DDCA_MCCS_Version_Spec vcp_version = get_vcp_version_by_dh(dh);
       result = check_valid_operation_by_feature_rec_and_version(frec, vcp_version, operation_flags);
    }
    return result;
@@ -163,17 +161,11 @@ get_raw_value_for_feature_metadata(
    assert(dh->dref);
 
    bool debug = false;
-   DBGTRC(debug, TRACE_GROUP, "Starting. frec=%p");
+   DBGTRC_STARTING(debug, TRACE_GROUP, "frec=%p, feature_code=0x%02x", frec, (frec) ? frec->feature_code : 0x00);
 
-   // Public_Status_Code psc = 0;
    Error_Info * ddc_excp = NULL;
-
-   // DDCA_MCCS_Version_Spec vspec = get_vcp_version_by_display_handle(dh);
-   // char * feature_name = get_version_sensitive_feature_name(frec, vspec);
    char * feature_name = frec->feature_name;
-
    Byte feature_code = frec->feature_code;
-   // bool is_table_feature = is_table_feature_by_display_handle(frec, dh);
    bool is_table_feature = frec->feature_flags & DDCA_TABLE;
    DDCA_Vcp_Value_Type feature_type = (is_table_feature) ? DDCA_TABLE_VCP_VALUE : DDCA_NON_TABLE_VCP_VALUE;
    DDCA_Output_Level output_level = get_output_level();
@@ -187,7 +179,7 @@ get_raw_value_for_feature_metadata(
               feature_type,
               &valrec);
      if (psc != 0)
-        ddc_excp = errinfo_new(psc, __func__);
+        ddc_excp = errinfo_new(psc, __func__, NULL);
 #else
       PROGRAM_LOGIC_ERROR("ddcutil not built with USB support");
 #endif
@@ -198,10 +190,8 @@ get_raw_value_for_feature_metadata(
               feature_code,
               feature_type,
               &valrec);
-      // psc = ERRINFO_STATUS(ddc_excp);
    }
    ASSERT_IFF( ddc_excp, !valrec);
-   // assert ( (psc==0 && valrec) || (psc!=0 && !valrec) );
 
    // For now, only regard -EIO as unsupported feature for the
    // single model on which this has been observed
@@ -218,7 +208,7 @@ get_raw_value_for_feature_metadata(
       }
       // psc = DDCRC_DETERMINED_UNSUPPORTED;
       COUNT_STATUS_CODE(DDCRC_DETERMINED_UNSUPPORTED);
-      ddc_excp = errinfo_new_with_cause2(
+      ddc_excp = errinfo_new_with_cause(
                    DDCRC_DETERMINED_UNSUPPORTED, ddc_excp, __func__, "EIO");
    }
 
@@ -243,7 +233,7 @@ get_raw_value_for_feature_metadata(
          }
          COUNT_STATUS_CODE(DDCRC_DETERMINED_UNSUPPORTED);
          // psc = DDCRC_DETERMINED_UNSUPPORTED;
-         ddc_excp = errinfo_new_with_cause2(
+         ddc_excp = errinfo_new_with_cause(
                      DDCRC_DETERMINED_UNSUPPORTED, ddc_excp, __func__, "DDC NULL Response");
          break;
 
@@ -255,7 +245,7 @@ get_raw_value_for_feature_metadata(
          }
          // psc = DDCRC_DETERMINED_UNSUPPORTED;
          COUNT_STATUS_CODE(DDCRC_DETERMINED_UNSUPPORTED);
-         ddc_excp = errinfo_new_with_cause2(
+         ddc_excp = errinfo_new_with_cause(
                      DDCRC_DETERMINED_UNSUPPORTED, ddc_excp, __func__, "MH=ML=SH=SL=0");
          break;
 
@@ -296,7 +286,7 @@ get_raw_value_for_feature_metadata(
       default:
          {
             char buf[200];
-            snprintf(buf, 200, "Invalid response. status code=%d, %s", psc, dh_repr_t(dh));
+            snprintf(buf, 200, "Invalid response. status code=%s, %s", psc_name_code(psc), dh_repr(dh));
             f0printf(msg_fh, FMT_CODE_NAME_DETAIL_W_NL,
                              feature_code, feature_name, buf);
          }
@@ -305,21 +295,12 @@ get_raw_value_for_feature_metadata(
 
    *pvalrec = valrec;
    ASSERT_IFF(!ddc_excp, *pvalrec);;
-
-   if (debug || IS_TRACING()) {
-      if (ddc_excp) {
-         DBGMSG("Done.     Returning %s", errinfo_summary(ddc_excp));
-      }
-      else {
-         DBGMSG("Done.     Returning NULL, *pvalrec -> ");
-         dbgrpt_single_vcp_value(*pvalrec, 3);
-      }
-   }
+   DBGTRC_RET_ERRINFO_STRUCT(debug, TRACE_GROUP, ddc_excp, pvalrec, dbgrpt_single_vcp_value);
    return ddc_excp;
 }
 
 
-#ifdef IN_PROGREESS
+#ifdef IN_PROGRESS
 Public_Status_Code
 get_raw_value_for_feature_metadata_dfm(
       Display_Handle *           dh,
@@ -337,12 +318,12 @@ get_raw_value_for_feature_metadata_dfm(
    Public_Status_Code psc = 0;
    Error_Info * ddc_excp = NULL;
 
-   // DDCA_MCCS_Version_Spec vspec = get_vcp_version_by_display_handle(dh);
+   // DDCA_MCCS_Version_Spec vspec = get_vcp_version_by_dh(dh);
    // char * feature_name = get_version_sensitive_feature_name(frec, vspec);
    char * feature_name = frec->feature_name;
 
    Byte feature_code = frec->feature_code;
-   // bool is_table_feature = is_table_feature_by_display_handle(frec, dh);
+   // bool is_table_feature = is_table_feature_by_dh(frec, dh);
    bool is_table_feature = frec->feature_flags & DDCA_TABLE;
    DDCA_Vcp_Value_Type feature_type = (is_table_feature) ? DDCA_TABLE_VCP_VALUE : DDCA_NON_TABLE_VCP_VALUE;
    DDCA_Output_Level output_level = get_output_level();
@@ -417,7 +398,7 @@ get_raw_value_for_feature_metadata_dfm(
    default:
    {
       char buf[200];
-      snprintf(buf, 200, "Invalid response. status code=%s, %s", psc_desc(psc), dh_repr_t(dh));
+      snprintf(buf, 200, "Invalid response. status code=%s, %s", psc_desc(psc), dh_repr(dh));
       f0printf(msg_fh, FMT_CODE_NAME_DETAIL_W_NL,
                        feature_code, feature_name, buf);
    }
@@ -444,7 +425,6 @@ get_raw_value_for_feature_metadata_dfm(
 #endif
 
 
-
 /* Gather values for the features in a feature set.
  *
  * Arguments:
@@ -460,22 +440,22 @@ get_raw_value_for_feature_metadata_dfm(
 Public_Status_Code
 collect_raw_feature_set_values2_dfm(
       Display_Handle *      dh,
-      Dyn_Feature_Set*       feature_set,
+      Dyn_Feature_Set*      feature_set,
       Vcp_Value_Set         vset,
       bool                  ignore_unsupported,  // if false, is error if unsupported
       FILE *                msg_fh)
 {
    bool debug = false;
-   DBGMSF(debug, "Starting.");
+   DBGTRC_STARTING(debug, TRACE_GROUP, "dh=%s, msg_fh=%p", dh_repr(dh), msg_fh);
 
    Public_Status_Code master_status_code = 0;
-   int features_ct = dyn_get_feature_set_size2_dfm(feature_set);
+   int features_ct = dyn_get_feature_set_size(feature_set);
    // needed when called from C API, o.w. get get NULL response for first feature
    // DBGMSG("Inserting sleep() before first call to get_raw_value_for_feature_table_entry()");
    // sleep_millis_with_trace(DDC_TIMEOUT_MILLIS_DEFAULT, __func__, "initial");
    int ndx;
    for (ndx=0; ndx< features_ct; ndx++) {
-      Display_Feature_Metadata * dfm = dyn_get_feature_set_entry2_dfm(feature_set, ndx);
+      Display_Feature_Metadata * dfm = dyn_get_feature_set_entry(feature_set, ndx);
       DBGMSF(debug,"ndx=%d, feature = 0x%02x", ndx, dfm->feature_code);
       DDCA_Any_Vcp_Value *  pvalrec;
       // DDCA_Feature_Metadata * ddca_meta = dfm_to_ddca_feature_metadata(dfm);
@@ -499,15 +479,16 @@ collect_raw_feature_set_values2_dfm(
               )
       {
          // no problem
-         ERRINFO_FREE_WITH_REPORT(cur_ddc_excp, debug || IS_TRACING() || report_freed_exceptions);
+         ERRINFO_FREE_WITH_REPORT(cur_ddc_excp, IS_DBGTRC(debug, TRACE_GROUP) || report_freed_exceptions);
       }
       else {
-         ERRINFO_FREE_WITH_REPORT(cur_ddc_excp, debug || IS_TRACING() || report_freed_exceptions);
+         ERRINFO_FREE_WITH_REPORT(cur_ddc_excp, IS_DBGTRC(debug, TRACE_GROUP) || report_freed_exceptions);
          master_status_code = cur_status_code;
          break;
       }
    }
 
+   DBGTRC_RET_DDCRC(debug, TRACE_GROUP, master_status_code, "");
    return master_status_code;
 }
 
@@ -533,25 +514,20 @@ ddc_collect_raw_subset_values(
         FILE *              msg_fh)
 {
    bool debug = false;
-   DBGMSF(debug, "Starting.  subset=%d  dh=%s", subset, dh_repr(dh) );
+   DBGTRC_STARTING(debug, TRACE_GROUP, "subset=%s  dh=%s, msg_fn=%p",
+                 feature_subset_name(subset), dh_repr(dh), msg_fh );
 
    assert(subset == VCP_SUBSET_PROFILE);  // currently the only use of this function,
                                           // will need to reconsider handling of Feature_Set_Flags if other
                                           // uses arise
-
    Public_Status_Code psc = 0;
-
-   // DDCA_MCCS_Version_Spec vcp_version = get_vcp_version_by_display_handle(dh);
-   // DBGMSG("VCP version = %d.%d", vcp_version.major, vcp_version.minor);
-
    Feature_Set_Flags flags = FSF_NOTABLE;
    if (subset == VCP_SUBSET_PROFILE)
       flags |= FSF_RW_ONLY;
-   Dyn_Feature_Set * feature_set = dyn_create_feature_set2_dfm(
+   Dyn_Feature_Set * feature_set = dyn_create_feature_set(
                                      subset,
                                      dh->dref,          // vcp_version,
-                                     FSF_NOTABLE);
-                                //   false);      // exclude_table_features
+                                     flags);
    if (debug)
       dbgrpt_dyn_feature_set(feature_set, true, 0);
 
@@ -561,7 +537,7 @@ ddc_collect_raw_subset_values(
 
    dyn_free_feature_set(feature_set);
 
-   DBGMSF(debug, "Returning: %s", psc_desc(psc));
+   DBGTRC_RET_DDCRC(debug, TRACE_GROUP, psc, "");
    return psc;
 }
 
@@ -574,12 +550,12 @@ ddc_collect_raw_subset_values(
  *  a formatted interpretation of the value.
  *
  * \param  dh         handle for open display
- * \param  internal_metadata
+ * \param  dfm        feature metadata
  * \param  suppress_unsupported
  *                    if true, do not report unsupported features
  * \param  prefix_value_with_feature_code
  *                    include feature code in formatted value
- * \param  pformatted_value
+ * \param  formatted_value_loc
  *                    where to return pointer to formatted value
  * \param msg_fh      where to write extended messages for verbose
  *                    value retrieval, etc.
@@ -590,7 +566,7 @@ ddc_collect_raw_subset_values(
  * earlier code.  It needs refactoring.
  */
 Public_Status_Code
-ddc_get_formatted_value_for_display_feature_metadata(
+ddc_get_formatted_value_for_dfm(
       Display_Handle *            dh,
       Display_Feature_Metadata *  dfm,
       bool                        suppress_unsupported,
@@ -599,18 +575,21 @@ ddc_get_formatted_value_for_display_feature_metadata(
       FILE *                      msg_fh)
 {
    bool debug = false;
-   DBGTRC(debug, TRACE_GROUP, "Starting. suppress_unsupported=%s", sbool(suppress_unsupported));
+   DBGTRC_STARTING(debug, TRACE_GROUP, "suppress_unsupported=%s", sbool(suppress_unsupported));
 
    Public_Status_Code psc = 0;
    Error_Info * ddc_excp;
    *formatted_value_loc = NULL;
 
-   DDCA_MCCS_Version_Spec vspec = get_vcp_version_by_display_handle(dh);
+   DDCA_MCCS_Version_Spec vspec = get_vcp_version_by_dh(dh);
+   DBGTRC_NOPREFIX(debug, TRACE_GROUP, "vspec=%d.%d", vspec.major, vspec.minor);
    // DDCA_Feature_Metadata* extmeta = dfm_to_ddca_feature_metadata(dfm);
    Byte feature_code = dfm->feature_code;
    char * feature_name = dfm->feature_name;
    bool is_table_feature = dfm->feature_flags & DDCA_TABLE;
+#ifndef NDEBUG
    DDCA_Vcp_Value_Type feature_type = (is_table_feature) ? DDCA_TABLE_VCP_VALUE : DDCA_NON_TABLE_VCP_VALUE;
+#endif
    DDCA_Output_Level output_level = get_output_level();
    if (output_level >= DDCA_OL_VERBOSE) {
       fprintf(msg_fh, "\nGetting data for %s VCP code 0x%02x - %s:\n",
@@ -657,7 +636,7 @@ ddc_get_formatted_value_for_display_feature_metadata(
             *formatted_value_loc = formatted;
             free(hexbuf);
          }
-         else {                                // OL_PROGRAM, not table feature
+         else {                                // OL_PROGRAM, not table featdyn_create_feature_set2ure
             DDCA_Version_Feature_Flags vflags = dfm->feature_flags;
             // =   get_version_sensitive_feature_flags(vcp_entry, vspec);
             char buf[200];
@@ -681,7 +660,7 @@ ddc_get_formatted_value_for_display_feature_metadata(
                                   pvalrec->val.c_nc.sl
                                   );
             }
-            *formatted_value_loc = strdup(buf);
+            *formatted_value_loc = g_strdup(buf);
          }
       }
 
@@ -689,17 +668,28 @@ ddc_get_formatted_value_for_display_feature_metadata(
          bool ok;
          char * formatted_data = NULL;
 
-         ok = dyn_format_feature_detail_dfm(
+         ok = dyn_format_feature_detail(
                  dfm,
                  vspec,
                  pvalrec,
                  &formatted_data);
          // DBGMSG("vcp_format_feature_detail set formatted_data=|%s|", formatted_data);
          if (!ok) {
+            char msg[100];
+            if (pvalrec->value_type == DDCA_NON_TABLE_VCP_VALUE) {
+               g_snprintf(
+                     msg, 100,
+                     "!!! UNABLE TO FORMAT OUTPUT. mh=0x%02x, ml=0x%02x, sh=0x%02x, sl=0x%02x",
+                     pvalrec->val.c_nc.mh,  pvalrec->val.c_nc.ml,
+                     pvalrec->val.c_nc.sh,  pvalrec->val.c_nc.sl);
+            }
+            else {
+               strcpy(msg,  "!!! UNABLE TO FORMAT OUTPUT");
+            }
             f0printf(msg_fh, FMT_CODE_NAME_DETAIL_W_NL,
-                            feature_code, feature_name, "!!! UNABLE TO FORMAT OUTPUT");
+                            feature_code, feature_name, msg);
             psc = DDCRC_INTERPRETATION_FAILED;
-            ddc_excp = errinfo_new(DDCRC_INTERPRETATION_FAILED, __func__);
+            ddc_excp = errinfo_new(DDCRC_INTERPRETATION_FAILED, __func__, msg);
             // TODO: retry with default output function
          }
 
@@ -728,9 +718,9 @@ ddc_get_formatted_value_for_display_feature_metadata(
    if (pvalrec)
       free_single_vcp_value(pvalrec);
 
-   DBGTRC(debug, TRACE_GROUP,
-          "Done.      Returning: %s, *formatted_value_loc=%p",
-          psc_desc(psc), formatted_value_loc);
+   DBGTRC_RET_DDCRC(debug, TRACE_GROUP, psc,
+          "*formatted_value_loc=%p -> %s",
+          *formatted_value_loc, *formatted_value_loc);
 
    ASSERT_IFF(psc == 0, !ddc_excp);
    ERRINFO_FREE_WITH_REPORT(ddc_excp, debug || IS_TRACING() || report_freed_exceptions);
@@ -744,11 +734,11 @@ show_feature_set_values2_dfm(
       Dyn_Feature_Set*      feature_set,
       GPtrArray *           collector,     // if null, write to current stdout device
       Feature_Set_Flags     flags,
-      Byte_Value_Array      features_seen)     // if non-null, collect list of features seen
+      Bit_Set_256 *         features_seen)     // if non-null, collect list of features seen
 {
    bool debug = false;
    char * s0 = feature_set_flag_names_t(flags);
-   DBGMSF(debug, "Starting.  flags=%s, collector=%p", s0, collector);
+   DBGTRC_STARTING(debug, TRACE_GROUP, "flags=%s, collector=%p", s0, collector);
 
    Public_Status_Code master_status_code = 0;
 
@@ -760,18 +750,21 @@ show_feature_set_values2_dfm(
    if ( (flags & FSF_SHOW_UNSUPPORTED)  ||
         output_level >= DDCA_OL_VERBOSE ||
         subset_id == VCP_SUBSET_SINGLE_FEATURE
+#ifdef FUTURE
+        ||        subset_id == VCP_SUBSET_MULTI_FEATURES
+#endif
        )
        show_unsupported = true;
    bool suppress_unsupported = !show_unsupported;
 
-   // DDCA_MCCS_Version_Spec vcp_version = get_vcp_version_by_display_handle(dh);
+   // DDCA_MCCS_Version_Spec vcp_version = get_vcp_version_by_dh(dh);
    bool prefix_value_with_feature_code = true;    // TO FIX
    FILE * msg_fh = outf;                        // TO FIX
-   int features_ct = dyn_get_feature_set_size2_dfm(feature_set);
+   int features_ct = dyn_get_feature_set_size(feature_set);
    DBGMSF(debug, "features_ct=%d", features_ct);
    int ndx;
    for (ndx=0; ndx< features_ct; ndx++) {
-      Display_Feature_Metadata * dfm = dyn_get_feature_set_entry2_dfm(feature_set, ndx);
+      Display_Feature_Metadata * dfm = dyn_get_feature_set_entry(feature_set, ndx);
       // DDCA_Feature_Metadata * extmeta = ifm->external_metadata;
       DBGMSF(debug,"ndx=%d, feature = 0x%02x", ndx, dfm->feature_code);
       if ( !(dfm->feature_flags & DDCA_READABLE) ) {
@@ -797,7 +790,7 @@ show_feature_set_values2_dfm(
 
             char * formatted_value = NULL;
             Public_Status_Code psc =
-            ddc_get_formatted_value_for_display_feature_metadata(
+            ddc_get_formatted_value_for_dfm(
                   dh,
                   dfm,
                   suppress_unsupported,
@@ -812,7 +805,7 @@ show_feature_set_values2_dfm(
                   f0printf(outf, "%s\n", formatted_value);
                free(formatted_value);
                if (features_seen)
-                  bbf_set(features_seen, dfm->feature_code);  // note that feature was read
+                  *features_seen = bs256_insert(*features_seen, dfm->feature_code);  // note that feature was read
             }
             else {
                // or should I check features_ct == 1?
@@ -831,10 +824,9 @@ show_feature_set_values2_dfm(
       DBGMSF(debug,"ndx=%d, feature = 0x%02x Done", ndx, dfm->feature_code);
    }   // loop over features
 
-   DBGMSF(debug, "Returning: %s", psc_desc(master_status_code));
+   DBGTRC_RET_DDCRC(debug, TRACE_GROUP, master_status_code, "");
    return master_status_code;
 }
-
 
 
 #ifdef FUTURE
@@ -856,40 +848,34 @@ bool hack42(VCP_Feature_Table_Entry * ventry) {
 #endif
 
 
-
-/* Shows the VCP values for all features in a VCP feature subset.
+/** Shows the VCP values for all features in a VCP feature subset.
  *
- * Arguments:
- *    dh         display handle for open display
- *    subset     feature subset id
- *    collector  accumulates output    // if null, write to current stdout device
- *    flags      feature set flags
- *    features_seen   if non-null, collect ids of features that exist
- *
- * Returns:
- *    status code
+ *  @param  dh         display handle for open display
+ *  @param  subset     feature subset id
+ *  @param  collector  accumulates output    // if null, write to current stdout device
+ *  @param  flags      feature set flags
+ *  @param  features_seen   collects ids of features that exist
+ *  @return status code
  */
-// 11/2019: only call is from app_getvcp.c
+// 11/2019: only call is from app_getvcp.c, move there?
 Public_Status_Code
 ddc_show_vcp_values(
         Display_Handle *    dh,
         VCP_Feature_Subset  subset,
         GPtrArray *         collector,    // not used
         Feature_Set_Flags   flags,
-        Byte_Bit_Flags      features_seen)
+        Bit_Set_256 *       features_seen)
 {
    bool debug = false;
-   if (debug || IS_TRACING()) {
-      char * s0 = feature_set_flag_names_t(flags);
-      DBGMSG("Starting.  subset=%d, flags=%s,  dh=%s", subset, s0, dh_repr(dh) );
-   }
+   DBGTRC_STARTING(debug, TRACE_GROUP, "subset=%d, flags=%s,  dh=%s",
+                   subset, feature_set_flag_names_t(flags), dh_repr(dh) );
 
    Public_Status_Code psc = 0;
 
-   // DDCA_MCCS_Version_Spec vcp_version = get_vcp_version_by_display_handle(dh);
+   // DDCA_MCCS_Version_Spec vcp_version = get_vcp_version_by_dh(dh);
    // DBGMSG("VCP version = %d.%d", vcp_version.major, vcp_version.minor);
 
-   Dyn_Feature_Set* feature_set = dyn_create_feature_set2_dfm(
+   Dyn_Feature_Set* feature_set = dyn_create_feature_set(
                                     subset,
                                     dh->dref,   // vcp_version,
                                     flags);
@@ -904,25 +890,26 @@ ddc_show_vcp_values(
       filter_feature_set(feature_set, hack42);
    }
 #endif
-   if (debug || IS_TRACING()) {
-      DBGMSG("feature_set:");
+
+   if (IS_DBGTRC(debug, TRACE_GROUP)) {
+      DBGTRC(true, TRACE_GROUP, "feature_set:");
       dbgrpt_dyn_feature_set(feature_set, true, 0);
    }
    psc = show_feature_set_values2_dfm(
             dh, feature_set, collector, flags, features_seen);
    dyn_free_feature_set(feature_set);
-   DBGTRC(debug, TRACE_GROUP, "Done. Returning %s", psc_desc(psc));
+   DBGTRC_RET_DDCRC(debug, TRACE_GROUP, psc, "");
    return psc;
 }
 
-static void init_ddc_output_func_name_table() {
-#define ADD_FUNC(_NAME) rtti_func_name_table_add(_NAME, #_NAME);
-   ADD_FUNC(get_raw_value_for_feature_metadata);
-   ADD_FUNC(ddc_get_formatted_value_for_display_feature_metadata);
-#undef ADD_FUNC
-}
 
 void init_ddc_output() {
-   init_ddc_output_func_name_table();
+   RTTI_ADD_FUNC(get_raw_value_for_feature_metadata);
+   RTTI_ADD_FUNC(collect_raw_feature_set_values2_dfm);
+   RTTI_ADD_FUNC(ddc_collect_raw_subset_values);
+   RTTI_ADD_FUNC(ddc_get_formatted_value_for_dfm);
+   RTTI_ADD_FUNC(show_feature_set_values2_dfm);
+   RTTI_ADD_FUNC(ddc_show_vcp_values);
+   
 }
 

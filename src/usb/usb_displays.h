@@ -1,14 +1,14 @@
 /** @file usb_displays.h
  */
 
-// Copyright (C) 2016-2019 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2016-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef USB_DISPLAYS_H_
 #define USB_DISPLAYS_H_
 
 /** \cond */
-#include <glib.h>
+#include <glib-2.0/glib.h>
 #include <linux/hiddev.h>     // for __u32
 /** \endcond */
 
@@ -29,21 +29,11 @@ bool check_usb_monitor( char * device_name );
 Display_Info_List usb_get_valid_displays();
 #endif
 
-bool usb_is_valid_display_ref(Display_Ref * dref, bool emit_error_msg);
-
-void usb_show_active_display_by_display_ref(Display_Ref * dref, int depth);
-
-#ifdef PRE_DISPLAY_REV
-Display_Ref * usb_find_display_by_mfg_model_sn(const char * mfg_id, const char * model, const char * sn);
-Display_Ref * usb_find_display_by_edid(const Byte * edidbytes);
-Display_Ref * usb_find_display_by_busnum_devnum(int busnum, int devnum);
-#endif
-
-Parsed_Edid * usb_get_parsed_edid_by_display_ref(   Display_Ref    * dref);
-Parsed_Edid * usb_get_parsed_edid_by_display_handle(Display_Handle * dh);
-
-char * usb_get_capabilities_string_by_display_handle(Display_Handle * dh);
-
+bool          usb_is_valid_display_ref(         Display_Ref * dref, bool emit_error_msg);
+void          usb_show_active_display_by_dref(  Display_Ref * dref, int depth);
+Parsed_Edid * usb_get_parsed_edid_by_dref(      Display_Ref * dref);
+Parsed_Edid * usb_get_parsed_edid_by_dh(        Display_Handle * dh);
+char *        usb_get_capabilities_string_by_dh(Display_Handle * dh);
 
 // struct defs here for sharing with usb_vcp
 
@@ -64,7 +54,6 @@ typedef struct usb_monitor_vcp_rec {
    struct hiddev_usage_ref   * uref;
 } Usb_Monitor_Vcp_Rec;
 
-
 /* Describes a USB connected monitor.  */
 #define USB_MONITOR_INFO_MARKER "UMNF"
 typedef struct usb_monitor_info {
@@ -76,14 +65,14 @@ typedef struct usb_monitor_info {
    GPtrArray *              vcp_codes[256];   // array of Usb_Monitor_Vcp_Rec *
 } Usb_Monitor_Info;
 
-void dbgrpt_usb_monitor_info(Usb_Monitor_Info * moninfo, int depth);
-
-Usb_Monitor_Info * usb_find_monitor_by_display_handle(Display_Handle * dh);
-
-bool is_possible_monitor_by_hiddev_name(const char * hiddev_name);
-
+void        dbgrpt_usb_monitor_info(Usb_Monitor_Info * moninfo, int depth);
+Usb_Monitor_Info *
+            usb_find_monitor_by_dh(Display_Handle * dh);
+bool        is_possible_monitor_by_hiddev_name(const char * hiddev_name);
 GPtrArray * get_usb_monitor_list();
-
-void init_usb_displays();
+GPtrArray * get_usb_open_errors();
+void        discard_usb_monitor_list();
+void        init_usb_displays();
+void        terminate_usb_displays();
 
 #endif /* USB_DISPLAYS_H_ */
