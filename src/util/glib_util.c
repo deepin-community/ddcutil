@@ -3,7 +3,7 @@
  *  Utility functions for glib.
  */
 
-// Copyright (C) 2014-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2021 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 /** \cond */
@@ -15,6 +15,7 @@
 /** \endcond */
 
 #include "glib_util.h"
+#include "string_util.h"
 
 #ifdef ALTERNATIVE
 
@@ -83,7 +84,11 @@ g_hash_table_get_keys_as_array_local (GHashTable *hash_table,
  * @remark This function is needed because glib function g_hash_table_get_keys_as_array()
  *   does not exist in glib versions less than 2.40
  */
-gpointer * g_list_to_g_array(GList * glist, guint * length) {
+gpointer *
+g_list_to_g_array(
+      GList * glist,
+      guint * length)
+{
    int len = 0;
    gpointer * result = NULL;
    guint ndx = 0;
@@ -101,13 +106,27 @@ gpointer * g_list_to_g_array(GList * glist, guint * length) {
 }
 
 
-/** String comparison function used by g_ptr_array_sort()
+// GCompareFunc functions
+// signature:
+//    gint
+//    (* GCompareFunc) (
+//      gconstpointer a,
+//      gconstpointer b
+//    )
+
+/** String comparison function with signature GCompareFunc
  *
  * @param a pointer to first string
  * @param b pointer to second string
  * @return -1, 0, +1 in the usual way
+ *
+ * @remark Used by g_ptr_array_sort()
  */
-gint gaux_ptr_scomp(gconstpointer a, gconstpointer b) {
+gint
+gaux_ptr_scomp(
+      gconstpointer a,
+      gconstpointer b)
+{
    char ** ap = (char **) a;
    char ** bp = (char **) b;
    // printf("(%s) ap = %p -> -> %p -> |%s|\n", __func__, ap, *ap, *ap);
@@ -115,54 +134,32 @@ gint gaux_ptr_scomp(gconstpointer a, gconstpointer b) {
    return g_ascii_strcasecmp(*ap,*bp);
 }
 
-#ifdef OLD
-// what happens if ap is null?
-// not particularly useful since have to pass buffer size in
-/** \deprecated Use g_strdup_vprintf() */
-gchar * gaux_vasprintf(size_t reqd_buf_sz, gchar * fmt, va_list ap) {
-   char * result = NULL;
-   // g_printf_string_upper_bound() clobbers ap, makes it unusable
-   // gsize sz = g_printf_string_upper_bound(fmt,ap);
-   result = calloc(1,reqd_buf_sz);
-   int rc = g_vsnprintf(result, reqd_buf_sz, fmt, ap);
-   // printf("(%s) g_vsnprintf() returned %d\n", __func__, rc);
-   // printf("(%s) Returning: |%s|\n", __func__, result);
-   assert(rc < reqd_buf_sz);
-   return result;
-}
 
-/** \deprecated Use g_strdup_printf()
- *  Formats a string similarly to g_sprintf(), but allocates
- *  a sufficiently sized buffer in which the formatted string
- *  is returned.
- *
- *  \param fmt  format string
- *  \param ...  arguments
- *  \return     pointer to newly allocated string
+/** Integer comparison function with signature GCompareFunc
  */
-gchar * gaux_asprintf(gchar * fmt, ...) {
-   char * result = NULL;
-   va_list(args);
-   va_start(args, fmt);
+gint
+gaux_ptr_intcomp(
+      gconstpointer a,
+      gconstpointer b)
+{
+   int ia = GPOINTER_TO_INT(a);
+   int ib = GPOINTER_TO_INT(b);
+   gint result = 0;
+   if (ia < ib)
+      result = -1;
+   else if (ia > ib)
+      result = 1;
 
-   // g_vasprintf(&result, fmt, args);  // get implicit function declaration error
-   // printf("(%s) fmt=|%s|\n", __func__, fmt);
-   gsize sz = g_printf_string_upper_bound(fmt,args);
-   // printf("(%s) sz = %zu\n", __func__, sz);
-   result = calloc(1,sz);
-   va_start(args, fmt);
-   // int rc =
-                g_vsnprintf(result, sz, fmt, args);
-   // printf("(%s) g_vsnprintf() returned %d\n", __func__, rc);
-
-   va_end(args);
-   // printf("(%s) Returning: |%s|\n", __func__, result);
+   // printf("(%s) a=%p, ia=%d, b=%p, ib=%d, returning %d\n", __func__, a, ia, b, ib, result);
    return result;
 }
-#endif
 
 
-GPtrArray * gaux_ptr_array_truncate(GPtrArray * gpa, int limit) {
+GPtrArray *
+gaux_ptr_array_truncate(
+      GPtrArray * gpa,
+      int         limit)
+{
    assert(gpa);
    bool debug = false;
    if (debug)
@@ -196,7 +193,7 @@ gaux_ptr_array_append_array(
 {
    assert(dest);
    if (src) {
-      for (int ndx = 0; ndx < src->len; ndx++) {
+      for (guint ndx = 0; ndx < src->len; ndx++) {
          gpointer v = g_ptr_array_index(src,ndx);
          if (dup_func)
             v = dup_func(v);
@@ -217,13 +214,13 @@ gaux_ptr_array_join(
    GPtrArray * dest = g_ptr_array_sized_new(new_len);
    if (element_free_func)
       g_ptr_array_set_free_func(dest,element_free_func);
-   for (int ndx = 0; ndx < gpa1->len; ndx++) {
+   for (guint ndx = 0; ndx < gpa1->len; ndx++) {
       gpointer v = g_ptr_array_index(gpa1,ndx);
       if (dup_func)
          v = dup_func(v);
       g_ptr_array_add(dest, v);
    }
-   for (int ndx = 0; ndx < gpa2->len; ndx++) {
+   for (guint ndx = 0; ndx < gpa2->len; ndx++) {
       gpointer v = g_ptr_array_index(gpa2,ndx);
       if (dup_func)
          v = dup_func(v);
@@ -241,13 +238,32 @@ gaux_ptr_array_copy(
    GPtrArray * dest = g_ptr_array_sized_new(src->len);
    if (element_free_func)
       g_ptr_array_set_free_func(dest, element_free_func);
-   for (int ndx = 0; ndx < src->len; ndx++) {
+   for (guint ndx = 0; ndx < src->len; ndx++) {
       gpointer v = g_ptr_array_index(src,ndx);
       if (dup_func)
          v = dup_func(v);
       g_ptr_array_add(dest, v);
    }
    return dest;
+}
+
+
+// has signature GCopyFunc
+gpointer g_string_copy_func(gconstpointer src, gpointer data) {
+   return (gpointer) g_strdup((gchar*) src);
+}
+
+
+GPtrArray *
+gaux_deep_copy_string_array(GPtrArray * old_array) {
+   // g_ptr_array_copy() requires glib 2.62
+   //GPtrArray * result = g_ptr_array_copy(old_array, g_string_copy_func, NULL);
+   GPtrArray * result = g_ptr_array_sized_new(old_array->len);
+   g_ptr_array_set_free_func(result, g_free);
+   for (int ndx = 0; ndx < old_array->len; ndx++) {
+      g_ptr_array_add(result, g_strdup(g_ptr_array_index(old_array, ndx)));
+   }
+   return result;
 }
 
 
@@ -264,6 +280,45 @@ gaux_ptr_array_from_null_terminated_array(
    while (*p) {
       gpointer v = (dup_func) ? dup_func(*p) : *p;
       g_ptr_array_add(result, v);
+   }
+   return result;
+}
+
+
+// GEqualFunc
+
+gboolean gaux_streq(gconstpointer a, gconstpointer b) {
+   gboolean result = streq((const char *) a, (const char *) b);
+   // printf("(%s) a=|%s|, b=|%s|, returning %s\n", __func__, (const char * )a, (const char *) b, sbool(result));
+   return result;
+}
+
+
+/** Implements g_ptr_array_find_with_equal_func(), which requires glib 2.54.
+ *
+ */
+gboolean
+gaux_ptr_array_find_with_equal_func(
+      GPtrArray *    haystack,
+      gconstpointer  needle,
+      GEqualFunc     equal_func,
+      guint *        index_loc)
+{
+   bool result = false;
+   if (index_loc)
+      *index_loc = -1;
+   if (haystack && (haystack->len > 0) && needle) {
+      for (guint ndx = 0; ndx < haystack->len; ndx++) {
+         if (equal_func)
+            result = equal_func(g_ptr_array_index(haystack,ndx), needle);
+         else
+            result = g_ptr_array_index(haystack,ndx) == needle;
+         if (result) {
+            if (index_loc)
+               *index_loc = ndx;
+            break;
+         }
+      }
    }
    return result;
 }

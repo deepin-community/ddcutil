@@ -2,7 +2,7 @@
  * Display Specification
  */
 
-// Copyright (C) 2014-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DISPLAYS_H_
@@ -17,14 +17,12 @@
 /** \endcond */
 
 #include "public/ddcutil_types.h"
-#include "private/ddcutil_types_private.h"
 
 #include "core.h"
 #include "dynamic_features.h"
-#include "feature_sets.h"
+#include "feature_set_ref.h"
+#include "monitor_model_key.h"
 #include "vcp_version.h"
-
-typedef void * Global_Display_Lock;
 
 
 /** \file
@@ -34,16 +32,15 @@ Monitors are specified in different ways in different contexts:
 
 1) Display_Identifier contains the identifiers specified on the command line.
 
-2) Display_Ref is a logical display identifier.   It can be an I2C identifier,
-an ADL identifier, or a USB identifier.
+2) Display_Ref is a logical display identifier.   It can be an I2C identifier
+or a USB identifier.
 
-For Display_Identifiers containing either busno (for I2C) or ADL
-adapter.display numbers the translation from Display_Identier to Display_Ref
-is direct.   Otherwise, displays are searched to find the monitor.
+For Display_Identifiers containing a busno (for I2C) or hiddev device number (USB),
+the translation from Display_Identier to Display_Ref is direct.
+Otherwise, displays are searched to find the monitor.
 
 3) Display_Handle is passed as an argument to "open" displays.
 
-For ADL displays, the translation from Display_Ref to Display_Handle is direct.
 For I2C displays, the device must be opened.  Display_Handle then contains the open file handle.
 */
 
@@ -52,33 +49,16 @@ For I2C displays, the device must be opened.  Display_Handle then contains the o
 void init_displays();
 
 
-// *** DDCA_Display_Path ***
+// *** DDCA_IO_Path ***
+
+#define BUSNO_NOT_SET 255
 
 char *  io_mode_name(DDCA_IO_Mode val);
 bool    dpath_eq(DDCA_IO_Path p1, DDCA_IO_Path p2);
-char * dpath_short_name_t(DDCA_IO_Path * dpath);
+char *  dpath_short_name_t(DDCA_IO_Path * dpath);
 char *  dpath_repr_t(DDCA_IO_Path * dpath);  // value valid until next call
-
-
-// *** Display_Async ***
-
-
-#define DISPLAY_ASYNC_REC_MARKER "DSNC"
-/** Async processing  for display */
-typedef struct Display_Async {
-   char           marker[4];
-   DDCA_IO_Path   dpath;        // key
-
-   // Global_Display_Lock gdl;
-
-   GThread *     thread_owning_display_lock;     // id of thread owning lock (type int is placeholder)
-   GMutex        display_lock;
-
-   // for future request queue structure
-   GQueue *      request_queue;
-   GMutex        request_queue_lock;
-   GThread *     request_execution_thread;  // or in DH?
-} Display_Async_Rec;
+int     dpath_hash(DDCA_IO_Path path);
+DDCA_IO_Path i2c_io_path(int busno);
 
 
 // *** Display_Identifier ***
@@ -86,10 +66,9 @@ typedef struct Display_Async {
 /** Display_Identifier type */
 typedef enum {
    DISP_ID_BUSNO,      ///< /dev/i2c bus number
-   DISP_ID_ADL,        ///< ADL iAdapterIndex/iDisplayIndex pair
    DISP_ID_MONSER,     ///< monitor mfg id, model name, and/or serial number
    DISP_ID_EDID,       ///< 128 byte EDID
-   DISP_ID_DISPNO,     ///< ddcutil assigned sisplay number
+   DISP_ID_DISPNO,     ///< ddcutil assigned display number
    DISP_ID_USB,        ///< USB bus/device number pair
    DISP_ID_HIDDEV      ///< /dev/usb/hiddev device number
 } Display_Id_Type;
@@ -103,8 +82,6 @@ typedef struct {
    Display_Id_Type id_type;
    int             dispno;
    int             busno;
-   int             iAdapterIndex;
-   int             iDisplayIndex;
    char            mfg_id[EDID_MFG_ID_FIELD_SIZE];
    char            model_name[EDID_MODEL_NAME_FIELD_SIZE];
    char            serial_ascii[EDID_SERIAL_ASCII_FIELD_SIZE];
@@ -117,7 +94,6 @@ typedef struct {
 
 Display_Identifier* create_dispno_display_identifier(int dispno);
 Display_Identifier* create_busno_display_identifier(int busno);
-Display_Identifier* create_adlno_display_identifier(int iAdapterIndex, int iDisplayIndex);
 Display_Identifier* create_edid_display_identifier(const Byte* edidbytes);
 Display_Identifier* create_mfg_model_sn_display_identifier(const char* mfg_code, const char* model_name, const char* serial_ascii);
 Display_Identifier* create_usb_display_identifier(int bus, int device);
@@ -126,15 +102,13 @@ char *              did_repr(Display_Identifier * pdid);
 void                dbgrpt_display_identifier(Display_Identifier * pdid, int depth);
 void                free_display_identifier(Display_Identifier * pdid);
 
-#ifdef FUTURE
+//  #ifdef FUTURE
 // new way
 #define DISPLAY_SELECTOR_MARKER "DSEL"
 typedef struct {
    char            marker[4];         // always "DSEL"
    int             dispno;
    int             busno;
-   int             iAdapterIndex;
-   int             iDisplayIndex;
    char *          mfg_id;
    char *          model_name;
    char *          serial_ascii;
@@ -143,11 +117,11 @@ typedef struct {
    Byte *          edidbytes;   // always 128 bytes
 } Display_Selector;
 
+#ifdef FUTURE
 Display_Selector * dsel_new();
 void               dsel_free(              Display_Selector * dsel);
 Display_Selector * dsel_set_display_number(Display_Selector* dsel, int dispno);
 Display_Selector * dsel_set_i2c_busno(     Display_Selector* dsel, int busno);
-Display_Selector * dsel_set_adl_numbers(   Display_Selector* dsel, int iAdapterIndex, int iDisplayIndex);
 Display_Selector * dsel_set_usb_numbers(   Display_Selector* dsel, int bus, int device);
 Display_Selector * dsel_set_mfg_id(        Display_Selector* dsel, char*  mfg_id);
 Display_Selector * dsel_set_model_name(    Display_Selector* dsel, char* model_name);
@@ -158,28 +132,43 @@ bool               dsel_validate(          Display_Selector * dsel);
 #endif
 
 
-
 // *** Display_Ref ***
 
+extern bool ddc_never_uses_null_response_for_unsupported;
+// extern bool ddc_always_uses_null_response_for_unsupported;
+
+// Must be kept in sync with dref_flags_table
 typedef uint16_t Dref_Flags;
-#define DREF_DDC_COMMUNICATION_CHECKED                 0x0080
-#define DREF_DDC_COMMUNICATION_WORKING                 0x0040
-#define DREF_DDC_NULL_RESPONSE_CHECKED                 0x0020
-#define DREF_DDC_IS_MONITOR_CHECKED                    0x0010
+#define DREF_DDC_COMMUNICATION_CHECKED                 0x0001
+#define DREF_DDC_COMMUNICATION_WORKING                 0x0002
+#define DREF_DDC_IS_MONITOR_CHECKED                    0x0004
 #define DREF_DDC_IS_MONITOR                            0x0008
-#define DREF_TRANSIENT                                 0x0004
-#define DREF_DYNAMIC_FEATURES_CHECKED                  0x0002
-#define DREF_OPEN                                      0x0001
-#define DREF_DDC_USES_NULL_RESPONSE_FOR_UNSUPPORTED    0x0800
-#define DREF_DDC_USES_MH_ML_SH_SL_ZERO_FOR_UNSUPPORTED 0x0400
-#define DREF_DDC_USES_DDC_FLAG_FOR_UNSUPPORTED         0x0200
+
+#define DREF_UNSUPPORTED_CHECKED                       0x0010
+#define DREF_DDC_USES_NULL_RESPONSE_FOR_UNSUPPORTED    0x0020
+#define DREF_DDC_USES_MH_ML_SH_SL_ZERO_FOR_UNSUPPORTED 0x0040
+#define DREF_DDC_USES_DDC_FLAG_FOR_UNSUPPORTED         0x0080
 #define DREF_DDC_DOES_NOT_INDICATE_UNSUPPORTED         0x0100
 
+#define DREF_DYNAMIC_FEATURES_CHECKED                  0x0200
+#define DREF_TRANSIENT                                 0x0400
+#define DREF_OPEN                                      0x0800
+#define DREF_DDC_BUSY                                  0x1000
+#define DREF_REMOVED                                   0x2000
+#define DREF_DPMS_SUSPEND_STANDBY_OFF                  0x8000
+
+char * interpret_dref_flags_t(Dref_Flags flags);
+
+// define in ddcutil_types.h?, or perhaps use -1 for generic invalid, put type of invalid in Dref_Flags?
+#define DISPNO_NOT_SET  0
+#define DISPNO_INVALID -1
+#define DISPNO_PHANTOM -2
+#define DISPNO_REMOVED -3
+#define DISPNO_BUSY    -4
 
 #define DISPLAY_REF_MARKER "DREF"
 /** A **Display_Ref** is a logical display identifier.
- * It can contain an I2C bus number, and ADL adapter/display number pair,
- * or a USB bus number/device number pair.
+ * It can contain an I2C bus number or a USB bus number/device number pair.
  */
 typedef struct _display_ref {
    char                     marker[4];
@@ -187,16 +176,22 @@ typedef struct _display_ref {
    int                      usb_bus;
    int                      usb_device;
    char *                   usb_hiddev_name;
-   DDCA_MCCS_Version_Spec   vcp_version;
+   DDCA_MCCS_Version_Spec   vcp_version_xdf;
+   DDCA_MCCS_Version_Spec   vcp_version_cmdline;
    Dref_Flags               flags;
-   char *                   capabilities_string;    // added 4/2017, private copy
-   Parsed_Edid *            pedid;                  // added 4/2017
-   DDCA_Monitor_Model_Key * mmid;                   // will be set iff pedid
+   char *                   capabilities_string;   // added 4/2017, private copy
+   Parsed_Edid *            pedid;                 // added 4/2017
+   Monitor_Model_Key *      mmid;                  // will be set iff pedid
    int                      dispno;
-   void *                   detail;    // I2C_Bus_Info, ADL_Display_Detail, or Usb_Monitor_Info
-   Display_Async_Rec *      async_rec;
+   void *                   detail;                // I2C_Bus_Info or Usb_Monitor_Info
    Dynamic_Features_Rec *   dfr;                   // user defined feature metadata
    uint64_t                 next_i2c_io_after;     // nanosec
+   struct _display_ref *    actual_display;        // if dispno == -2
+   DDCA_IO_Path *           actual_display_path;   // alt to actual_display
+   char *                   driver_name;           //
+   struct Per_Display_Data* pdd;
+   char *                   drm_connector;         // e.g. card0-HDMI-A-1  // REDUNDANT - IDENTICAL TO Bus_Info.drm_connector
+   char *                   communication_error_summary;
 } Display_Ref;
 
 #define ASSERT_DREF_IO_MODE(_dref, _mode)  \
@@ -204,22 +199,22 @@ typedef struct _display_ref {
           memcmp(dref->marker, DISPLAY_REF_MARKER, 4) == 0) && \
           _dref->io_path.io_mode == _mode)
 
+Display_Ref * create_base_display_ref(DDCA_IO_Path io_path);
 Display_Ref * create_bus_display_ref(int busno);
-Display_Ref * create_adl_display_ref(int iAdapterIndex, int iDisplayIndex);
 Display_Ref * create_usb_display_ref(int bus, int device, char * hiddev_devname);
-void          dbgrpt_dref_flags(Dref_Flags flags, int depth);
 void          dbgrpt_display_ref(Display_Ref * dref, int depth);
 char *        dref_short_name_t(Display_Ref * dref);
 char *        dref_repr_t(Display_Ref * dref);  // value valid until next call
-// Display_Ref * clone_display_ref(Display_Ref * old);
 DDCA_Status   free_display_ref(Display_Ref * dref);
+Display_Ref * copy_display_ref(Display_Ref * dref);
 
 // Do two Display_Ref's identify the same device?
 bool dref_eq(Display_Ref* this, Display_Ref* that);
 
-// n. returned on stack
-// DDCA_IO_Path dpath_from_dref(Display_Ref * dref);
-
+#ifdef UNUSED
+bool dref_set_alive(Display_Ref * dref, bool alive);
+bool dref_get_alive(Display_Ref * dref);
+#endif
 
 // *** Display_Handle ***
 
@@ -228,39 +223,15 @@ bool dref_eq(Display_Ref* this, Display_Ref* that);
 typedef struct {
    char         marker[4];
    Display_Ref* dref;
-   int          fd;     // Linux file descriptor if ddc_io_mode == DDC_IO_DEVI2C or USB_IO                           // added 7/2016
+   int          fd;     // file descriptor
    char *       repr;
+   bool         testing_unsupported_feature_active;
 } Display_Handle;
 
-Display_Handle * create_bus_display_handle_from_display_ref(int fd, Display_Ref * dref);
-Display_Handle * create_adl_display_handle_from_display_ref(Display_Ref * dref);
-Display_Handle * create_usb_display_handle_from_display_ref(int fd, Display_Ref * dref);
+Display_Handle * create_base_display_handle(int fd, Display_Ref * dref);
 void             dbgrpt_display_handle(Display_Handle * dh, const char * msg, int depth);
 char *           dh_repr(Display_Handle * dh);
-char *           dh_repr_t(Display_Handle * dh);
 void             free_display_handle(Display_Handle * dh);
-
-
-// *** Video_Card_Info ***
-
-#define VIDEO_CARD_INFO_MARKER "VIDC"
-/** Video card information */
-typedef struct {
-   char     marker[4];
-   int      vendor_id;
-   char *   adapter_name;
-   char *   driver_name;
-} Video_Card_Info;
-
-Video_Card_Info * create_video_card_info();
-
-
-// *** Miscellaneous ***
-
-bool is_adlno_defined(DDCA_Adlno adlno);
-
-/** Reserved #DDCA_Adlno value indicating undefined */
-#define ADLNO_UNDEFINED {-1,-1}
 
 // For internal display selection functions
 
@@ -268,19 +239,25 @@ bool is_adlno_defined(DDCA_Adlno adlno);
 #define DISPSEL_VALID_ONLY 0x80
 #ifdef FUTURE
 #define DISPSEL_I2C        0x40
-#define DISPSEL_ADL        0x20
 #define DISPSEL_USB        0x10
-#define DISPSEL_ANY        (DISPSEL_I2C | DISPSEL_ADL | DISPSEL_USB)
+#define DISPSEL_ANY        (DISPSEL_I2C | DISPSEL_USB)
 #endif
 
 //* Option flags for display selection functions */
 typedef Byte Display_Selection_Options;
 
-int    hiddev_name_to_number(char * hiddev_name);
+int    hiddev_name_to_number(const char * hiddev_name);
+#ifdef UNUSED
 char * hiddev_number_to_name(int hiddev_number);
+#endif
 
+/** For recording /dev/i2c and hiddev open errors */
+typedef struct {
+   DDCA_IO_Mode io_mode;
+   int    devno;   // i2c bus number or hiddev device number
+   int    error;
+   char * detail;
+} Bus_Open_Error;
 
-bool lock_display_lock(Display_Async_Rec * async_rec, bool wait);
-void unlock_display_lock(Display_Async_Rec * async_rec);
 
 #endif /* DISPLAYS_H_ */

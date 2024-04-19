@@ -4,8 +4,8 @@ ddcutil
 **ddcutil** is a Linux program for querying and changing monitor settings, such as 
 brightness and color levels.
 
-Most mointors, other than lapdop displays, have a Virtual Control Panel (VCP), 
-which implements features defined in the Montor Control Command Set (MCCS).
+Most monitors, other than laptop displays, have a Virtual Control Panel (VCP), 
+which implements features defined in the Monitor Control Command Set (MCCS).
 Typically, **ddcutil** communicates with the monitor's VCP over an I2C bus, as per 
 the Display Data Channel/Command Interface Standard (DDC/CI).
 
@@ -24,7 +24,10 @@ the shared library.
 
 For detailed information about **ddcutil**, see the project website: www.ddcutil.com. 
 
-In particular, for instructions on building **ddcutil**, see www.ddcutil.com/building. 
+In particular, for a summary of key post-installation steps, including loading driver
+i2c-dev, see [Post-Installation Checklist](https://www.ddcutil.com/config_steps).
+More generally, for instructions on building and configuring **ddcutil**, see
+[Installation and Configuration](https://www.ddcutil.com/install_config_main/)
 
 Once **ddcutil** is installed, online help is also available.
 Use the --help option or see the man page:
@@ -50,10 +53,15 @@ When posting questions regarding **ddcutil** configuration, please execute the f
 capture its output in a file, and submit the output as an attachement.
 
 ~~~
-$ ddcutil interrogate 2>&1
+$ ddcutil interrogate 
 ~~~
 
-For further information about technical support, see http://www.ddcutil.com/support.
+For further information about technical support, see https://www.ddcutil.com/tech_support.
+
+### Maintaining **ddcutil** in Linux Distributions
+
+Those responsible for maintaining **ddcutil** related packages in Linux distributions should see
+[Notes for Linux Distribution Maintainers](https://www.ddcutil.com/mult_shared_libs).
 
 ## Author
 

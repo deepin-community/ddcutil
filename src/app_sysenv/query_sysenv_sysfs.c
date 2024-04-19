@@ -3,14 +3,12 @@
  *  Query environment using /sys file system
  */
 
-// Copyright (C) 2014-2019 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2022 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-
 /** \cond */
-// #define _GNU_SOURCE   // for basename
-
 #include <assert.h>
+#include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <glib-2.0/glib.h>
@@ -25,86 +23,34 @@
 #include "util/report_util.h"
 #include "util/string_util.h"
 #include "util/subprocess_util.h"
+#include "util/sysfs_filter_functions.h"
+#include "util/sysfs_i2c_util.h"
 #include "util/sysfs_util.h"
 
 #include "base/core.h"
 #include "base/linux_errno.h"
+#include "base/rtti.h"
 /** \endcond */
 
+#include "i2c/i2c_sysfs.h"
+
 #include "query_sysenv_base.h"
+#include "query_sysenv_sysfs_common.h"
+#include "query_sysenv_original_sys_scans.h"
+#include "query_sysenv_detailed_bus_pci_devices.h"
+#include "query_sysenv_simplified_sys_bus_pci_devices.h"
 #include "query_sysenv_xref.h"
 
 #include "query_sysenv_sysfs.h"
 
+// Default trace class for this file
+static DDCA_Trace_Group TRACE_GROUP = DDCA_TRC_ENV;
+
 // Notes on directory structure
 //
-//  /sys/bus/pci/devices/0000:nn:nn.n/
-//        boot_vga   1  if the boot device, appears not exist ow
-//        class      0x030000 for video
-//        device     hex PID
-//        driver    -> /sys/bus/pci/drivers/radeon
-//        drm
-//           card0 (dir)
-//           controlD64 (dir)
-//           controlD128 (dir)
-//        enable
-//        graphics (dir)
-//            fb0 (dir)
-//        i2c-n (dir)
-//            device -> /sys/bus/pci/devices/0000:nn:nn.n
-//            name
-//        modalias
-//        subsystem (dir)  -> /sys/bus/pci
-//             devices (dir)
-//             drivers (dir)
-//        subsystem_device
-//        subsystem_vendor
-//        vendor           hex VID
-//
-// also of possible interest:
-// /sys/class/i2c-dev/i2c-*/name
-//    refers to video driver or piix4_smbus
-// also accessed at:
-// /sys/bus/i2c/devices/i2c-*/name
-// /sys/bus/pci/drivers/nouveau
-// /sys/bus/pci/drivers/piix4_smbus
-// /sys/bus/pci/drivers/nouveau/0000:01:00.0
-//                                           /name
-//                                           i2c-dev
-// /sys/module/nvidia
-// /sys/module/i2c_dev ?
-// /sys/module/... etc
-
 // Raspbian:
 // /sys/bus/platform/drivers/vc4_v3d
 // /sys/module/vc4
-
-
-// Local conversion functions for data coming from sysfs,
-// which should always be valid.
-
-static ushort h2ushort(char * hval) {
-   bool debug = false;
-   int ct;
-   ushort ival;
-   ct = sscanf(hval, "%hx", &ival);
-   assert(ct == 1);
-   if (debug)
-      DBGMSG("hhhh = |%s|, returning 0x%04x", hval, ival);
-   return ival;
-}
-
-static unsigned h2uint(char * hval) {
-   bool debug = false;
-   int ct;
-   unsigned ival;
-   ct = sscanf(hval, "%x", &ival);
-   assert(ct == 1);
-   if (debug)
-      DBGMSG("hhhh = |%s|, returning 0x%08x", hval, ival);
-   return ival;
-}
-
 
 
 // Two ways to get the hex device identifiers.  Both are ugly.
@@ -263,7 +209,12 @@ void report_modalias(char * cur_dir_name, int depth) {
  *  \param accumulator  accumulator struct
  *  \param depth        logical indentation depth
  */
-void each_video_device_i2c(char * dirname, char * fn, void * accumulator, int depth) {
+void each_video_device_i2c(
+      const char * dirname,
+      const char * fn,
+      void *       accumulator,
+      int          depth)
+{
    bool debug = false;
    DBGMSF(debug, "dirname=%s, fn=%s", dirname, fn);
 
@@ -283,7 +234,7 @@ void each_video_device_i2c(char * dirname, char * fn, void * accumulator, int de
  *  vendor/device etc from modalias extracted into individual attributes.
  *  Other device subdirectories do not necessarily have these attributes.
  *
- *  \param sysfs_device_dir   always /sys/bus/pck/devices/nnnn:nn:nn.n
+ *  \param sysfs_device_dir   always /sys/bus/pci/devices/nnnn:nn:nn.n
  *  \param depth              logical indentation depth
  */
 void report_device_identification(char * sysfs_device_dir, int depth) {
@@ -291,14 +242,17 @@ void report_device_identification(char * sysfs_device_dir, int depth) {
    DBGMSF(debug, "sysfs_device_dir: %s", sysfs_device_dir);
    int d1 = depth+1;
 
-   DBGMSF0(debug, "Reading device ids from individual attribute files...");
+   DBGMSF(debug, "Reading device ids from individual attribute files...");
    Device_Ids dev_ids = read_device_ids1(sysfs_device_dir);
-   DBGMSF0(debug, "Reading device ids by parsing modalias attribute...");
+#ifdef ALTERNATIVE
+   // works, pick one
+   DBGMSF(debug, "Reading device ids by parsing modalias attribute...");
    Device_Ids dev_ids2 = read_device_ids2(sysfs_device_dir);
    assert(dev_ids.vendor_id == dev_ids2.vendor_id);
    assert(dev_ids.device_id == dev_ids2.device_id);
    assert(dev_ids.subvendor_id == dev_ids2.subvendor_id);
    assert(dev_ids.subdevice_id == dev_ids2.subdevice_id);
+#endif
 
    bool pci_ids_ok = devid_ensure_initialized();
    if (pci_ids_ok) {
@@ -329,7 +283,7 @@ void report_device_identification(char * sysfs_device_dir, int depth) {
 
 /** Returns the name for video class ids.
  *
- *  Hardcoded because device_ids_util.c does not maintain the class
+ *  Hardcoded because device_ids_util.c does not process the class
  *  information that is maintained in file pci.ids.
  *
  *  \param class_id
@@ -374,8 +328,8 @@ static char * video_device_class_name(unsigned class_id) {
  *  Adds detected driver to list of detected drivers
  */
 void each_video_pci_device(
-      char * dirname,
-      char * fn,
+      const char * dirname,
+      const char * fn,
       void * accumulator,
       int    depth)
 {
@@ -389,9 +343,8 @@ void each_video_pci_device(
 
    char cur_dir_name[PATH_MAX];
    sprintf(cur_dir_name, "%s/%s", dirname, fn);
-   // DBGMSF(debug, "cur_dir_name: %s", cur_dir_name);
    char * device_class = read_sysfs_attr(cur_dir_name, "class", /*verbose=*/true);
-   // DBGMSF(debug, "device_class: %s", device_class);
+   // DBGMSF(debug, "cur_dir_name=%s, device_class: %s", cur_dir_name, device_class);
    if (!device_class) {
       rpt_vstring(depth, "Unexpected for %s: class not found", cur_dir_name);
       goto bye;
@@ -474,6 +427,7 @@ void each_video_pci_device(
    free(device_class);
 
 bye:
+   DBGMSF(debug, "Done");
    return;
 }
 
@@ -492,7 +446,12 @@ bye:
  *  \remark
  *  Adds detected driver to list of detected drivers
  */
-void each_arm_driver(char * dirname, char * fn, void * accumulator, int depth) {
+void each_arm_driver(
+      const char *  dirname,
+      const char *  fn,
+      void *        accumulator,
+      int           depth)
+{
    bool debug = false;
    DBGMSF(debug, "Starting. dirname=%s, fn=%s, accumulator=%p", dirname, fn, accumulator);
 
@@ -500,11 +459,11 @@ void each_arm_driver(char * dirname, char * fn, void * accumulator, int depth) {
    assert(accumulator && memcmp(accum->marker, ENV_ACCUMULATOR_MARKER, 4) == 0);
 
    if (streq(fn, "vc4_v3d")) {
-      char * driver_name = fn;
+      const char * driver_name = fn;
       rpt_vstring(depth, "Driver name:    %s", driver_name);
       driver_name_list_add(&accum->driver_list, driver_name);
    }
-   DBGMSF0(debug, "Done");
+   DBGMSF(debug, "Done");
 }
 
 
@@ -531,7 +490,10 @@ void query_card_and_driver_using_sysfs(Env_Accumulator * accum) {
       // each entry in /sys/bus/pci/devices is a symbolic link
       dir_foreach(pci_devices_dir_name, /*fn_filter*/ NULL, each_video_pci_device, accum, 0);
    }
+   DBGMSF(debug, "Done");
 }
+
+// end query_card_and_driver_using_sysfs() section
 
 
 /** For each driver module name known to be relevant, checks /sys to
@@ -562,7 +524,7 @@ void query_loaded_modules_using_sysfs() {
  *
  *  Called by #dir_foreach() from #query_sys_bus_i2c()
  *
- *  \param  dirname     always /sys/bus/i2c/devicesS
+ *  \param  dirname     always /sys/bus/i2c/devices
  *  \param  fn          i2c-0, i2c-1, ... (n. these are symbolic links)
  *  \param  accumulator collects environment information
  *  \param  depth       logical indentation depth
@@ -571,14 +533,15 @@ void query_loaded_modules_using_sysfs() {
  *  Adds current bus number to **accumulator->sys_bus_i2c_device_numbers
  */
 void each_i2c_device(
-      char * dirname,     // always /sys/bus/i2c/devices
-      char * fn,          // i2c-0, i2c-1, ...
+      const char * dirname,     // always /sys/bus/i2c/devices
+      const char * fn,          // i2c-0, i2c-1, ...
       void * accumulator,
       int    depth)
 {
    bool debug = false;
+   DBGTRC_STARTING(debug, DDCA_TRC_NONE, "dirname=%s, fn=%s", dirname, fn);
    assert(streq(dirname, "/sys/bus/i2c/devices"));
-   DBGMSF(debug, "dirname=|%s|, fn=|%s|", dirname, fn);
+
    Env_Accumulator * accum = accumulator;
    char cur_dir_name[100];
    sprintf(cur_dir_name, "%s/%s", dirname, fn);
@@ -589,12 +552,20 @@ void each_i2c_device(
    free(dev_name);
 
    int busno = i2c_name_to_busno(fn);
-   if (busno >= 0)
+   if (busno >= 0) {
       bva_append(accum->sys_bus_i2c_device_numbers, busno);
-   else
-      DBGMSG("Unexpected /sys/bus/i2c/devices file name: %s", fn);
+      accum->sysfs_i2c_devices_exist = true;
+   }
+   else if (str_ends_with(fn, "-0037")) {
+      DBGTRC_NOPREFIX(debug, DDCA_TRC_NONE, "ddcci device name: %s", fn);
+      accum->sysfs_ddcci_devices_exist = true;
+   }
+   else {
+      // rpt_vstring(depth, "%-34s Unexpected file name: %s", cur_dir_name, fn);
+      DBGTRC_NOPREFIX(debug, DDCA_TRC_NONE, "Ignorable /sys/bus/i2c/devices file name: %s", fn);
+   }
 
-   accum->sysfs_i2c_devices_exist = true;
+   DBGTRC_DONE(debug, DDCA_TRC_NONE, "");
 }
 
 
@@ -607,6 +578,8 @@ void each_i2c_device(
  *  array of detected I2C device numbers.
  */
 void query_sys_bus_i2c(Env_Accumulator * accumulator) {
+   bool debug = false;
+   DBGTRC_STARTING(debug, TRACE_GROUP, "");
    accumulator->sys_bus_i2c_device_numbers = bva_create();
    rpt_vstring(0,"Examining /sys/bus/i2c/devices...");
    char * dname = "/sys/bus/i2c";
@@ -617,19 +590,17 @@ void query_sys_bus_i2c(Env_Accumulator * accumulator) {
       char * dname = "/sys/bus/i2c/devices";
       accumulator->sysfs_i2c_devices_exist = false;
       // each entry in /sys/bus/i2c/devices is a symbolic link
-      dir_foreach(dname, NULL, each_i2c_device, accumulator, 1);
+      dir_ordered_foreach(dname, NULL, i2c_compare, each_i2c_device, accumulator, 1);
       if (!accumulator->sysfs_i2c_devices_exist)
          rpt_vstring(1, "No i2c devices found in %s", dname);
       bva_sort(accumulator->sys_bus_i2c_device_numbers);
+      if (accumulator->sysfs_ddcci_devices_exist) {
+         rpt_nl();
+         rpt_vstring(1, "Device(s) possibly created by driver ddcci found in %s", dname);
+         rpt_vstring(1, "May require option --force-slave-address to recover from EBUSY errors.");
+      }
    }
-}
-
-
-
-int indirect_strcmp(const void * a, const void * b) {
-   char * alpha = *(char **) a;
-   char * beta  = *(char **) b;
-   return strcmp(alpha, beta);
+   DBGTRC_DONE(debug, TRACE_GROUP, "");
 }
 
 
@@ -647,18 +618,17 @@ void query_sys_amdgpu_parameters(int depth) {
 
       if ((dirp = opendir(parmdir)) == NULL) {
          int errsv = errno;
-         rpt_vstring(d2, "Couldn't open %s. errmp = %d",
-                        parmdir, errsv);
+         rpt_vstring(d2, "Couldn't open %s. errno = %d (%s)",
+                         parmdir, errsv, linux_errno_name(errsv));
       }
       else {
-         GPtrArray * sorted_names = g_ptr_array_new();
+         GPtrArray * sorted_names = g_ptr_array_new_with_free_func(g_free);
          while (true){
-            dp = readdir(dirp);
+            dp = readdir(dirp);   // per man page, do not free
             if (!dp)
                break;
             if (dp->d_type & DT_REG) {
-               char * fn = dp->d_name;
-               g_ptr_array_add(sorted_names, fn);
+               g_ptr_array_add(sorted_names, strdup(dp->d_name));
             }
          }
          g_ptr_array_sort(sorted_names, indirect_strcmp);
@@ -669,8 +639,10 @@ void query_sys_amdgpu_parameters(int depth) {
             char n[100];
             g_snprintf(n, 100, "%s:", fn);
             rpt_vstring(d2, "%-20s  %s", n, value);
+            free(value);
          }
          closedir(dirp);
+         g_ptr_array_free(sorted_names, true);
       }
    }
 }
@@ -678,163 +650,244 @@ void query_sys_amdgpu_parameters(int depth) {
 
 /** Examines /sys/class/drm
  */
-void query_drm_using_sysfs()
-{
-   struct dirent *dent;
-   struct dirent *dent2;
-   DIR           *dir1;
-   char          *dname;
-   char          dnbuf[90];
-   const int     cardname_sz = 20;
-   char          cardname[cardname_sz];
 
-   int depth = 0;
-   int d1    = depth+1;
-   int d2    = depth+2;
-
+static
+void insert_drm_xref(
+      int          depth,
+      const char * cur_dir_name,
+      const char * i2c_node_name,
+      const Byte * edidbytes) {
    bool debug = false;
+   DBGMSF(debug, "depth=%d, cur_dir_name=%s, i2c_node_name = %s, edidbytes=%p",
+                 depth, cur_dir_name, i2c_node_name, edidbytes);
+   int d2 = depth;
+   assert(cur_dir_name);
+   // i2c_node_name should should always be non-null, but don't assume
+   assert(edidbytes);
 
-   rpt_vstring(depth,"Examining /sys/class/drm...");
-   dname = "/sys/class/drm";
-   dir1 = opendir(dname);
-   if (!dir1) {
-      rpt_vstring(d1, "drm not defined in sysfs. Unable to open directory %s: %s\n",
-                     dname, strerror(errno));
-   }
-   else {
-      closedir(dir1);
-      int cardno = 0;
-      for (;;cardno++) {
-         snprintf(cardname, cardname_sz, "card%d", cardno);
-         snprintf(dnbuf, 80, "/sys/class/drm/%s", cardname);
-         dir1 = opendir(dnbuf);
-         if (!dir1) {
-            // rpt_vstring(d1, "Unable to open sysfs directory %s: %s\n", dnbuf, strerror(errno));
-            break;
-         }
-         else {
-            while ((dent = readdir(dir1)) != NULL) {
-               // DBGMSG("%s", dent->d_name);
-               // char cur_fn[100];
-               if (str_starts_with(dent->d_name, cardname)) {
-                  rpt_vstring(d1, "Found connector: %s", dent->d_name);
-                  char cur_dir_name[PATH_MAX];
-                  g_snprintf(cur_dir_name, PATH_MAX, "%s/%s", dnbuf, dent->d_name);
+   int drm_busno =  i2c_path_to_busno(cur_dir_name);
+   DBGMSF(debug, "drm_busno=%d", drm_busno);
 
-                  // attribute dpms always "On"
-                  // char * s_dpms = read_sysfs_attr(cur_dir_name, "dpms", false);
-                  // rpt_vstring(d1, "%s/dpms: %s", cur_dir_name, s_dpms);
-
-                  // attribute enabled always "disabled"
-                  // char * s_enabled = read_sysfs_attr(cur_dir_name, "enabled", false);
-                  // rpt_vstring(d1, "%s/enabled: %s", cur_dir_name, s_enabled);
-
-                  char * s_status = read_sysfs_attr(cur_dir_name, "status", false);
-                  rpt_vstring(d2, "%s/status: %s", cur_dir_name, s_status);
-                  // edid present iff status == "connected"
-                  if (streq(s_status, "connected")) {
-                     GByteArray * gba_edid = read_binary_sysfs_attr(
-                           cur_dir_name, "edid", 128, /*verbose=*/ false);
-
-                     // hex_dump(gba_edid->data, gba_edid->len);
-
-#ifdef UNNEEDED
-                    rpt_vstring(d2, "Raw EDID:");
-                    rpt_hex_dump(gba_edid->data, gba_edid->len, 2);
-                    if (gba_edid->len >= 128) {
-                       Parsed_Edid * parsed_edid = create_parsed_edid(gba_edid->data);
-                       if (parsed_edid) {
-                          report_parsed_edid_base(
-                             parsed_edid,
-                             true,   // verbose
-                             false,  // show_hex
-                             2);     // depth
-                          free_parsed_edid(parsed_edid);
-
-                       }
-                       else {
-                           rpt_vstring(d2, "Unable to parse EDID");
-                           // printf(" Unparsable EDID for output name: %s -> %p\n", prec->output_name, prec->edidbytes);
-                           // hex_dump(prec->edidbytes, 128);
-                       }
-                    }
-#endif
-
-                    // look for i2c-n subdirectory, may or may not be present depending on driver
-                    // DBGMSG("cur_dir_name: %s", cur_dir_name);
-                    DIR* dir2 = opendir(cur_dir_name);
-                    char * i2c_node_name = NULL;
-
-                    if (!dir2) {
-                       rpt_vstring(d1, "Unexpected error. Unable to open sysfs directory %s: %s\n",
-                                      cur_dir_name, strerror(errno));
-                       break;
-                    }
-                    else {
-                       while ((dent2 = readdir(dir2)) != NULL) {
-                          // DBGMSG("%s", dent2->d_name);
-                          if (str_starts_with(dent2->d_name, "i2c")) {
-                             rpt_vstring(d2, "I2C device: %s", dent2->d_name);
-                             i2c_node_name = strdup(dent2->d_name);
-                             break;
-                          }
-                       }
-                       closedir(dir2);
-                    }
-
-                    // rpt_nl();
-
-                    Device_Id_Xref * xref = NULL;
-                    DBGMSF(debug, "i2c_node_name = %s", i2c_node_name);
-                    if (i2c_node_name) {
-                       // DBGMSG("Using i2c_node_name");
-                       int drm_busno =  i2c_path_to_busno(i2c_node_name);
-                       xref = device_xref_find_by_busno(drm_busno);
-                       if (!xref)
-                          DBGMSG("Unexpected. Bus %d not in xref table", drm_busno);
-                    }
-                    if (!xref) {   // i.e. if !i2c_node_name or lookup by busno failed
-                       // DBGMSG("searching by EDID");
-                       Byte * edidbytes = gba_edid->data;
+   Device_Id_Xref * xref = device_xref_find_by_busno(drm_busno);
+   if (!xref)
+      DBGMSG("Unexpected. Bus %d not in xref table", drm_busno);
+   // can we assert that edidbytes != NULL?
+   if (!xref) {
+      // DBGMSG("searching by EDID");
 #ifdef SYSENV_TEST_IDENTICAL_EDIDS
-                       if (first_edid) {
-                          DBGMSG("Forcing duplicate EDID");
-                          edidbytes = first_edid;
-                       }
-#endif
-                       xref = device_xref_find_by_edid(edidbytes);
-                       if (!xref) {
-                          char * tag = device_xref_edid_tag(edidbytes);
-                          DBGMSG("Unexpected. EDID ...%s not in xref table", tag);
-                          free(tag);
-                       }
-                    }
-                    if (xref) {
-                       if (xref->ambiguous_edid) {
-                          rpt_vstring(d2, "Multiple displays have same EDID ...%s", xref->edid_tag);
-                          rpt_vstring(d2, "drm name, and bus number in device cross reference table may be incorrect");
-                       }
-                       // xref->sysfs_drm_name = strdup(dent->d_name);
-                       xref->sysfs_drm_name = strdup(cur_dir_name);
-                       xref->sysfs_drm_i2c  = i2c_node_name;
-                       xref->sysfs_drm_busno = i2c_path_to_busno(i2c_node_name);
-                       DBGMSF(debug, "sysfs_drm_busno = %d", xref->sysfs_drm_busno);
-                    }
-
-                    g_byte_array_free(gba_edid, true);
-                 }
-                 rpt_nl();
+               if (first_edid) {
+                  DBGMSG("Forcing duplicate EDID");
+                  edidbytes = first_edid;
                }
-            }
-            closedir(dir1);
-         }
+#endif
+      xref = device_xref_find_by_edid(edidbytes);
+      if (!xref) {
+         char * tag = device_xref_edid_tag(edidbytes);
+         DBGMSG("Unexpected. EDID ...%s not in xref table", tag);
+         free(tag);
       }
-      if (cardno==0)
-         rpt_vstring(d1, "No drm class cards found in %s", dname);
    }
-
-   rpt_title("Query file system for i2c nodes under /sys/class/drm/card*...", 1);
-   execute_shell_cmd_rpt("ls -ld /sys/class/drm/card*/card*/i2c*", 1);
+   if (xref) {
+      if (xref->ambiguous_edid) {
+         rpt_vstring(d2, "Multiple displays have same EDID ...%s", xref->edid_tag);
+         rpt_vstring(d2, "drm name, and bus number in device cross reference table may be incorrect");
+      }
+      xref->sysfs_drm_name = strdup(cur_dir_name);
+      if (i2c_node_name)
+         xref->sysfs_drm_i2c  = strdup(i2c_node_name);
+      xref->sysfs_drm_busno = drm_busno;
+      DBGMSF(debug, "sysfs_drm_busno = %d", xref->sysfs_drm_busno);
+   }
 }
 
+
+static
+void report_one_connector(
+      const char * dirname,     // <device>/drm/cardN
+      const char * simple_fn,   // card0-HDMI-1 etc
+      void *       data,
+      int          depth)
+{
+   bool debug = false;
+   int d1 = depth+1;
+   int d2 = depth+2;
+   DBGMSF(debug, "Starting. dirname=%s, simple_fn=%s", dirname, simple_fn);
+   assert(dirname);
+   assert(simple_fn);
+
+   rpt_nl();
+   rpt_vstring(depth, "Connector: %s", simple_fn);
+   GByteArray * edid_byte_array;
+   char * i2c_subdir_name = NULL;    // i2c-N
+   RPT_ATTR_TEXT(d1, NULL, dirname, simple_fn, "enabled");
+   RPT_ATTR_TEXT(d1, NULL, dirname, simple_fn, "status");
+   RPT_ATTR_EDID(d1, &edid_byte_array, dirname, simple_fn, "edid");
+   GET_ATTR_SINGLE_SUBDIR(&i2c_subdir_name, is_i2cN_dir, NULL, dirname, simple_fn);
+   // rpt_vstring(d1, "i2c_device: %s", i2c_subdir_name);
+
+   if (i2c_subdir_name) {
+      char * node_name = NULL;   // e.g. "AMDGPU DM aux hw bus 0"
+      rpt_vstring(d1, "i2c_device: %s", i2c_subdir_name);
+      RPT_ATTR_TEXT(d2, &node_name, dirname, simple_fn, i2c_subdir_name, "name");
+
+      if (edid_byte_array) {
+         insert_drm_xref(d2, i2c_subdir_name, node_name, edid_byte_array->data);
+      }
+      free(i2c_subdir_name);
+      free(node_name);
+   }
+   else {
+      rpt_vstring(d2, "No i2c-N subdirectory");
+   }
+   if (edid_byte_array)
+      g_byte_array_free(edid_byte_array, true);
+
+   DBGMSF(debug, "Done");
+}
+
+
+void query_drm_using_sysfs()
+{
+   bool debug = false;
+   DBGTRC_STARTING(debug, TRACE_GROUP, "");
+   int depth = 1;
+   int d0 = depth;
+   rpt_nl();
+   char * dname =
+#ifdef TARGET_BSD
+             "/compat/linux/sys/class/drm";
+#else
+             "/sys/class/drm";
+#endif
+
+   rpt_vstring(d0, "*** Examining %s ***", dname);
+   dir_filtered_ordered_foreach(
+                dname,
+                is_card_connector_dir,   // filter function
+                NULL,                    // ordering function
+                report_one_connector,
+                NULL,                    // accumulator
+                depth);
+   DBGTRC_DONE(debug, TRACE_GROUP, "");
+}
+
+//
+// Functions for probing /sys
+//
+
+
+void show_top_level_sys_entries(int depth) {
+   rpt_label(depth, "*** Character device major numbers of interest: ***");
+   char * names[] = {"i2c", "drm", "ddcci", "aux", "vfio", NULL};
+   GPtrArray * filtered_proc_devices = g_ptr_array_new();
+   read_file_with_filter(
+             filtered_proc_devices,
+             "/proc/devices",
+             names,
+             false,     // ignore_case,
+             0,         // no limit
+             false);    // free strings
+
+   for (int ndx = 0; ndx < filtered_proc_devices->len; ndx++) {
+     rpt_label(depth+1, g_ptr_array_index(filtered_proc_devices, ndx));
+   }
+   rpt_nl();
+
+   rpt_label(depth, "*** Top Level I2C Related Nodes ***");
+   rpt_nl();
+   char * cmds[] = {
+#ifdef NOT_USEFUL
+     "ls -l /sys/bus/pci_express/devices",
+     "ls -l /sys/devices/pci*",
+     "ls -l /sys/class/pci*",             // pci_bus, pci_epc
+#endif
+     "ls -l /sys/bus/pci/devices",
+     "ls -l /sys/bus/i2c/devices",
+     "ls -l /sys/bus/ddcci/devices",
+     "ls -l /sys/bus/platform/devices",   // not symbolic links
+     "ls -l /sys/class/drm*",             // drm, drm_dp_aux_dev
+     "ls -l /sys/class/i2c*",             // i2c, i2c-adapter, i2c-dev
+     "ls -l /sys/class/backlight",
+     "ls -l /sys/class/vfio*",
+     NULL
+   };
+
+   int ndx = 0;
+   while ( cmds[ndx] ) {
+      rpt_vstring(1, "%s ...", cmds[ndx]);
+      execute_shell_cmd_rpt(cmds[ndx],depth + 2);
+      ndx++;
+      rpt_nl();
+   }
+
+   for (int ndx = 0; ndx < filtered_proc_devices->len; ndx++) {
+      char * name = NULL;
+      int    number = 0;
+      if (sscanf(g_ptr_array_index(filtered_proc_devices, ndx),
+                 "%d %ms", &number, &name)  == 2) { // allow for pathological case of invalid /proc data
+         // DBGMSG("number = %d, name = %s"show_top_level_sys_entries, number, name);
+         char cmd[100];
+         snprintf(cmd, 100,       "ls -l /sys/dev/char/%d:*", number);
+         // DBGMSG("cmd: %s", cmd);
+         rpt_vstring(depth+1, "Char major: %d %s", number, name);
+         execute_shell_cmd_rpt(cmd,depth + 2);
+         free(name);
+         rpt_nl();
+      }
+   }
+
+   g_ptr_array_free(filtered_proc_devices, true);
+}
+
+
+/** Master function for dumping /sys directory
+ */
+void dump_sysfs_i2c(Env_Accumulator * accum) {
+   bool debug = false;
+   DBGTRC_STARTING(debug, TRACE_GROUP, "");
+   rpt_nl();
+
+   rpt_label(0, "****** Dumping sysfs i2c entries ******");
+
+   rpt_nl();
+   show_top_level_sys_entries(0);
+
+   // dump_original_sys_scans();
+   // dump_simplified_sys_bus_pci(0);
+   dump_detailed_sys_bus_pci(0);    // keep?
+   rpt_nl();
+
+   rpt_label(0, "*** Scan /sys/bus/i2c ***");
+   rpt_nl();
+   dbgrpt_sys_bus_i2c(1);
+   rpt_nl();
+
+   consolidated_i2c_sysfs_report(0);
+
+   if (accum->is_arm) {
+      rpt_label(0,"*** Extended dump of sysfs video devices for ARM architecture ***");
+      rpt_nl();
+      GPtrArray *  video_devices =   execute_shell_cmd_collect(
+            "find /sys/devices -name class | xargs grep -il 0x03 | xargs dirname | xargs ls -lR");
+      rpt_nl();
+
+      rpt_vstring(0, "Display devices: (class 0x03nnnn)");
+      for (int ndx = 0; ndx < video_devices->len; ndx++) {
+         char * dirname = g_ptr_array_index(video_devices, ndx);
+         rpt_vstring(2, "%s", dirname);
+      }
+   }
+
+   DBGTRC_DONE(debug, TRACE_GROUP, "");
+}
+
+
+void init_query_sysenv_sysfs() {
+   RTTI_ADD_FUNC(query_drm_using_sysfs);
+   RTTI_ADD_FUNC(query_sys_bus_i2c);
+   RTTI_ADD_FUNC(each_i2c_device);
+   RTTI_ADD_FUNC(dump_sysfs_i2c);
+
+   init_query_detailed_bus_pci_devices();
+}
 

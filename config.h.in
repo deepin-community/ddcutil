@@ -3,20 +3,23 @@
 /* Define if building universal (internal helper macro) */
 #undef AC_APPLE_UNIVERSAL_BUILD
 
+/* If defined, buid shared library. */
+#undef BUILD_SHARED_LIB
+
+/* If defined, enable environment commands. */
+#undef ENABLE_ENVCMDS
+
 /* If defined, enable failsim. */
 #undef ENABLE_FAILSIM
 
 /* If defined, force SUSE target directories. */
 #undef ENABLE_FORCE_SUSE
 
-/* Python2 is enabled */
-#undef ENABLE_PY2
+/* If defined, use UDEV. */
+#undef ENABLE_UDEV
 
-/* Python3 is enabled */
-#undef ENABLE_PY3
-
-/* If defined, ADL headers are present. Build with ADL support. */
-#undef HAVE_ADL
+/* If defined, enable USB communication. */
+#undef ENABLE_USB
 
 /* Define to 1 if you have the `clock_gettime' function. */
 #undef HAVE_CLOCK_GETTIME
@@ -50,9 +53,6 @@
    to 0 otherwise. */
 #undef HAVE_MALLOC
 
-/* Define to 1 if you have the <memory.h> header file. */
-#undef HAVE_MEMORY_H
-
 /* Define to 1 if you have the `memset' function. */
 #undef HAVE_MEMSET
 
@@ -65,6 +65,9 @@
 
 /* Define to 1 if you have the <stdint.h> header file. */
 #undef HAVE_STDINT_H
+
+/* Define to 1 if you have the <stdio.h> header file. */
+#undef HAVE_STDIO_H
 
 /* Define to 1 if you have the <stdlib.h> header file. */
 #undef HAVE_STDLIB_H
@@ -81,7 +84,7 @@
 /* Define to 1 if you have the `strerror' function. */
 #undef HAVE_STRERROR
 
-/* Define to 1 if you have the `strerror_r' function. */
+/* Define if you have `strerror_r'. */
 #undef HAVE_STRERROR_R
 
 /* Define to 1 if you have the <strings.h> header file. */
@@ -144,35 +147,46 @@
 /* Define to the version of this package. */
 #undef PACKAGE_VERSION
 
-/* ddcutil major version */
-#undef PACKAGE_VMAJOR
+/* If defined, remove static qualifier from function declarations. */
+#undef STATIC_FUNCTIONS_VISIBLE
 
-/* ddcutil micro version */
-#undef PACKAGE_VMICRO
-
-/* ddcutil minor version */
-#undef PACKAGE_VMINOR
-
-/* Define to 1 if you have the ANSI C header files. */
+/* Define to 1 if all of the C90 standard headers exist (not just the ones
+   required in a freestanding environment). This macro is provided for
+   backward compatibility; new code need not use it. */
 #undef STDC_HEADERS
 
 /* Define to 1 if strerror_r returns char *. */
 #undef STRERROR_R_CHAR_P
 
-/* If defined, use ddcutil APIs internally. */
-#undef USE_API
+/* If defined, building for BSD. */
+#undef TARGET_BSD
+
+/* If defined, building for Linux. */
+#undef TARGET_LINUX
 
 /* Use libdrm */
 #undef USE_LIBDRM
-
-/* If defined, use usb. */
-#undef USE_USB
 
 /* Use X11 */
 #undef USE_X11
 
 /* Version number of package */
 #undef VERSION
+
+/* ddcutil major version */
+#undef VERSION_VMAJOR
+
+/* ddcutil micro version */
+#undef VERSION_VMICRO
+
+/* ddcutil minor version */
+#undef VERSION_VMINOR
+
+/* ddcutil version suffix */
+#undef VERSION_VSUFFIX
+
+/* If defined, building for Asan instrumentation. */
+#undef WITH_ASAN
 
 /* Define WORDS_BIGENDIAN to 1 if your processor stores words with the most
    significant byte first (like Motorola and SPARC, unlike Intel). */

@@ -3,7 +3,7 @@
  * Dispatch test cases
  *
  * <copyright>
- * Copyright (C) 2014-2016 Sanford Rockowitz <rockowitz@minsoft.com>
+ * Copyright (C) 2014-2022 Sanford Rockowitz <rockowitz@minsoft.com>
  *
  * Licensed under the GNU General Public License Version 2
  *
@@ -28,10 +28,7 @@
 
 #include "base/core.h"
 
-#include "adl/adl_shim.h"
-#ifdef HAVE_ADL
-#include "adl/adl_impl/adl_intf.h"
-#endif
+// #include "adl/adl_shim.h"
 
 #include "test/testcase_table.h"
 
@@ -78,13 +75,6 @@ bool execute_testcase(int testnum, Display_Identifier* pdid) {
       }
 
       if (ok) {
-         if (pdid->id_type == DISP_ID_ADL && !adlshim_is_available()) {
-            printf("ADL adapter.display numbers specified, but ADL is not available.\n");
-            ok = false;
-         }
-      }
-
-      if (ok) {
          switch (pDesc->drefType) {
 
          case DisplayRefNone:
@@ -103,28 +93,11 @@ bool execute_testcase(int testnum, Display_Identifier* pdid) {
             }
             break;
 
-         case DisplayRefAdl:
-             // if (parsedCmd->dref->ddc_io_mode == DDC_IO_DEVI2C) {
-             if (pdid->id_type != DISP_ID_ADL) {
-                printf("Test %d requires ADL adapter.display numbers\n", testnum);
-                ok = false;
-             }
-             else {
-                // pDesc->fp_adl(parsedCmd->dref->iAdapterIndex, parsedCmd->dref->iDisplayIndex);
-                pDesc->fp_adl(pdid->iAdapterIndex, pdid->iDisplayIndex);
-             }
-             break;
-
          case DisplayRefAny:
             {
                // pDesc->fp_dr(parsedCmd->dref);
                Display_Ref* pdref = NULL;
-               if (pdid->id_type == DISP_ID_ADL) {
-                  pdref = create_adl_display_ref(pdid->iAdapterIndex, pdid->iDisplayIndex);
-               }
-               else {
                   pdref = create_bus_display_ref(pdid->busno);
-               }
                pDesc->fp_dr(pdref);
             }
             break;

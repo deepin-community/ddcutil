@@ -1,8 +1,91 @@
-ddcutil (0.9.9-2) UNRELEASED; urgency=medium
+ddcutil (2.1.4-1~exp1) experimental; urgency=medium
 
-  * update
+  * Upload to experimental
 
- -- Sanford Rockowitz <rockowitz@minsoft.com>  Wed, 25 May 2022 11:00:10 +0800
+  * New upstream release (Closes: #1031259)
+
+  * debian/ddcutil.install
+    - install /usr/lib/modules-load.d/ddcutil.conf
+
+  * debian/libddcutil5.install
+    - new shared library package reflecting SONAME bump, replaces libddcutil4
+    - install /usr/lib/modules-load.d/libddcutil.conf
+
+ -- Sanford Rockowitz <rockowitz@minsoft.com>  Wed, 07 Feb 2024 05:00:00 -0400
+
+ddcutil (1.4.1-1) unstable; urgency=medium
+
+  * New upstream release
+
+  * debian/control
+    - Bump required glib2 version to 2.64
+    - Bump standards-Version to 4.6.2
+
+  * debian/ddcutil.install
+    - Install /usr/lib/udev/rules.d/60-ddcutil.rules, which uses the uaccess
+      tag to grant current user read/write access to /dev/i2c devices created
+      by video adapters
+
+  * debian/menu
+    - Deleted.
+
+ -- Sanford Rockowitz <rockowitz@minsoft.com>  Thu, 26 Jan 2023 05:00:00 -0400
+
+ddcutil (1.3.2-1) unstable; urgency=medium
+
+  * New upstream release
+    - modify makefiles to exclude junk files from distribution tarball
+
+ -- Sanford Rockowitz <rockowitz@minsoft.com>  Sat, 03 Sep 2022 05:00:00 -0400
+
+ddcutil (1.3.0-1) unstable; urgency=medium
+
+  * New upstream release
+
+  * debian/control
+    - Standards-Version: increment to 4.6.1
+
+ -- Sanford Rockowitz <rockowitz@minsoft.com>  Tue, 19 Jul 2022 05:00:00 -0400
+
+ddcutil (1.2.2-1) unstable; urgency=medium
+
+  * New upstream release
+
+  * debian/watch
+    - increment version to 4
+
+ -- Sanford Rockowitz <rockowitz@minsoft.com>  Mon, 07 Feb 2022 05:00:00 -0400
+
+ddcutil (1.2.1-1) unstable; urgency=medium
+
+  * New upstream release (Closes: #988489)
+
+  * debian/control
+    - add Build-Depends: libi2c-dev (>= 4.0)
+    - add Build_Depends: libkmod-dev
+    - package ddcutil: specify version >= 4.0 for Depends: i2c-tools
+    - Homepage: use https instead of http in URL
+    - Standards-Version: increment to 4.6.0
+    - replace libddcutil3 with libddcutil4
+    - increment required debhelper version to 13
+
+  * debian/copyright
+    - conform to copyright format 1.0
+    - bump copyright year
+
+  * debian/libddcutil*
+    - files libddcutil4* replace libddcutil3*
+
+  * debian/ddcutil.docs, debian/libddcutil4.docs, debian/libddcutil-dev.docs
+    - add CHANGELOG.md
+
+  * debian/rules
+    * delete dh_installchangelogs override
+
+  * debian/compat
+    - increment compatibility level to 13
+
+ -- Sanford Rockowitz <rockowitz@minsoft.com>  Thu, 02 Dec 2021 05:00:00 -0400
 
 ddcutil (0.9.9-2) unstable; urgency=medium
 

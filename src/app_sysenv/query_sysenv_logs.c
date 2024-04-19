@@ -3,7 +3,7 @@
  *  Query configuration files, logs, and output of logging commands.
  */
 
-// Copyright (C) 2017-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2017-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 
@@ -16,6 +16,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/sysinfo.h>
+#include <syslog.h>
 #include <unistd.h>
 
 #include "util/data_structures.h"
@@ -26,8 +27,12 @@
 #include "util/subprocess_util.h"
 
 #include "base/core.h"
+#include "base/dsa2.h"
 #include "base/status_code_mgt.h"
 /** endcond */
+
+#include "ddc/ddc_serialize.h"
+#include "vcp/persistent_capabilities.h"
 
 #include "query_sysenv_base.h"
 
@@ -100,14 +105,16 @@ static bool probe_log(
 
       DBGMSF(debug, "file_get_last_lines() returned %d", rc);
       DBGMSF(debug, "before filter, found_lines->len = %d", found_lines->len);
-      filter_and_limit_g_ptr_array(
+      // filter_and_limit_g_ptr_array(
+      //       found_lines, filter_terms, ignore_case, limit, /* free_strings= */ true);
+      filter_and_limit_g_ptr_array2(
             found_lines, filter_terms, ignore_case, limit);
       DBGMSF(debug, "after filter, found_lines->len = %d", found_lines->len);
 
    }
    else {
       found_lines = g_ptr_array_new_full(1000, g_free);
-      rc = read_file_with_filter(found_lines, log_fn, filter_terms, ignore_case, limit);
+      rc = read_file_with_filter(found_lines, log_fn, filter_terms, ignore_case, limit, false);
    }
 
    if (rc < 0) {
@@ -127,6 +134,7 @@ static bool probe_log(
       }
       file_found = true;
    }
+   g_ptr_array_set_free_func(found_lines,  g_free);
    g_ptr_array_free(found_lines, true);
 
 bye:
@@ -136,7 +144,18 @@ bye:
 }
 
 
-
+/** Issue a command and report the output to the terminal.
+ *
+ *  @param  cmd          command to issue
+ *  @param  filter_terms if non-null, use these terms to filter the output
+ *  @param  ignore_case  ignore case when filtering
+ *  @param  limit        report at most this number of lines
+ *  @param  limit if 0, return all lines that pass filter terms
+ *                if > 0, return at most the first #limit lines that satisfy the filter terms
+ *                if < 0, return at most the last  #limit lines that satisfy the filter terms
+ *  @param  depth        logical indentation depth of output
+ *  @return true if at least 1 line was output, false if not
+ */
 static bool probe_cmd(
       char *  cmd,
       char ** filter_terms,
@@ -213,10 +232,12 @@ void probe_logs(Env_Accumulator * accum) {
 
    // TODO: Pick simpler data structures.  Is Value_Name_Title_Table worth it?
 
+
+   // 1 suffixes to not conflict with token in syslog.h
    const Byte LOG_XORG       = 0x80;
-   const Byte LOG_DAEMON     = 0x40;
-   const Byte LOG_SYSLOG     = 0x20;
-   const Byte LOG_KERN       = 0x10;
+   const Byte LOG_DAEMON1    = 0x40;
+   const Byte LOG_SYSLOG1     = 0x20;
+   const Byte LOG_KERN1       = 0x10;
    const Byte LOG_JOURNALCTL = 0x08;
    const Byte LOG_MESSAGES   = 0x04;
    const Byte LOG_DMESG      = 0x02;
@@ -224,10 +245,10 @@ void probe_logs(Env_Accumulator * accum) {
    Value_Name_Title_Table log_table = {
          VNT(LOG_DMESG,      "dmesg"              ),
          VNT(LOG_JOURNALCTL, "journalctl"         ),
-         VNT(LOG_DAEMON,     "/var/log/daemon.log" ),
-         VNT(LOG_KERN,       "/var/log/kern.log"  ),
+         VNT(LOG_DAEMON1,     "/var/log/daemon.log" ),
+         VNT(LOG_KERN1,       "/var/log/kern.log"  ),
          VNT(LOG_MESSAGES,   "/var/log/messages"  ),
-         VNT(LOG_SYSLOG,     "/var/log/syslog"    ),
+         VNT(LOG_SYSLOG1,     "/var/log/syslog"    ),
          VNT(LOG_XORG,       "/var/log/Xorg.0.log"),
          VNT_END
    };
@@ -326,6 +347,8 @@ void probe_logs(Env_Accumulator * accum) {
    // Null_Terminated_String_Array log_terms = all_terms;
    char * rasp_log_terms[] = {
          "i2c",
+         "ddcutil",
+         "ddcui",
          NULL
    };
 
@@ -429,5 +452,51 @@ void probe_config_files(Env_Accumulator * accum) {
       // execute_shell_cmd_rpt("xrandr --props", 1 /* depth */);
       // rpt_nl();
    }
+}
+
+
+/** Reports cache files
+ *
+ *  @oaram depth logical indentation depth
+ */
+void probe_cache_files(int depth) {
+   int d0 = depth;
+   int d1 = depth+1;
+   rpt_nl();
+   rpt_label(d0, "Examining cache files...");
+   rpt_nl();
+   char * fn = NULL;
+
+   fn = capabilities_cache_file_name();
+   if (fn) {
+      rpt_vstring(d0, "Reading %s:", fn);
+      rpt_file_contents(fn, true, d1);
+      free(fn);
+   }
+   else
+      rpt_label(d0, "Undetermined capabilities cache file name");
+   rpt_nl();
+
+   fn = dsa2_stats_cache_file_name();
+   if (fn) {
+      rpt_vstring(d0, "Reading %s:", fn);
+      rpt_file_contents(fn, true, d1);
+      free(fn);
+   }
+   else
+      rpt_label(d0, "Undetermined dsa cache file name");
+   rpt_nl();
+
+#ifdef DISPLAYS_CACHE
+   fn = ddc_displays_cache_file_name();
+   if (fn) {
+      rpt_vstring(d0, "Reading %s:", fn);
+      rpt_file_contents(fn, true, d1);
+      free(fn);
+   }
+   else
+      rpt_label(d0, "Undetermined displays cache file name");
+   rpt_nl();
+#endif
 }
 

@@ -1,7 +1,7 @@
 /* udev_usb_util.h
  *
  * <copyright>
- * Copyright (C) 2016-2017 Sanford Rockowitz <rockowitz@minsoft.com>
+ * Copyright (C) 2016-2021 Sanford Rockowitz <rockowitz@minsoft.com>
  *
  * Licensed under the GNU General Public License Version 2
  *
@@ -29,7 +29,7 @@
 #define UDEV_USB_UTIL_H_
 
 /** \cond */
-#include <glib.h>
+#include <glib-2.0/glib.h>
 #include <libudev.h>
 #include <stdint.h>
 /** \endcond */
@@ -49,8 +49,8 @@ typedef struct {
    char *    devname;          ///< e.g. /dev/usb/hiddev2
    // int       usb_busnum;
    // int       usb_devnum;
-   // uint16_t  vid;
-   // uint16_t  pid;
+   uint16_t  vid;
+   uint16_t  pid;
    char *    vendor_id;       ///< vendor id, as 4 hex characters
    char *    product_id;      ///< product id, as 4 hex characters
    char *    vendor_name;     ///< vendor name

@@ -1,9 +1,9 @@
-/* x11_util.c
+ /** @file x11_util.c  X11 related utility functions
+ */
+
+/* Adapted from file randr-edid.c from libCEC.    How to properly handle copyright?
  *
- * * Adapted from file randr-edid.c from libCEC.    How to properly handle copyright?
- *
- * <copyright>
- * Copyright (C) 2016-2917 Sanford Rockowitz <rockowitz@minsoft.com>
+ * Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
  *
  * Licensed under the GNU General Public License Version 2
  *
@@ -20,7 +20,6 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- * </endcopyright>
  *
  *
  * Adapted from libCEC by Pulse-Eight Limited.  Pulse-Eight's copyright follows:
@@ -57,21 +56,19 @@
  *     http://www.pulse-eight.net/
  */
 
-/** @file x11_util.c
- * X11 related utility functions
- */
-
 /** \cond */
 #include <assert.h>
-#include <glib.h>
+#include <glib-2.0/glib.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <X11/Xlib.h>
+#include <X11/extensions/dpms.h>
+#include <X11/extensions/dpmsconst.h>
 #include <X11/extensions/Xrandr.h>
 #include <X11/Xatom.h>
-#include <X11/Xlib.h>
 /** \endcond */
 
 // #include "env.h"
@@ -255,7 +252,6 @@ if (debug) {
   return edid_recs;
 }
 
-
 /** Frees the data structure returned by get_x11_edids()
  *
  * @param edidrecs pointer to GPtrArray of pointers to X11_Edid_Rec
@@ -263,6 +259,40 @@ if (debug) {
 void free_x11_edids(GPtrArray * edidrecs) {
    g_ptr_array_free(edidrecs, true);
 
+}
+
+bool get_x11_dpms_info(unsigned short * power_level, unsigned char * state) {
+   Display *disp = XOpenDisplay(NULL);
+   bool result = false;
+   if( disp ) {
+       int major_opcode;
+       int minor_opcode;
+       int first_error;
+       bool found_extension = XQueryExtension(disp, DPMSExtensionName, &major_opcode, &minor_opcode, &first_error);
+       if (found_extension) {
+          /* The DPMSInfo function returns information about the current
+           * Display Power Management Signaling (DPMS) state.
+           * The state return parameter indicates whether or not DPMS is enabled (TRUE)
+           * or disabled (FALSE). The power_level return parameter indicates the current
+           * power level (one of DPMSModeOn, DPMSModeStandby, DPMSModeSuspend, or DPMSModeOff.)
+           */
+          result = DPMSInfo(disp, power_level, state);
+       }
+       XCloseDisplay(disp);
+   }
+   return result;
+}
+
+const char* dpms_power_level_name(unsigned short power_level) {
+   char * name = NULL;
+   switch(power_level) {
+   case 0: name = "DPMSModeOn";       break;
+   case 1: name = "DPMSModeStandby";  break;
+   case 2: name = "DPMSModeSuspend";  break;
+   case 3: name = "DPMSModeOff";      break;
+   default: name = "Invalid Value";
+   }
+   return name;
 }
 
 

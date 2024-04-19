@@ -1,4 +1,4 @@
-/** \f error_info.c
+/** @f error_info.c
  *
  *  Struct for reporting errors.
  *
@@ -9,7 +9,7 @@
  *  error is retained for use by higher levels in the call stack.
  */
 
-// Copyright (C) 2017-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2017-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 
@@ -31,7 +31,7 @@
 
 
 // Validates a pointer to an #Error_Info, using asserts
-#define VALID_DDC_ERROR_PTR(ptr) \
+#define VALID_ERROR_INFO_PTR(ptr) \
    assert(ptr); \
    assert(memcmp(ptr->marker, ERROR_INFO_MARKER, 4) == 0);
 
@@ -59,12 +59,55 @@ static ErrInfo_Status_String errinfo_name_func =  NULL;
  *   \param   name_func  function returning the name of a status code
  *   \param   desc_func  function returning a description of a status code
  */
-void errinfo_init(
+void
+errinfo_init(
       ErrInfo_Status_String name_func,
       ErrInfo_Status_String desc_func)
 {
    errinfo_name_func = name_func;
    errinfo_desc_func = desc_func;
+}
+
+
+//
+// Utilities
+//
+
+/** Checks whether all causes have the same status code.
+ *  If **status_code** != 0, all causes must have that value.
+ *  If **status_code** == 0, all causes must have the same status code
+ *  value as the first cause.
+ *
+ *  @param  erec        pointer to #Error_Info instance
+ *  @param  status_code status code value to check
+ *  @return true/false
+ *
+ *  if **erec** == NULL or the instance has no causes, returns false.
+ */
+bool
+errinfo_all_causes_same_status(
+      Error_Info * erec,
+      int          status_code)
+{
+   bool debug = false;
+   DBGF(debug, "Starting. status_code=%d, erec=%s", status_code, errinfo_summary(erec));
+   bool all_same = false;
+   if (erec) {
+      VALID_ERROR_INFO_PTR(erec);
+      if (erec->cause_ct > 0) {
+         if (status_code == 0)
+            status_code = erec->causes[0]->status_code;
+         all_same = true;
+         for (int ndx = 0; ndx < erec->cause_ct; ndx++) {
+            if (erec->causes[ndx]->status_code != status_code) {
+               all_same = false;
+               break;
+            }
+         }
+      }
+   }
+   DBGF(debug, "Returning: %s", SBOOL(all_same));
+   return all_same;
 }
 
 
@@ -81,11 +124,12 @@ void
 errinfo_free(Error_Info * erec){
    bool debug = false;
    if (debug) {
-      printf("(%s) Starting. erec=%p\n", __func__, erec);
+      printf("(%s) Starting. erec=%p\n", __func__, (void*)erec);
       show_backtrace(2);
+      errinfo_report(erec, 2);
    }
    if (erec) {
-      VALID_DDC_ERROR_PTR(erec);
+      VALID_ERROR_INFO_PTR(erec);
 
       if (debug) {
          printf("(%s) Freeing exception: \n", __func__);
@@ -113,6 +157,8 @@ errinfo_free(Error_Info * erec){
       erec->marker[3] = 'x';
       free(erec);
    }
+   if (debug)
+      printf("(%s) Done.\n", __func__);
 }
 
 
@@ -133,7 +179,7 @@ errinfo_free_with_report(
    if (erec) {
       if (report) {
          rpt_vstring(0, "(%s) Freeing exception:", func);
-            errinfo_report(erec, 1);
+         errinfo_report(erec, 1);
       }
       errinfo_free(erec);
    }
@@ -145,14 +191,13 @@ errinfo_free_with_report(
 
 static void ddc_error_free2(void * erec) {
    Error_Info* erec2 = (Error_Info *) erec;
-   VALID_DDC_ERROR_PTR(erec2);
+   VALID_ERROR_INFO_PTR(erec2);
    errinfo_free(erec2);
 }
 #endif
 
-
 //
-// Instance creation
+// Instance modification
 //
 
 /** Sets the status code in a existing #Error_Info instance.
@@ -162,32 +207,14 @@ static void ddc_error_free2(void * erec) {
  */
 void
 errinfo_set_status(Error_Info * erec, int code) {
-   VALID_DDC_ERROR_PTR(erec);
+   VALID_ERROR_INFO_PTR(erec);
    erec->status_code = code;
 }
 
-/** Sets the detail string in a existing #Error_Info instance.
- *
- *  \param  erec   pointer to instance
- *  \param  detail detail string
- */
-void
-errinfo_set_detail(
-      Error_Info *   erec,
-      char *         detail)
-{
-   VALID_DDC_ERROR_PTR(erec);
-   if (erec->detail) {
-      free(erec->detail);
-      erec->detail = NULL;
-   }
-   if (detail)
-      erec->detail = strdup(detail);
-}
 
 static void
 errinfo_set_detailv(
-      Error_Info *  erec,
+      Error_Info * erec,
       const char * detail,
       va_list      args)
 {
@@ -197,14 +224,26 @@ errinfo_set_detailv(
 }
 
 
-void errinfo_set_detail3(
-      Error_Info *   erec,
+/** Sets the detail string in a existing #Error_Info instance.
+ *  If there is already a detail string in the instance, it is replaced.
+ *
+ *  \param  erec   pointer to instance
+ *  \param  detail detail format string
+ *  \param  ...    arguments for format string
+ */
+void
+errinfo_set_detail(
+      Error_Info *  erec,
       const char *  detail_fmt,
       ...)
 {
+   VALID_ERROR_INFO_PTR(erec);
+   if (erec->detail) {
+      free(erec->detail);
+      erec->detail = NULL;
+   }
    va_list ap;
-      va_start(ap, detail_fmt);
-
+   va_start(ap, detail_fmt);
 
    errinfo_set_detailv(erec, detail_fmt, ap);
    va_end(ap);
@@ -222,8 +261,8 @@ errinfo_add_cause(
       Error_Info * cause)
 {
    // printf("(%s) cause=%p\n", __func__, cause);
-   VALID_DDC_ERROR_PTR(parent);
-   VALID_DDC_ERROR_PTR(cause);
+   VALID_ERROR_INFO_PTR(parent);
+   VALID_ERROR_INFO_PTR(cause);
 
    // printf("(%s) parent->cause_ct = %d, parent->max_causes = %d\n",
    //         __func__, parent->cause_ct, parent->max_causes);
@@ -266,6 +305,10 @@ errinfo_add_cause(
 }
 
 
+//
+// Instance creation
+//
+
 /** Creates a new #Error_Info instance with the specified status code,
  *  function name, and detail string.  The substitution values for the
  *  detail string are specified as an arg_list.
@@ -287,28 +330,12 @@ errinfo_newv(
    memcpy(erec->marker, ERROR_INFO_MARKER, 4);
    erec->status_code = status_code;
    erec->causes = empty_list;
-   erec->func = strdup(func);   // strdup to avoid constness warning, must free
+   erec->func = g_strdup(func);   // g_strdup to avoid constness warning, must free
 
    if (detail) {
       erec->detail = g_strdup_vprintf(detail, args);
    }
    return erec;
-}
-
-
-/** Creates a new #Error_Info instance with the specified status code
- *  and function name.
- *
- *  \param  status_code  status code
- *  \param  func         name of function generating status code
- *  \return pointer to new instance
- */
-Error_Info *
-errinfo_new(
-      int          status_code,
-      const char * func)
-{
-   return errinfo_new2(status_code, func, NULL);
 }
 
 
@@ -322,7 +349,7 @@ errinfo_new(
  *  \return pointer to new instance
  */
 Error_Info *
-errinfo_new2(
+errinfo_new(
       int            status_code,
       const char *   func,
       const char *   detail,
@@ -338,25 +365,7 @@ errinfo_new2(
 }
 
 
-/** Creates a new #Error_Info instance, including a reference to another
- *  instance that is the cause of the current error.
- *
- *  \param  code   status code
- *  \param  cause  pointer to another #Error_Info that is included as a cause
- *  \param  func   name of function creating new instance
- *  \return pointer to new instance
- */
-Error_Info * errinfo_new_with_cause(
-      int            code,
-      Error_Info *   cause,
-      const char *   func)
-{
-   return errinfo_new_with_cause2(code, cause, func, NULL);
-}
-
-
-static
-Error_Info *
+static Error_Info *
 errinfo_new_with_causev(
       int            status_code,
       Error_Info *   cause,
@@ -376,24 +385,12 @@ errinfo_new_with_causev(
  *  \param  status_code  status code
  *  \param  cause        pointer to another #Error_Info that is included as a cause
  *  \param  func         name of function creating new instance
- *  \param  detail       optional detail string
+ *  \param  detail_fmt   optional detail format string
+ *  \param  ...          optional arguments for detail_fmt
  *  \return pointer to new instance
  */
 Error_Info *
-errinfo_new_with_cause2(
-      int            status_code,
-      Error_Info *   cause,
-      const char *   func,
-      char *         detail)
-{
-   VALID_DDC_ERROR_PTR(cause);
-   Error_Info * erec = errinfo_new2(status_code, func, detail);
-   errinfo_add_cause(erec, cause);
-   return erec;
-}
-
-Error_Info *
-errinfo_new_with_cause3(
+errinfo_new_with_cause(
       int            status_code,
       Error_Info *   cause,
       const char *   func,
@@ -409,6 +406,7 @@ errinfo_new_with_cause3(
 }
 
 
+#ifdef UNUSED
 /** Creates a new #Error_Info instance, including a reference to another
  *  instance that is the cause of the current error.  The status code
  *  of the new instance is the same as that of the referenced instance.
@@ -421,10 +419,11 @@ Error_Info * errinfo_new_chained(
       Error_Info * cause,
       const char * func)
 {
-   VALID_DDC_ERROR_PTR(cause);
+   VALID_ERROR_INFO_PTR(cause);
    Error_Info * erec = errinfo_new_with_cause(cause->status_code, cause, func);
    return erec;
 }
+#endif
 
 
 /** Creates a new #Error_Info instance with a collection of
@@ -434,33 +433,61 @@ Error_Info * errinfo_new_chained(
  *  \param  causes          array of #Error_Info instances
  *  \param  cause_ct        number of causes
  *  \param  func            name of function creating the new #Error_Info
+ *  \param  detail          detail format string
+ *  \param  ...             optional arguments for detail format string
  *  \return pointer to new instance
  */
 Error_Info *
 errinfo_new_with_causes(
-      int             code,
-      Error_Info **   causes,
-      int             cause_ct,
-      const char *    func)
-{
-   return errinfo_new_with_causes2(code, causes, cause_ct, func, NULL);
-}
-
-Error_Info *
-errinfo_new_with_causes2(
       int            status_code,
       Error_Info **  causes,
       int            cause_ct,
       const char *   func,
-      char *         detail)
+      char *         detail,
+      ...)
 {
-   Error_Info * result = errinfo_new2(status_code, func, detail);
+   va_list ap;
+   va_start(ap, detail);
+   Error_Info * result = errinfo_newv(status_code, func, detail, ap);
+   va_end(ap);
    for (int ndx = 0; ndx < cause_ct; ndx++) {
       errinfo_add_cause(result, causes[ndx]);
    }
    return result;
 }
 
+
+/** Creates a new #Error_Info instance with a collection of
+ *  instances specified as the causes. The collection is
+ *  passed as a GPtrArray.
+ *
+ *  Note that the pointers in the **causes** array are copied to the new
+ *  #Error_Info instance. The pointers should not be freed when destroying
+ *  the original array of causes.
+ *
+ *  \param  code            status code of the new instance
+ *  \param  causes          GPtrArray of #Error_Info instances
+ *  \param  func            name of function creating the new #Error_Info
+ *  \param  detail          detail format string
+ *  \param  ...             optional arguments for detail format string
+ *  \return pointer to new instance
+ */
+Error_Info * errinfo_new_with_causes_gptr(
+      int            status_code,
+      GPtrArray*     causes,
+      const char *   func,
+      char *         detail,
+      ...)
+{
+   va_list ap;
+   va_start(ap, detail);
+   Error_Info * result = errinfo_newv(status_code, func, detail, ap);
+   va_end(ap);
+   for (int ndx = 0; ndx < causes->len; ndx++) {
+      errinfo_add_cause(result, g_ptr_array_index(causes,ndx));
+   }
+   return result;
+}
 
 
 #ifdef UNUSED
@@ -502,7 +529,7 @@ Error_Info * errinfo_new_with_callee_status_codes(
 // Reporting
 //
 
-/** Status code description function to be used if none is set
+/** Status code description function to be used if none was set
  *  by #errinfo_init()
  *
  *  \param  code  status code
@@ -524,12 +551,11 @@ default_status_code_desc(int rc) {
 }
 
 
-
-GString *
+static GString *
 errinfo_array_summary_gs(
       struct error_info **  errors,    ///<  pointer to array of pointers to Error_Info
-      int                   error_ct,
-      GString *             gs)     ///<  number of causal errors
+      int                   error_ct,  ///<  number of causal errors
+      GString *             gs)        ///<  append result here
 {
       bool first = true;
 
@@ -590,7 +616,7 @@ errinfo_array_summary(
 }
 
 
-/** Returns a comma separated string of the status code names in the
+/** Returns a comma separated string of the names of the status codes in the
  *  causes of the specified #Error_Info.
  *  Multiple consecutive identical names are replaced with a
  *  single name and a parenthesized instance count.
@@ -614,10 +640,6 @@ errinfo_causes_string(Error_Info * erec) {
 
    // DBGMSF(debug, "Done.  Returning: |%s|", result);
    return result;
-
-
-
-
 
 #ifdef OLD
    GString * gs = g_string_new(NULL);
@@ -720,6 +742,8 @@ errinfo_causes_string(Error_Info * erec) {
 #endif
 
 
+
+
 /** Emits a full report of the contents of the specified #Error_Info,
  *  using report functions.
  *
@@ -727,25 +751,25 @@ errinfo_causes_string(Error_Info * erec) {
  *  \param  depth  logical indentation depth
  */
 void
-errinfo_report(Error_Info * erec, int depth) {
+errinfo_report_collect(Error_Info * erec, GPtrArray* collector, int depth) {
    assert(erec);
    int d1 = depth+1;
 
    // rpt_vstring(depth, "(%s) Status code: %d", __func__, erec->status_code);
    // rpt_vstring(depth, "(%s) Location: %s", __func__, (erec->func) ? erec->func : "not set");
    // rpt_vstring(depth, "(%s) errinfo_name_func=%p, errinfo_desc_func=%p", __func__, errinfo_name_func, errinfo_desc_func);
-   rpt_push_output_dest(stderr);
-   rpt_vstring(depth, "Exception in function %s: status=%s",
+   // rpt_push_output_dest(stderr);
+   rpt_vstring_collect(depth, collector, "Exception in function %s: status=%s",
          (erec->func) ? erec->func : "not set",
          errinfo_desc_func(erec->status_code) );  // can't call psc_desc(), violates layering
    if (erec->detail)
-      rpt_label(depth+1, erec->detail);
-   rpt_pop_output_dest();
+      rpt_label_collect(depth+1, collector, erec->detail);
+   // rpt_pop_output_dest();
 
    if (erec->cause_ct > 0) {
-      rpt_vstring(depth, "Caused by: ");
+      rpt_vstring_collect(depth, collector, "Caused by: ");
       for (int ndx = 0; ndx < erec->cause_ct; ndx++) {
-         errinfo_report(erec->causes[ndx], d1);
+         errinfo_report_collect(erec->causes[ndx], collector, d1);
       }
    }
 
@@ -758,6 +782,50 @@ errinfo_report(Error_Info * erec, int depth) {
    }
 #endif
    // rpt_vstring(depth, "(%s) Done", __func__);
+
+}
+
+
+void
+errinfo_report(Error_Info * erec, int depth) {
+      errinfo_report_collect(erec, NULL, depth);
+}
+
+
+
+#ifdef NO
+void errinfo_free_with_report(
+      Error_Info *  erec,
+      bool          report,
+      const char *  func)
+{
+   (void) errinfo_free_with_report_collect(erec, report, func, false);
+}
+#endif
+
+
+
+void
+errinfo_report_details(Error_Info * erec, int depth) {
+   assert(erec);
+   int d0 = depth;
+   int d1 = depth+1;
+
+   // rpt_vstring(depth, "Exception in function %s: status=%s",
+   //       (erec->func) ? erec->func : "not set",
+   //       errinfo_desc_func(erec->status_code) );  // can't call psc_desc(), violates layering
+   if (erec->detail)
+      rpt_label(d0, erec->detail);
+   else
+      rpt_vstring(d0, "Error %d in function %s",erec->status_code, erec->func);
+
+   // printf("%s) cause_ct = %d\n", __func__, erec->cause_ct);
+   if (erec->cause_ct > 0) {
+      // rpt_vstring(depth, "Caused by: ");
+      for (int ndx = 0; ndx < erec->cause_ct; ndx++) {
+         errinfo_report_details(erec->causes[ndx], d1);
+      }
+   }
 }
 
 
@@ -772,7 +840,7 @@ char *
 errinfo_summary(Error_Info * erec) {
    if (!erec)
       return "NULL";
-   VALID_DDC_ERROR_PTR(erec);
+   VALID_ERROR_INFO_PTR(erec);
 
    static GPrivate  esumm_key     = G_PRIVATE_INIT(g_free);
    static GPrivate  esumm_len_key = G_PRIVATE_INIT(g_free);
@@ -796,7 +864,7 @@ errinfo_summary(Error_Info * erec) {
    int required_size = strlen(buf1) + 1;
 
    char * buf = get_thread_dynamic_buffer(&esumm_key, &esumm_len_key, required_size);
-   g_strlcpy(buf, buf1, required_size);
+   strcpy(buf, buf1);
    free(buf1);
    return buf;
 }

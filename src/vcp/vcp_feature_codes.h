@@ -3,13 +3,14 @@
  *  Tables describing VCP feature codes and functions to interpret those tables
  */
 
-// Copyright (C) 2014-2018 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2022 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef VCP_FEATURE_CODES_H_
 #define VCP_FEATURE_CODES_H_
 
 /** \cond */
+#include <glib-2.0/glib.h>
 #include <stdio.h>
 
 #include "util/data_structures.h"
@@ -21,11 +22,10 @@
 #include "base/core.h"
 #include "base/displays.h"
 #include "base/ddc_packets.h"
-#include "base/feature_sets.h"
 #include "base/feature_metadata.h"
+#include "base/feature_set_ref.h"
 
 #include "vcp/vcp_feature_values.h"
-
 
 bool default_table_feature_detail_function(
         Buffer *                data,
@@ -146,7 +146,7 @@ struct {
    Format_Table_Feature_Detail_Function  table_formatter;
    // Format_Normal_Feature_Detail_Function2 dynamic_nc_formatter;   // only set for synthetic, udf features
    DDCA_Global_Feature_Flags             vcp_global_flags;
-   ushort                                vcp_spec_groups;
+   gushort                                vcp_spec_groups;
    VCP_Feature_Subset                    vcp_subsets;
    char *                                v20_name;
    char *                                v21_name;
@@ -249,7 +249,6 @@ get_version_sensitive_feature_flags(
       VCP_Feature_Table_Entry *  vfte,
       DDCA_MCCS_Version_Spec     vcp_version);
 
-
 DDCA_Feature_Value_Entry *
 get_version_specific_sl_values(
       VCP_Feature_Table_Entry * vfte,
@@ -259,6 +258,10 @@ DDCA_Feature_Value_Entry *
 get_version_sensitive_sl_values(
       VCP_Feature_Table_Entry * vfte,
       DDCA_MCCS_Version_Spec    vcp_version);
+
+DDCA_Feature_Value_Entry *
+get_highest_version_sl_values(
+       VCP_Feature_Table_Entry* vfte);
 
 char *
 get_version_sensitive_feature_name(
@@ -293,12 +296,14 @@ get_feature_name_by_id_and_vcp_version(
       DDCA_Vcp_Feature_Code      feature_code,
       DDCA_MCCS_Version_Spec     vspec);
 
+#ifdef MCCS_VERSION_ID
 Display_Feature_Metadata *
 get_version_feature_info_by_version_id_dfm(
       DDCA_Vcp_Feature_Code   feature_code,
       DDCA_MCCS_Version_Id    mccs_version_id,
       bool                    with_default,
       bool                    version_sensitive);
+#endif
 
 Display_Feature_Metadata *
 get_version_feature_info_by_vspec_dfm(

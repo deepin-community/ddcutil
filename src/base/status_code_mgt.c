@@ -2,26 +2,25 @@
  *
  *  Status Code Management
  */
-// Copyright (C) 2014-2017 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 /** \cond */
 #include <assert.h>
-#include <base/adl_errors.h>
-#include <glib.h>
+#include <glib-2.0/glib.h>
 #include <stdio.h>
 #include <stdlib.h>
 /** \endcond */
 
+#include "util/debug_util.h"
 #include "util/string_util.h"
+
 #include "base/ddc_errno.h"
 #include "base/linux_errno.h"
 
 #include "base/status_code_mgt.h"
 
-
 /*
-
 Notes on status code management.
 
 Status codes in the ddcutil have multiple sources:
@@ -51,7 +50,6 @@ Solution.
 Mulitplexing.
 
  */
-
 
 
 // Describes a status code range
@@ -88,10 +86,12 @@ Retcode_Range_Table_Entry retcode_range_table[] = {
        .max                = RCRANGE_ADL_MAX,
     // .desc_finder        = NULL,                    // will be filled in by call to ...
     // .finder_arg_is_modulated = false,              //    ... register_retcode_desc_finder()
+#ifdef ADL
        .desc_finder = get_adl_status_description,
        .finder_arg_is_modulated = false,                     // finder_arg_is_modulated
        .number_finder      = adl_error_name_to_modulated_number,   // mock implementation if not HAVE_ADL
        .base_number_finder = adl_error_name_to_number              // mock implementation if not HAVE_ADL
+#endif
       },
       {.id                 = RR_DDC,
        .base               = RCRANGE_DDC_START,
@@ -175,8 +175,6 @@ int modulate_rc(int rc, Retcode_Range_Id range_id){
 }
 
 
-
-
 /** Shifts a status code from the specified modulation range to the base range
  *
  *  @param  rc        status code to demodulate
@@ -186,7 +184,7 @@ int modulate_rc(int rc, Retcode_Range_Id range_id){
  *
  * @remark
  * It is an error to pass an unmodulated status code as an
- * argument to this funtion.
+ * argument to this function.
  */
 int demodulate_rc(int rc, Retcode_Range_Id range_id) {
    // TODO: check that rc is in the specified modulation range
@@ -202,6 +200,7 @@ int demodulate_rc(int rc, Retcode_Range_Id range_id) {
    return rc;
 }
 
+
 /** Determines the modulation range for a status code.
  *
  * @param  rc     status code to check
@@ -211,7 +210,7 @@ int demodulate_rc(int rc, Retcode_Range_Id range_id) {
 Retcode_Range_Id get_modulation(Public_Status_Code rc) {
    int ndx = 0;
    int abs_rc = abs(rc);
-   Retcode_Range_Id range_id;
+   Retcode_Range_Id range_id = RR_ERRNO;  // assignment to avoid compiler warning
    for (;ndx < retcode_range_ct; ndx++) {
       if (abs_rc >= retcode_range_table[ndx].base && abs_rc <= retcode_range_table[ndx].max) {
          range_id = retcode_range_table[ndx].id;
@@ -236,13 +235,12 @@ static Status_Code_Info ok_status_code_info = {0, "OK", "success"};
  *  describing it.
  *
  * @param   status_code global (modulated) status code
- * @return  pointer to #Status_Code_Info for staus code, NULL if not found
+ * @return  pointer to #Status_Code_Info for status code, NULL if not found
  */
 Status_Code_Info * find_status_code_info(Public_Status_Code status_code) {
    bool debug = false && status_code;
    // use printf() instead of DBGMSG to avoid circular includes
-   if (debug)
-      printf("(%s) Starting.  rc = %d\n", __func__, status_code);
+   DBGF(debug, "Starting.  rc = %d", status_code);
 
    Status_Code_Info * pinfo = NULL;
 
@@ -250,8 +248,7 @@ Status_Code_Info * find_status_code_info(Public_Status_Code status_code) {
       pinfo = &ok_status_code_info;
    else {
       Retcode_Range_Id modulation = get_modulation(status_code);
-      if (debug)
-         printf("(%s) modulation=%d\n", __func__, modulation);
+      DBGF(debug,"modulation=%d", modulation);
 
       Retcode_Description_Finder finder_func = retcode_range_table[modulation].desc_finder;
       assert(finder_func != NULL);
@@ -262,7 +259,7 @@ Status_Code_Info * find_status_code_info(Public_Status_Code status_code) {
       pinfo = finder_func(rawrc);
    }
    if (debug) {
-      printf("(%s) Done.  Returning %p", __func__, pinfo);
+      printf("(%s) Done.  Returning %p\n", __func__, (void*)pinfo);
       if (pinfo)
          report_status_code_info(pinfo);
    }
@@ -271,10 +268,9 @@ Status_Code_Info * find_status_code_info(Public_Status_Code status_code) {
 }
 
 
-
 #define GSC_WORKBUF_SIZE 300
 
-/** Returns a description string for a #Public_Status_Code.
+/** Returns only the description string for a #Public_Status_Code.
  *  Synthesizes a description if information for the status code cannot be found.
  *
  *  @param  psc  status code number
@@ -284,12 +280,26 @@ Status_Code_Info * find_status_code_info(Public_Status_Code status_code) {
  *  The value returned is valid until the next call of this function in the
  *  same thread. Caller should not free.
  */
+char * psc_text(Public_Status_Code psc) {
+   static GPrivate  psc_desc_key = G_PRIVATE_INIT(g_free);
+   char * workbuf = get_thread_fixed_buffer(&psc_desc_key, GSC_WORKBUF_SIZE);
+   Status_Code_Info * pinfo = find_status_code_info(psc);
+   if (pinfo) {
+      if (pinfo->description)
+         snprintf(workbuf, GSC_WORKBUF_SIZE, "%s", pinfo->description);
+      else
+         snprintf(workbuf, GSC_WORKBUF_SIZE, "%s", pinfo->name);
+   }
+   else {
+      snprintf(workbuf, GSC_WORKBUF_SIZE, "%d", psc);
+   }
+   return workbuf;
+}
+
 char * psc_desc(Public_Status_Code psc) {
    static GPrivate  psc_desc_key = G_PRIVATE_INIT(g_free);
    char * workbuf = get_thread_fixed_buffer(&psc_desc_key, GSC_WORKBUF_SIZE);
-   // printf("(%s) workbuf=%p\n", __func__, workbuf);
-   // static char workbuf[GSC_WORKBUF_SIZE];
-   // printf("(%s) status_code=%d\n", __func__, status_code);
+
    Status_Code_Info * pinfo = find_status_code_info(psc);
    if (pinfo) {
       snprintf(workbuf, GSC_WORKBUF_SIZE, "%s(%d): %s",
@@ -298,6 +308,32 @@ char * psc_desc(Public_Status_Code psc) {
    else {
       snprintf(workbuf, GSC_WORKBUF_SIZE, "%d",
                psc );
+   }
+   return workbuf;
+}
+
+
+/** Returns a string containing the symbolic name of a #Public_Status_Code,
+ *  followed by its numeric value.
+ *
+ *  If the code is not recognized, the string contains only the numeric value.
+ *
+ *  @param  psc  status code number
+ *  @return string description of status code
+ *
+ *  @remark
+ *  The value returned is valid until the next call of this function in the
+ *  same thread. Caller should not free.
+ */
+char * psc_name_code(Public_Status_Code psc) {
+   static GPrivate  psc_desc_key = G_PRIVATE_INIT(g_free);
+   char * workbuf = get_thread_fixed_buffer(&psc_desc_key, GSC_WORKBUF_SIZE);
+   Status_Code_Info * pinfo = find_status_code_info(psc);
+   if (pinfo) {
+      snprintf(workbuf, GSC_WORKBUF_SIZE, "%s(%d)", pinfo->name, psc);
+   }
+   else {
+      snprintf(workbuf, GSC_WORKBUF_SIZE, "%d", psc);
    }
    return workbuf;
 }
@@ -330,11 +366,12 @@ bool status_name_to_unmodulated_number(
         const char * status_code_name,
         int *        p_error_number)
 {
+   bool debug = false;
+   DBGF(debug,"status_code_name |%s|", status_code_name);
    int  status_code = 0;
    bool found = false;
 
-   for (int ndx = 1; ndx < retcode_range_ct; ndx++) {
-      // printf("ndx=%d, id=%d, base=%d\n", ndx, retcode_range_table[ndx].id, retcode_range_table[ndx].base);
+   for (int ndx = 0; ndx < retcode_range_ct; ndx++) {
       if (retcode_range_table[ndx].base_number_finder) {
          found = retcode_range_table[ndx].base_number_finder(status_code_name, &status_code);
          if (found)
@@ -343,6 +380,8 @@ bool status_name_to_unmodulated_number(
    }
 
    *p_error_number = status_code;
+   if (debug)
+      printf("(%s) Returning %s, *p_error_number = %d\n", __func__, sbool(found), *p_error_number);
    return found;
 }
 
@@ -362,8 +401,7 @@ status_name_to_modulated_number(
    Public_Status_Code psc = 0;
    bool found = false;
 
-   for (int ndx = 1; ndx < retcode_range_ct; ndx++) {
-      // printf("ndx=%d, id=%d, base=%d\n", ndx, retcode_range_table[ndx].id, retcode_range_table[ndx].base);
+   for (int ndx = 0; ndx < retcode_range_ct; ndx++) {
       if (retcode_range_table[ndx].number_finder) {
          found = retcode_range_table[ndx].number_finder(status_code_name, &psc);
          if (found)
@@ -384,10 +422,8 @@ status_name_to_modulated_number(
  */
 void init_status_code_mgt() {
    // N.B called before command line parsed, so command line trace control not in effect
-   // printf("(%s) Starting\n", __func__);
    validate_retcode_range_table();                         // uses asserts to check consistency
    // error_counts_hash = g_hash_table_new(NULL,NULL);
-
    // initialize_ddcrc_desc();
 }
 
@@ -398,7 +434,7 @@ void init_status_code_mgt() {
  * @param pdesc  pointer to #Status_Code_Info struct
  */
 void report_status_code_info(Status_Code_Info * pdesc) {
-   printf("Status_Code_Info struct at %p\n", pdesc);
+   printf("Status_Code_Info struct at %p\n", (void*)pdesc);
    if (pdesc) {
       printf("code:                 %d\n",     pdesc->code);
       printf("name:                 %p: %s\n", pdesc->name, pdesc->name);

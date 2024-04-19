@@ -1,24 +1,24 @@
 /** @file string_util.c
+ *
  *  String utility functions
  */
 
-// Copyright (C) 2014-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 
 /** \cond */
-// for strcasestr()
-// #define _GNU_SOURCE
+#define _GNU_SOURCE
 
 #include <assert.h>
 #include <ctype.h>
-#include <glib-2.0/glib.h>
 #include <errno.h>
-#include <stdio.h>
+#include <glib-2.0/glib.h>
+#include <stdarg.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdarg.h>
 /** \endcond */
 
 #include "glib_util.h"
@@ -77,7 +77,7 @@ bool streq(const char * s1, const char * s2) {
 bool is_abbrev(const char * value, const char * longname, size_t  minchars) {
    bool result = false;
    if (value && longname) {
-      int vlen = strlen(value);
+      size_t vlen = strlen(value);
       if ( vlen >= minchars &&
            vlen <= strlen(longname) &&
            memcmp(value, longname, vlen) == 0   // n. returns 0 if vlen == 0
@@ -131,6 +131,12 @@ bool str_ends_with(const char * value_to_test, const char * suffix) {
    return result;
 }
 
+
+/** Tests if a string contains a substring.
+ *  @param value to test   string to examine
+ *  @param segment         substring to look for
+ *  @return starting position of substring, -1 if not found
+ */
 int str_contains(const char * value_to_test, const char * segment) {
    int result = -1;
    if (value_to_test && segment) {
@@ -155,7 +161,7 @@ int str_contains(const char * value_to_test, const char * segment) {
 bool str_all_printable(const char * s) {
    bool result = true;
    if (s) {
-      for (int ndx = 0; ndx < strlen(s); ndx++) {
+      for (size_t ndx = 0; ndx < strlen(s); ndx++) {
          if (!isprint(s[ndx])) {
             result = false;
             break;
@@ -256,6 +262,20 @@ char * strtrim_r(const char * s, char * buffer, int bufsz) {
 }
 
 
+/** Returns a pointer to the first non-whitespace character in a string.
+ *
+ *  @param string to trim
+ *  @return pointer to first non-whitespace character,
+ *          to the ending \0 if all characters are whitespace
+ */
+char * ltrim_in_place(char * s) {
+   char * p = s;
+   while (*p && isspace(*p))
+      p++;
+   return p;
+}
+
+
 /** Trims trailing whitespace from a string.
  *
  * @param s string to trim
@@ -271,6 +291,23 @@ char * rtrim_in_place(char * s) {
       s[len] = '\0';
    }
    return s;
+}
+
+
+/** Trims leading and trailing whitespace from a string.
+ *  Trailing whitespace characters are replaced by \0.
+ *
+ * @param s string to trim
+ * @return pointer to first non-whitespcace character
+ */
+char * trim_in_place(char * s) {
+   char * p = s;
+   while (*p && isspace(*p))
+      p++;
+   int len = strlen(p);
+   while (len > 0 && isspace(p[len-1]))
+      s[--len] = '\0';
+   return p;
 }
 
 
@@ -298,9 +335,7 @@ char * strtrim(const char * s) {
  *                  the string length, ct is reduced accordingly
  * @return extracted substring, in newly allocated memory
  */
-char * substr(const char * s, int startpos, int ct) {
-   assert(startpos >= 0);
-   assert(ct>=0);
+char * substr(const char * s, size_t startpos, size_t ct) {
    if (startpos + ct > strlen(s))
       ct = strlen(s) - startpos;
    char * result = calloc(ct+1, sizeof(char));
@@ -309,6 +344,7 @@ char * substr(const char * s, int startpos, int ct) {
    return result;
 }
 
+
 /** Returns the initial portion of a string
  *
  * @param s         string to process
@@ -316,7 +352,7 @@ char * substr(const char * s, int startpos, int ct) {
  *                  the string length, ct is reduced accordingly
  * @return extracted substring, in newly allocated memory
  */
-char * lsub(const char * s, int ct) {
+char * lsub(const char * s, size_t ct) {
    return substr(s, 0, ct);
 }
 
@@ -331,6 +367,10 @@ char * lsub(const char * s, int ct) {
  *
  * The returned string has been malloc'd.  It is the responsibility of
  * the caller to free it.
+ *
+ * @remark
+ * If ct < 0, i.e. pieces is null terminated, at most the first 9999 strings in
+ * the pieces array are joined.
  */
 char * strjoin( const char ** pieces, const int ct0, const char * sepstr) {
    // printf("(%s) ct0=%d, sepstr=|%s|\n", __func__, ct0, sepstr);
@@ -349,6 +389,7 @@ char * strjoin( const char ** pieces, const int ct0, const char * sepstr) {
 
    // printf("(%s) ct=%d, total_length=%d\n", __func__, ct, total_length);
    char * result = malloc(total_length);
+   result[0] = '\0';
    char * end = result;
    for (ndx=0; ndx<ct; ndx++) {
       if (ndx > 0 && seplen > 0) {
@@ -362,6 +403,23 @@ char * strjoin( const char ** pieces, const int ct0, const char * sepstr) {
    assert(end == result + total_length -1);
    return result;
 }
+
+
+// TO DO: generalize
+char * int_array_to_string(uint16_t * start, int ct) {
+   int bufsz = ct*10;
+   char * buf = calloc(1, bufsz);
+   int next = 0;
+   for (int ctr =0; ctr < ct && next < bufsz; ctr++) {
+      g_snprintf(buf+next, bufsz-next,"%s%d", (next > 0) ? ", " : "", *(start+ctr) );
+      next = strlen(buf);
+   }
+   // DBGMSG("start=%p, ct=%d, returning %s", start, ct, buf);
+   return buf;
+}
+
+
+
 
 #ifdef FUTURE
 // YAGNI: String_Array
@@ -394,23 +452,25 @@ String_Array* new_string_array(int size) {
  */
 Null_Terminated_String_Array strsplit(const char * str_to_split, const char * delims) {
    bool debug = false;
-   int max_pieces = (strlen(str_to_split)+1);
+   size_t max_pieces = (strlen(str_to_split)+1);
    if (debug)
-      printf("(%s) str_to_split=|%s|, delims=|%s|, max_pieces=%d\n", __func__, str_to_split, delims, max_pieces);
+      printf("(%s) str_to_split=|%s|, delims=|%s|, max_pieces=%zu\n",
+             __func__, str_to_split, delims, max_pieces);
 
    char** workstruct = calloc(sizeof(char *), max_pieces+1);
    int piecect = 0;
 
-   char * str_to_split_dup = strdup(str_to_split);
+   char * str_to_split_dup = g_strdup(str_to_split);
    char * rest = str_to_split_dup;
    char * token;
    // originally token assignment was in while() clause, but valgrind
    // complaining about uninitialized variable, trying to figure out why
-   token = strsep(&rest, delims);      // n. overwrites character found
+   token = strsep(&rest, delims);      // n. overwriteedid.cs character found
    while (token) {
-      // printf("(%s) token: |%s|\n", __func__, token);
+      if (debug)
+         printf("(%s) token: |%s|\n", __func__, token);
       if (strlen(token) > 0)
-         workstruct[piecect++] = strdup(token);
+         workstruct[piecect++] = g_strdup(token);
       token = strsep(&rest, delims);
    }
    if (debug)
@@ -461,14 +521,14 @@ strsplit_maxlength(
              __func__, max_piece_length, delims, str_to_split);
 
    GPtrArray * pieces = g_ptr_array_sized_new(20);
-   char * str_to_split2 = strdup(str_to_split);   // work around constness
+   char * str_to_split2 = g_strdup(str_to_split);   // work around constness
    char * start = str_to_split2;
    char * str_to_split2_end = str_to_split2 + strlen(str_to_split);
    if (debug)
-      printf("(%s)x start=%p, str_to_split2_end=%p\n", __func__, start, str_to_split2_end);
+      printf("(%s)x start=%p, str_to_split2_end=%p\n", __func__, (void*)start, (void*)str_to_split2_end);
    while (start < str_to_split2_end) {
       if (debug)
-         printf("(%s) start=%p, str_to_split2_end=%p\n", __func__, start, str_to_split2_end);
+         printf("(%s) start=%p, str_to_split2_end=%p\n", __func__, (void*)start, (void*)str_to_split2_end);
       char * end = start + max_piece_length;
       if (end > str_to_split2_end)
          end = str_to_split2_end;
@@ -509,15 +569,27 @@ strsplit_maxlength(
 /** Frees a null terminated array of strings.
  *
  *  @param string_array null terminated array of pointers to strings
- *  @param free_strings if try, each string in the array is freed as well
+ *  @param free_strings if set, each string in the array is freed as well
+ *
+ *  @remark
+ *  g_strfreev(string_array) equivalent to ntsa_free(string_array, true)
  */
 void ntsa_free(Null_Terminated_String_Array string_array, bool free_strings) {
+   bool debug = false;
+   if (debug)
+      printf("(%s) Freeing NTSA %p, free_strings=%s\n", __func__, (void*) string_array, sbool(free_strings) );
    if (string_array) {
       if (free_strings) {
-      int ndx = 0;
-      while (string_array[ndx] != NULL)
-         free(string_array[ndx++]);
+         int ndx = 0;
+         while (string_array[ndx] != NULL) {
+            if (debug)
+               printf("(%s) Freeing string %d, %p->%s\n",
+                      __func__, ndx, string_array[ndx], string_array[ndx]);
+            free(string_array[ndx++]);
+         }
       }
+      if (debug)
+         printf("(%s) Freeing string_array=%p\n", __func__, (void*) string_array);
       free(string_array);
    }
 }
@@ -525,8 +597,11 @@ void ntsa_free(Null_Terminated_String_Array string_array, bool free_strings) {
 
 /** Returns the number of strings in a null terminated array of strings.
  *
- * @param  string_array null terminated array of pointers to strings
- * @return number of strings in the array
+ *  @param  string_array null terminated array of pointers to strings
+ *  @return number of strings in the array
+ *
+ *  @remark
+ *  Equivalent to g_strv_length()
  */
 int ntsa_length(Null_Terminated_String_Array string_array) {
    assert(string_array);
@@ -564,7 +639,7 @@ Null_Terminated_String_Array ntsa_join(
    char ** from = a1;
    while (*from) {
       if (dup)
-         *to = strdup(*from);
+         *to = g_strdup(*from);
       else
          *to = *from;
       to++;
@@ -573,7 +648,7 @@ Null_Terminated_String_Array ntsa_join(
    from = a2;
    while (*from) {
       if (dup)
-         *to = strdup(*from);
+         *to = g_strdup(*from);
       else
          *to = *from;
       to++;
@@ -581,6 +656,65 @@ Null_Terminated_String_Array ntsa_join(
    }
    return result;
 }
+
+
+
+/** Creates copy of a #Null_Terminated_String_Array.
+ *
+ *  The pointers in the new array point to newly allocated copies of the
+ *  original array.
+ *
+ *  @param a1  instance to copy
+ *  @param dup if true, copy the strings as well as pointer array
+ *  @return newly allocated #Null_Terminated_String_Array
+ */
+Null_Terminated_String_Array ntsa_copy(Null_Terminated_String_Array a1, bool dup)
+{
+   assert(a1);
+   int ct = ntsa_length(a1);
+   Null_Terminated_String_Array result = calloc((ct+1), sizeof(char *));
+   char ** to = result;
+   char ** from = a1;
+   while (*from) {
+      if (dup)
+         *to = g_strdup(*from);
+      else
+         *to = *from;
+      to++;
+      from++;
+   }
+   return result;
+}
+
+
+Null_Terminated_String_Array  ntsa_prepend(
+      char *                       value,
+      Null_Terminated_String_Array old_array,
+      bool                         dup)
+{
+   int old_ct = ntsa_length(old_array);
+   int new_ct = old_ct + 1;
+   Null_Terminated_String_Array new_array = calloc((new_ct+1), sizeof(char *));
+   char ** to = new_array;
+   *to++ = (dup) ? g_strdup(value) : value;
+   char ** from = old_array;
+   while (*from) {
+      *to++ = (dup) ? g_strdup(*from) : *from;
+      from++;
+   }
+   *to = NULL;
+
+   // ntsa_show(argv);
+   return new_array;
+}
+
+
+Null_Terminated_String_Array ntsa_create_empty_array() {
+   Null_Terminated_String_Array new_array = calloc(1, sizeof(char *));
+   *new_array = NULL;
+   return new_array;
+}
+
 
 
 /** Searches a #Null_Terminated_String_Array for an entry that matches a given
@@ -593,7 +727,7 @@ Null_Terminated_String_Array ntsa_join(
  */
 int ntsa_findx(
       Null_Terminated_String_Array string_array,
-      char *                       value,
+      const char *                 value,
       String_Comp_Func             func)
 {
    assert(string_array);
@@ -610,7 +744,6 @@ int ntsa_findx(
    }
    // printf("(%s) Returning: %d\n", __func__, result);
    return result;
-
 }
 
 
@@ -621,7 +754,7 @@ int ntsa_findx(
  *  @param  value         value to look for
  *  @return index of first matching entry, -1 if not found
  */
-int  ntsa_find(  Null_Terminated_String_Array string_array, char * value) {
+int  ntsa_find(  Null_Terminated_String_Array string_array, const char * value) {
    return ntsa_findx(string_array, value, streq);
 }
 
@@ -635,7 +768,7 @@ int  ntsa_find(  Null_Terminated_String_Array string_array, char * value) {
  */
 void ntsa_show(Null_Terminated_String_Array string_array) {
    assert(string_array);
-   printf("Null_Terminated_String_Array at %p:\n", string_array);
+   printf("Null_Terminated_String_Array at %p:\n", (void*) string_array);
    int ndx = 0;
    while (string_array[ndx]) {
       printf("  %p: |%s|\n", string_array[ndx], string_array[ndx]);
@@ -676,9 +809,9 @@ g_ptr_array_to_ntsa(
 {
    assert(gparray);
    Null_Terminated_String_Array ntsa = calloc(gparray->len+1, sizeof(char *));
-   for (int ndx=0; ndx < gparray->len; ndx++) {
+   for (guint ndx=0; ndx < gparray->len; ndx++) {
       if (duplicate)
-         ntsa[ndx] = strdup(g_ptr_array_index(gparray,ndx));
+         ntsa[ndx] = g_strdup(g_ptr_array_index(gparray,ndx));
       else
          ntsa[ndx] = g_ptr_array_index(gparray,ndx);
    }
@@ -689,9 +822,8 @@ g_ptr_array_to_ntsa(
 /** Converts an ASCII string to upper case.  The original string is converted in place.
  *
  * @param  s string to force to upper case
- * @return converted string
  */
-char * strupper(char * s) {
+void strupper(char * s) {
    if (s) {     // check s not a null pointer
       char * p = s;
       while(*p) {
@@ -699,7 +831,21 @@ char * strupper(char * s) {
          p++;
       }
    }
-   return s;
+}
+
+
+/** Converts an ASCII string to lower case.  The original string is converted in place.
+ *
+ * @param  s string to force to lower case
+ */
+void strlower(char * s) {
+   if (s) {     // check s not a null pointer
+      char * p = s;
+      while(*p) {
+         *p = tolower(*p);
+         p++;
+      }
+   }
 }
 
 
@@ -711,7 +857,7 @@ char * strupper(char * s) {
 char * strdup_uc(const char* s) {
    if (!s)
       return NULL;
-   char * us = strdup( s );
+   char * us = g_strdup( s );
    char * p = us;
    while (*p) {*p=toupper(*p); p++; }
    return us;
@@ -777,6 +923,24 @@ char * chars_to_string(const char * start, int len)
 }
 
 
+/** qsort() style string comparison function
+ *
+ *  @param a pointer to a pointer to a string
+ *  @param b pointer to a pointer to a string
+ *  @return -1 if the first string sorts before the second
+ *           0 if the strings are identical
+ *           1 if the first string sorts after the second
+ *
+ *  @remark
+ *  Satisfies GCompareFunc
+ */
+int indirect_strcmp(const void * a, const void * b) {
+   char * alpha = *(char **) a;
+   char * beta  = *(char **) b;
+   return strcmp(alpha, beta);
+}
+
+
 /** Appends a value to a string in a buffer.
  *
  * @param buf     pointer to character buffer
@@ -795,9 +959,9 @@ bool sbuf_append(char * buf, int bufsz, char * sepstr, char * nextval)
 {
    assert(buf && (bufsz > 4) );   //avoid handling pathological case
    bool truncated = false;
-   int seplen = (sepstr) ? strlen(sepstr) : 0;
-   int maxchars = bufsz-1;
-   int newlen = ( strlen(buf) == 0 )
+   size_t seplen = (sepstr) ? strlen(sepstr) : 0;
+   size_t maxchars = bufsz-1;
+   size_t newlen = ( strlen(buf) == 0 )
                      ? strlen(nextval)
                      : ( strlen(buf) + seplen + strlen(nextval));
    if (newlen <= maxchars) {
@@ -820,10 +984,10 @@ bool sbuf_append(char * buf, int bufsz, char * sepstr, char * nextval)
 // Numeric conversion
 //
 
-/** Converts a decimal or hexadecimal string to an integer value.
+/** Converts a decimal or hexadecimal string to a long integer value.
  *
  * @param sval   string representing an integer
- * @param p_ival address at which to store integer value
+ * @param p_ival address at which to store long integer value
  * @param base   10, 16, or 0 (see below)
  * @return true if conversion succeeded, false if it failed
  *
@@ -839,7 +1003,7 @@ bool sbuf_append(char * buf, int bufsz, char * sepstr, char * nextval)
  * @remark
  * This function wraps system function strtol(), hiding the ugly details.
  */
-bool str_to_int(const char * sval, int * p_ival, int base)
+bool str_to_long(const char * sval, long * p_ival, int base)
 {
    assert (base == 0 || base == 10 || base == 16);
    bool debug = false;
@@ -848,25 +1012,69 @@ bool str_to_int(const char * sval, int * p_ival, int base)
 
    char * endptr;
    bool ok = false;
-   if ( *sval != '\0') {
-      long result = strtol(sval, &endptr, base); // allow hex
-      // printf("(%s) sval=%p, endptr=%p, *endptr=|%c| (0x%02x), result=%ld\n",
-      //        __func__, sval, endptr, *endptr, *endptr, result);
-      if (*endptr == '\0') {
-         *p_ival = result;
-         ok = true;
+   if (sval) {
+      if ( *sval != '\0') {
+         char * work = NULL;
+         bool has_digits = false;
+         if (sval[0] == 'x' || sval[0] == 'X') {
+            work = g_strdup_printf("0%s", sval);
+            has_digits = strlen(work) > 2;
+         }
+         else {
+            work = strdup(sval);
+            has_digits = strlen(work) > 0;
+         }
+
+         if (debug)
+            printf("(%s) work = %s\n", __func__, work);
+
+         if (has_digits) {
+            long result = strtol(work, &endptr, base); // allow hex
+            // printf("(%s) sval=%p, endptr=%p, *endptr=|%c| (0x%02x), result=%ld\n",
+            //        __func__, sval, endptr, *endptr, *endptr, result);
+            if (*endptr == '\0') {
+               *p_ival = result;
+               ok = true;
+            }
+         }
+         free(work);
       }
    }
 
    if (debug) {
       if (ok)
-        printf("(%s) sval=%s, Returning: %s, *ival = %d\n", __func__, sval, sbool(ok), *p_ival);
+        printf("(%s) sval=%s, Returning: %s, *ival = %ld\n", __func__, sval, sbool(ok), *p_ival);
       else
         printf("(%s) sval=%s, Returning: %s\n", __func__, sval, sbool(ok));
    }
    return ok;
 }
 
+
+/** Converts a decimal or hexadecimal string to an integer value.
+ *
+ * @param sval   string representing an integer
+ * @param p_ival address at which to store integer value
+ * @param base   10, 16, or 0 (see below)
+ * @return true if conversion succeeded, false if it failed
+ *
+ * @remark
+ * This function is implemented using #str_to_long().  See the documentation
+ * of that function for details.
+ * This function returns false if the value returned by #str_to_long() does
+ * fit in an int.
+ */
+bool str_to_int(const char * sval, int * p_ival, int base)
+{
+   long lval;
+   bool result = str_to_long(sval, &lval, base);
+   if (result) {
+      *p_ival = lval;
+      if (*p_ival!= lval)     // ensure that lval fits in an int
+         result = false;
+   }
+   return result;
+}
 
 /** Converts a string to a float value.
  *
@@ -945,7 +1153,7 @@ bool hhs_to_byte_in_buf(const char * s, Byte * result)
       *result = (Byte) longtemp;
    }
 
-   // printf("(%s) Returning ok=%d\n", __func__, ok);
+   // printf("(%s) Returning ok=%s, *result=0x%02x\n", __func__, sbool(ok), *result);
    return ok;
 }
 
@@ -954,6 +1162,9 @@ bool hhs_to_byte_in_buf(const char * s, Byte * result)
  *  This is a more lenient version of hhs_to_byte_in_buf(), allowing
  *  the value to begin with "0x" or "x", or end with "h".  The allowed
  *  prefix or suffix is case-insensitive.
+ *
+ *  Note that if the string need not be prefixed with "0X" or suffixed with "h"
+ *  to be regarded as a hex value.
  *
  *  @param  s         pointer to hex string
  *  @param  result    pointer to byte in which result will be returned
@@ -982,7 +1193,7 @@ bool any_one_byte_hex_string_to_byte_in_buf(const char * s, Byte * result)
  *  The characters need not be null terminated.
  *
  *  @param  p_hh      pointer to hex characters.
- *  @param  converted pointer go byte in which converted value will be returned
+ *  @param  converted pointer to byte in which converted value will be returned
  *  @retval **true**  successful conversion
  *  @retval **false** **s** does not point to hex characters
  */
@@ -1001,15 +1212,18 @@ bool hhc_to_byte_in_buf(const char * p_hh, Byte * converted)
 /** Converts a string of hex characters (null terminated) to an array of bytes.
  *
  *  @param   hhs     string of hex characters
- *  @param   pBa     address at which to return pointer to byte array
+ *  @param   ba_loc  address at which to return pointer to byte array
  *  @retval  >= 0 number of bytes in array,
  *  @retval  -1   string could not be converted
  *
- * If successful, the byte array whose address is returned in pBa has
+ * If successful, the byte array whose address is returned in ba_loc has
  * been malloc'd.  It is the responsibility of the caller to free it.
  */
-int hhs_to_byte_array(const char * hhs, Byte** pBa)
+int hhs_to_byte_array(const char * hhs, Byte** ba_loc)
 {
+   bool debug = false;
+   if (debug)
+      printf("(%s) strlen(hhs) = %ld, ba_loc=%p\n", __func__, strlen(hhs), ba_loc);
    if ( strlen(hhs) % 2)     // if odd number of characters
       return -1;
    char xlate[] = "0123456789ABCDEF";
@@ -1037,9 +1251,66 @@ int hhs_to_byte_array(const char * hhs, Byte** pBa)
       bytect = -1;
    }
    else {
-      *pBa = ba;
+      *ba_loc = ba;
+   }
+   if (debug) {
+      printf("(%s) Returning: %d.  *ba_loc = %p\n", __func__, bytect, *ba_loc);
+      if (bytect > 0) {
+         printf("   0x");
+         for (int ndx = 0; ndx< bytect; ndx++) {
+            printf("%02x", ba[ndx]);
+         }
+         printf("\n");
+      }
    }
    return bytect;
+}
+
+
+bool hhs4_to_uint16(char * hhs4, uint16_t* result_loc) {
+   // printf("(%s) Starting. hhs4 = |%s|\n", __func__, hhs4);
+   bool ok = false;
+   *result_loc = 0;
+   if (strlen(hhs4) == 4) {
+      uint8_t hi_byte;
+      uint8_t lo_byte;
+      if (hhc_to_byte_in_buf(&hhs4[0], &hi_byte) && hhc_to_byte_in_buf(&hhs4[2], &lo_byte) )
+         *result_loc = hi_byte << 8 | lo_byte;
+      ok = true;
+   }
+   // printf("(%s) Returning %s, *result_loc = 0x%04x\n", __func__, sbool(ok), *result_loc);
+   return ok;
+}
+
+
+
+/** Converts a single byte to a 2 byte hex string.
+ *
+ *  @param ch        byte to convert
+ *  @param out       buffer to write to, must be at least 3 bytes
+ *  @param uppercase if true, use uppercase letters
+ */
+static void byte_to_hs(const unsigned char ch, char * out, bool uppercase) {
+   bool debug = false;
+   if (debug)
+      printf("(%s) out=%p\n", __func__, out);
+   assert(out);
+   unsigned int hi = ch >> 4;
+   unsigned int lo = ch & 0x0f;
+   assert (hi < 16);
+   assert (lo < 16);
+   char uptable[] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A','B','C','D', 'E', 'F'};
+   char lotable[] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a','b','c','d', 'e', 'f'};
+
+   if (uppercase) {
+      out[0] = uptable[hi];
+      out[1] = uptable[lo];
+   }
+   else {
+      out[0] = lotable[hi];
+      out[1] = lotable[lo];
+   }
+   out[2] = '\0';
 }
 
 
@@ -1092,7 +1363,7 @@ char * hexstring2(
           const char *          sepstr,
           bool                  uppercase,
           char *                buffer,
-          int                   bufsz)
+          size_t                bufsz)
 {
    // if (len > 1)
    // printf("(%s) bytes=%p, len=%d, sepstr=|%s|, uppercase=%s, buffer=%p, bufsz=%d\n", __func__,
@@ -1101,7 +1372,7 @@ char * hexstring2(
    if (sepstr) {
       sepsize = strlen(sepstr);
    }
-   int required_size =   2*len             // hex rep of bytes
+   size_t required_size =   2*len             // hex rep of bytes
                        + (len-1)*sepsize   // for separators
                        + 1;                // terminating null
    // if (len > 1)
@@ -1155,8 +1426,8 @@ char * hexstring2(
  * Note that if the returned pointer is referenced after another call to
  * this function, the results are unpredictable.
  *
- * This function is intended to simplify formatting of diagnostic messages, since
- * the caller needn't be concerned with buffer size and allocation.
+ * This function is intended to simplify formatting of diagnostic messages.
+ * The caller needn't be concerned with buffer size and allocation.
  */
 char * hexstring3_t(
           const unsigned char * bytes,      // bytes to convert
@@ -1165,11 +1436,13 @@ char * hexstring3_t(
           uint8_t               hunk_size,  // separator string frequency
           bool                  uppercase)  // use upper case hex characters
 {
+   bool debug = false;
    static GPrivate  hexstring3_key = G_PRIVATE_INIT(g_free);
    static GPrivate  hexstring3_len_key = G_PRIVATE_INIT(g_free);
 
-   // printf("(%s) bytes=%p, len=%d, sepstr=|%s|, uppercase=%s\n", __func__,
-   //       bytes, len, sepstr, sbool(uppercase));
+   if (debug)
+      printf("(%s) bytes=%p, len=%d, sepstr=|%s|, uppercase=%s\n", __func__,
+             bytes, len, sepstr, sbool(uppercase));
    if (hunk_size == 0)
       sepstr = NULL;
    else if (sepstr == NULL)
@@ -1179,35 +1452,45 @@ char * hexstring3_t(
    if (sepstr) {
       sepsize = strlen(sepstr);
    }
-   int required_size = 1;    // special case if len == 0
+   size_t required_size = 1;    // special case if len == 0
    // excessive if hunk_size > 1, but not worth the effort to be accurate
    if (len > 0)
       required_size =   2*len             // hex rep of bytes
                        + (len-1)*sepsize   // for separators
                        + 1;                // terminating null
-   // printf("(%s) sepstr=|%s|, hunk_size=%d, required_size=%d\n", __func__, sepstr, hunk_size, required_size);
+   if (debug)
+      printf("(%s) sepstr=|%s|, hunk_size=%d, required_size=%zu\n",
+             __func__, sepstr, hunk_size, required_size);
 
    char * buf = get_thread_dynamic_buffer(&hexstring3_key, &hexstring3_len_key, required_size);
    // char * buf = get_thread_private_buffer(&hexstring3_key, NULL, required_size);
 
-   char * pattern = (uppercase) ? "%02X" : "%02x";
+   // char * pattern = (uppercase) ? "%02X" : "%02x";
+   // if (debug)
+   //    printf("(%s) pattern=%s, buf=%p\n", __func__,  pattern, buf);
 
    // int incr1 = 2 + sepsize;
    *buf = '\0';
    for (int i=0; i < len; i++) {
-      // printf("(%s) i=%d, strlen(buf)=%ld\n", __func__, i, strlen(buf));
-      sprintf(buf+strlen(buf), pattern, bytes[i]);
+      if (debug)
+         printf("(%s) i=%d, buf=%p, strlen(buf)=%ld\n", __func__, i, buf, strlen(buf));
+      // sprintf(buf+strlen(buf), pattern, bytes[i]);
+      byte_to_hs(bytes[i], buf+strlen(buf), uppercase);
+
       bool insert_sepstr = (hunk_size == 0)
                                ? (i < (len-1) && sepstr)
                                : (i < (len-1) && sepstr && (i+1)%hunk_size == 0);
       if (insert_sepstr)
          strcat(buf, sepstr);
    }
-   // printf("(%s) strlen(buffer) = %ld, required_size=%d   \n", __func__, strlen(buffer), required_size );
-   // printf("(%s)  buffer=|%s|\n", __func__, buffer );
+   if (debug) {
+      printf("(%s) strlen(buf) = %ld, required_size=%zu\n", __func__, strlen(buf), required_size );
+      printf("(%s)  buf=|%s|\n", __func__, buf );
+   }
    assert(strlen(buf) <= required_size-1);
 
-   // printf("(%s) Returning: %p\n", __func__, buf);
+   if (debug)
+      printf("(%s) Returning: %p -> |%s|\n", __func__, buf, buf);
    return buf;
 }
 
@@ -1484,5 +1767,46 @@ bool apply_filter_terms(const char * text, char ** terms, bool ignore_case)
    }
 
    return result;
+}
+
+
+/** Converts a string containing a (possible) hex value to canonical form.
+ *
+ *  If the value starts with "x" or "X", or ends with "h" or "H", or starts
+ *  with "0X", it is modified to start with "0x".
+ *  Otherwise, the returned value is identical to the input value.
+ *
+ *  @param string_value  value to convert
+ *  @return canonicalized value (caller is responsible for freeing)
+ *
+ *  @remark
+ *  Consider converting to a function that uses a thread-specific buffer, making
+ *  the returned value valid until the next call to this function on the current
+ *  thread.  Would relieve the caller of responsibility for freeing the value.
+ */
+
+char * canonicalize_possible_hex_value(char * string_value) {
+   assert(string_value);
+
+   int bufsz = strlen(string_value) + 1 + 1;  // 1 for possible increased length, 1 for terminating null
+   char * buf = calloc(1, bufsz);
+   if (*string_value == 'X' || *string_value == 'x' ) {
+      // increases string size by 1
+      snprintf(buf, bufsz, "0x%s", string_value+1);
+   }
+   else if (*(string_value + strlen(string_value)-1) == 'H' ||
+            *(string_value + strlen(string_value)-1) == 'h' )
+   {
+      // increases string size by 1
+      int newlen = strlen(string_value)-1;
+      snprintf(buf, bufsz, "0x%.*s", newlen, string_value);
+   }
+   else if (str_starts_with(string_value, "0X")) {
+      snprintf(buf, bufsz, "0x%s", string_value+2);
+   }
+   else
+      strcpy(buf, string_value);
+   // DBGMSG("string_value=|%s|, returning |%s|", string_value, buf);
+   return buf;
 }
 

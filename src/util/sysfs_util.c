@@ -3,23 +3,35 @@
   * Functions for reading /sys file system
   */
 
-// Copyright (C) 2016-2019 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2016-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
+
+#define _GNU_SOURCE
 
 //* \cond */
 #include <assert.h>
 #include <errno.h>
+#include <glib-2.0/glib.h>
+#include <libgen.h>
 #include <limits.h>
-#include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 /** \endcond */
 
+#include "coredefs_base.h"
+#include "debug_util.h"
 #include "file_util.h"
+#include "report_util.h"
 #include "string_util.h"
 
 #include "sysfs_util.h"
+
+
+//  -Wstringop-trunction is brain dead
+//  compile will fail if -Werror set
+// #pragma GCC diagnostic push
+// #pragma GCC diagnostic ignored "-Wstringop-truncation"
 
 
 /** Reads a /sys attribute file, which is 1 line of text
@@ -61,10 +73,26 @@ read_sysfs_attr_w_default(
    sprintf(fn, "%s/%s", dirname, attrname);
    char * result = file_get_first_line(fn, verbose);
    if (!result)
-      result = strdup(default_value);  // strdup() so caller can free any result
+      result = g_strdup(default_value);  // g_strdup() so caller can free any result
    return result;
 }
 
+
+/** Reads a /sys attribute file, which is 1 line of text, into a buffer
+ *  provided by the caller.
+ *  If the attribute is not found, returns a default value
+ *
+ * \param  dirname        directory name
+ * \param  attrname       attribute name, i.e. file name
+ * \param  default_value  default value, duplicated
+ * \param  buf            pointer to buffer
+ * \param  bufsz          size of buffer
+ * \param  verbose        if true, write message to stderr if unable to open file
+ * \return buf
+ *
+ *  If the string to be returned is too large for the buffer, it is truncated
+ *  to fit with a trailing '\0'.
+ */
 char *
 read_sysfs_attr_w_default_r(
       const char * dirname,
@@ -74,25 +102,25 @@ read_sysfs_attr_w_default_r(
       unsigned     bufsz,
       bool         verbose)
 {
+   assert(strlen(default_value) < bufsz);
    char fn[PATH_MAX];
    sprintf(fn, "%s/%s", dirname, attrname);
    char * result = file_get_first_line(fn, verbose);
    if (result) {
-      g_strlcpy(buf, result, bufsz);
+      STRLCPY(buf, result, bufsz);
       free(result);
    }
    else {
-      g_strlcpy(buf, default_value, bufsz);
+      STRLCPY(buf, default_value, bufsz);
    }
    return buf;
 }
 
 
-
 /** Reads a binary /sys attribute file
  *
- * \param  dirname    directory name
- * \param  attrname   attribute name, i.e. file name
+ * \param  dirname   directory name
+ * \param  attrname  attribute name, i.e. file name
  * \param  est_size  estimated size
  * \param  verbose   if open fails, write message to stderr
  * \return if successful, a **GByteArray** of bytes, caller is responsible for freeing
@@ -115,166 +143,571 @@ read_binary_sysfs_attr(
 }
 
 
-/** Looks in the /sys file system to check if a module is loaded.
+/** For a given directory path, returns the last component of the
+ *  resolved absolute path.
  *
- * \param  module_name    module name
- * \return true if the module is loaded, false if not
+ *  \param   path  path to resolve
+ *  \return  base name of resolved path, caller is responsible for freeing
+ */
+char *
+get_rpath_basename(
+      const char * path)
+{
+   char * result = NULL;
+   char   resolved_path[PATH_MAX];
+   char * rpath = realpath(path, resolved_path);
+   // printf("(%s) rpath=|%s|\n", __func__, rpath);
+   if (rpath) {
+      result = g_path_get_basename(rpath);
+   }
+   // printf("(%s) busno=%d, returning %s\n", __func__, busno, driver_name);
+   return result;
+}
+
+
+//
+// Functions for probing /sys
+//
+
+/*
+The rpt_attr...() functions share a common set of behaviors.
+
+1) They write the value read to the fout() device, typically sysout.
+
+2) A message is not actually written if either global setting set_rpt_sysfs_attr_silent(true)
+   or the logical indentation depth (depth parm) is less than 0.
+
+3) If the value_loc parm is non-null, it is the address at which the function
+   returns the address of newly allocated memory containing the value.
+   NULL is returned if the attribute is not found.
+
+4) The depth and value_loc arguments are followed by 1 or more parts
+   of a file name.  The parts are assembled to create the fully qualified
+   name of the attribute.
+ */
+
+
+static bool rpt2_silent = false;
+
+/** Globally controls whether values read are actually written to the terminal.
+ *
+ *  \param  onoff
+ *  \return prior value
  */
 bool
-is_module_loaded_using_sysfs(
-      const char * module_name)
+set_rpt_sysfs_attr_silent(
+      bool onoff)
+{
+   bool old = rpt2_silent;
+   rpt2_silent = onoff;
+   return old;
+}
+
+
+/** This is the core function for writing attribute values to the terminal.
+ *
+ *  \param  depth  logical indentation depth
+ *  \param  node   fully qualified attribute name (i.e. file name)
+ *  \param  op     "=" or ":"
+ *  \param  value  attribute value if op is "=",
+ *                 a string like "found" if op is ":"
+ *                 realpath or basename if op is "->"
+ *
+ *  The attribute name is padded on the right tp be at least 70 characters wide.
+ */
+void
+rpt_attr_output(
+      int depth,
+      const char * node,
+      const char * op,
+      const char * value)
+{
+   if (!rpt2_silent) {
+      int offset = 70;
+      if (depth >= 0)
+         rpt_vstring(depth, "%-*s%-2s %s", offset, node, op, value);
+   }
+}
+
+
+/** Reads a normal, single line attribute value from a file.
+ *
+ *  \param  fq_attrname  fully qualified attribute name (i.e. file name)
+ *  \param  verbose      if true, write message to stderr if unable to open file
+ *  \retval non-NULL     pointer to line read (caller responsible for freeing)
+ *  \retval NULL         if error or no lines in file
+ */
+static inline char *
+read_sysfs_attr0(
+      const char * fq_attrname,
+      bool         verbose)
+{
+   return file_get_first_line(fq_attrname, verbose);
+}
+
+
+/** Returns the name of the first subdirectory of a specified directory
+ *  whose name satisfies the filter function.
+ *  \param dirname name of directory to search
+ *  \param filter  pointer to filter function
+ *  \param val     comparison value passed to filter function
+ *  \retval simple name of first subdirectory that satisfies the filter function
+ *          (caller responsible for freeing)
+ *  \retval NULL if not found
+ */
+static char *
+get_single_subdir_name(
+      const char * dirname,
+      Fn_Filter    filter,
+      const char * val)
 {
    bool debug = false;
+   int d1 = 1;
+   DIR* dir2 = opendir(dirname);
+   char * result = NULL;
+   if (!dir2) {
+      rpt_vstring(d1, "Unexpected error. Unable to open sysfs directory %s: %s",
+                      dirname, strerror(errno));
+     }
+     else {
+        struct dirent *dent2;
+        while ((dent2 = readdir(dir2)) != NULL) {
+           DBGF(debug, "%s", dent2->d_name);
+           if (!str_starts_with(dent2->d_name, ".")) {
+              if (!filter || filter(dent2->d_name, val)) {
+                 result = g_strdup(dent2->d_name);
+                 break;
+              }
+           }
+        }
+        closedir(dir2);
+     }
+   DBGF(debug, "directory: %s, first subdir: %s", dirname, result);
+   return result;
+}
 
-   struct stat statbuf;
-   char   module_fn[100];
-   bool   found = false;
 
-   snprintf(module_fn, sizeof(module_fn), "/sys/module/%s", module_name);
-   int rc = stat(module_fn, &statbuf);
-   if (rc < 0) {
-      // will be ENOENT (2) if file not found
-      found = false;
+/** Assembles a file (sysfs attribute) name from one or more segments.
+ *  \param  buffer     buffer in which to return the assembled name
+ *  \param  bufsz      size of buffer
+ *  \param  fn_segment first segment of name
+ *  \param  ap         remaining segments
+ *  \return assembled attribute name (buffer)
+ *
+ *  The assembled value will be silently truncated if necessary to fit in buffer
+ */
+static char *
+assemble_sysfs_path2(
+      char *        buffer,
+      int           bufsz,
+      const char *  fn_segment,
+      va_list       ap)
+{
+   assert(buffer && bufsz > 0);
+   bool debug = false;
+   DBGF(debug, "Starting.  bufsz=%d, fn_segment=|%s|", bufsz, fn_segment);
+   STRLCPY(buffer, fn_segment, bufsz-1);
+   while(true) {
+      char * segment = va_arg(ap, char*);
+      if (!segment)
+         break;
+      if (debug)
+      DBGF(debug, "segment |%s|", segment);
+      STRLCAT(buffer, "/", bufsz);
+      STRLCAT(buffer, segment, bufsz);
    }
-   else {
-      // if (S_ISDIR(statbuf.st_mode))   // pointless
-         found = true;
-   }
+   DBGF(debug,"Returning: %s", buffer);
+   return buffer;
+}
 
+
+/** Reports the value of a simple text attribute (the most common case)
+ *  to the sysout device.
+ *
+ *  If the attribute is not found, reports "Not found".
+ *
+ *  \param  depth      logical indentation depth, if < 0, output nothing
+ *  \param  value_loc  if non-NULL, the address at which to return a copy of
+ *                     the attribute value (caller is responsible for freeing).
+ *                     or NULL if the attribute cannot be read
+ *  \param  fn_segment first segment of attribute name
+ *  \param  ...         remaining segments of name
+ *  \return true if attribute found, false if not
+ *
+ *  \remark
+ *  *value_loc is set iff result is true
+ */
+bool
+rpt_attr_text(
+      int          depth,
+      char **      value_loc,
+      const char * fn_segment,
+      ...)
+{
+   bool debug = false;
    if (debug)
-      printf("(%s) module_name = %s, returning %d", __func__, module_name, found);
+      printf("(%s) Starting. fn_segment=%s\n", __func__, fn_segment);
+
+   bool found = false;
+   if (value_loc)
+      *value_loc = NULL;
+
+   char pb1[PATH_MAX];
+   va_list ap;
+   va_start(ap, fn_segment);
+   assemble_sysfs_path2(pb1, PATH_MAX, fn_segment, ap);
+   va_end(ap);
+   if (debug)
+      printf("(%s) pb1=%s\n", __func__, pb1);
+
+   char * val = read_sysfs_attr0(pb1, false);
+   if (val) {
+      found = true;
+      rpt_attr_output(depth, pb1, "=", val);
+      if (value_loc)
+         *value_loc = val;
+      else
+         free(val);
+  }
+  else {
+     rpt_attr_output(depth, pb1, ": ", "Not Found");
+  }
+
+  if (debug)
+     printf("(%s) Done.\n", __func__);
+
+  if (value_loc)
+     ASSERT_IFF(found, *value_loc);
+  return found;
+}
+
+
+/** Reads a binary attribute and reports "Found" or "Not found".
+ *
+ *  \param  depth      logical indentation depth, if < 0, output nothing
+ *  \param  value_loc  if non-NULL, the address at which to return a pointer to
+ *                     a GByteArray containing the value. (caller is responsible for freeing).
+ *                     If the attribute cannot be read, or is 0 length, NULL is returned.
+ *  \param  fn_segment first segment of attribute name
+ *  \param  ap         remaining segments of name
+ *  \return true if attribute found, false if not
+ *
+ *  \remark
+ *  *value_loc is set iff result is true
+ */
+bool
+rpt_attr_binary(
+      int           depth,
+      GByteArray ** value_loc,
+      const char *  fn_segment,
+      ...)
+{
+   bool debug = false;
+   if (debug) {
+      printf("(%s) Starting.  depth=%d, value_loc=%p\n", __func__, depth, value_loc);
+      if (debug && depth < 0)
+         depth=1;
+   }
+
+   char pb1[PATH_MAX];
+   va_list ap;
+   va_start(ap, fn_segment);
+   assemble_sysfs_path2(pb1, PATH_MAX, fn_segment, ap);
+   va_end(ap);
+
+   bool found = false;
+   if (value_loc)
+      *value_loc = NULL;
+   GByteArray * bytes = read_binary_file(pb1, /*estimated size=*/ 256, true);
+   if (bytes) {
+      if (bytes->len > 0) {
+         found = true;
+         rpt_attr_output(depth, pb1, ":", "Found");
+         // rpt_vstring(depth, "%-*s =  %s", offset, pb1, val);
+         if (value_loc)
+            *value_loc = bytes;
+      }
+      else {
+         g_byte_array_free(bytes, true);
+         rpt_attr_output(depth, pb1, ": ", "0 length");
+      }
+   }
+   else
+      rpt_attr_output(depth, pb1, ": ", "Not Found");
+   if (debug) {
+      if (value_loc)
+         printf("(%s) Returning: %s. *value_loc=%p\n", __func__, SBOOL(found), (void*)*value_loc);
+      else
+         printf("(%s) Returning: %s\n", __func__, SBOOL(found));
+   }
    return found;
 }
 
 
-// The following functions are not really generic sysfs utilities, and more
-// properly belong in a file in subdirectory base, but to avoid yet more file
-// proliferation are included here.
-
-/** Gets the sysfs name of an I2C device,
- *  i.e. the value of /sys/bus/in2c/devices/i2c-n/name
+/** Reports a binary attribute that represents an EDID.
  *
- *  \param  busno   I2C bus number
- *  \return newly allocated string containing attribute value,
- *          NULL if not found
- *
- *  \remark
- *  Caller is responsible for freeing returned value
- */
-char *
-get_i2c_device_sysfs_name(int busno) {
-   char workbuf[50];
-   snprintf(workbuf, 50, "/sys/bus/i2c/devices/i2c-%d/name", busno);
-   char * name = file_get_first_line(workbuf, /*verbose */ false);
-   // DBGMSG("busno=%d, returning: %s", busno, bool_repr(result));
-   return name;
-}
-
-
-/** Gets the driver name of an I2C device,
- *  i.e. the basename of /sys/bus/i2c/devices/i2c-n/device/driver/module
- *
- *  \param  busno   I2C bus number
- *  \return newly allocated string containing driver name
- *          NULL if not found
+ *  \param  depth      logical indentation depth, if < 0, output nothing
+ *  \param  value_loc  if non-NULL, the address at which to return a pointer to
+ *                     a GByteArray containing the value. (caller is responsible for freeing).
+ *                     If the attribute cannot be read NULL is set.
+ *  \param  fn_segment first segment of attribute name
+ *  \param  ...        remaining segments of name
+ *  \return true if attribute found, false if not
  *
  *  \remark
- *  Caller is responsible for freeing returned value
- */
-static char *
-get_i2c_device_sysfs_driver(int busno) {
-   char * driver_name = NULL;
-   char workbuf[100];
-   snprintf(workbuf, 100, "/sys/bus/i2c/devices/i2c-%d/device/driver/module", busno);
-
-   char resolved_path[PATH_MAX];
-   char * rpath = realpath(workbuf, resolved_path);
-   // printf("(%s) rpath=|%s|\n", __func__, rpath);
-   if (!rpath) {
-      int errsv = errno;
-      if (errsv == ENOENT) {
-         // Path does not exist for amdgpu driver, nouveau on kernel 4.0 (SuSe Lean 42), perhaps others
-      }
-      else {
-         printf("(%s) realpath(%s) returned NULL, errno=%d", __func__, workbuf, errsv);
-      }
-   }
-   else {
-      // printf("realpath returned %s\n", rpath);
-      // printf("%s --> %s\n",workfn, resolved_path);
-      driver_name = g_path_get_basename(rpath);
-   }
-   // printf("(%s) busno=%d, returning %s\n", __func__, busno, driver_name);
-   return driver_name;
-}
-
-
-#ifdef UNUSED
-static bool is_smbus_device_using_sysfs(int busno) {
-#ifdef OLD
-   char workbuf[50];
-   snprintf(workbuf, 50, "/sys/bus/i2c/devices/i2c-%d/name", busno);
-   char * name = file_get_first_line(workbuf, /*verbose */ false);
-#endif
-   char * name = get_i2c_device_sysfs_name(busno);
-
-   bool result = false;
-   if (name && str_starts_with(name, "SMBus"))
-      result = true;
-   free(name);
-   // DBGMSG("busno=%d, returning: %s", busno, bool_repr(result));
-   return result;
-}
-#endif
-
-
-static bool
-ignorable_i2c_device_sysfs_name(const char * name, const char * driver) {
-   bool result = false;
-   const char * ignorable_prefixes[] = {
-         "SMBus",
-         "Synopsys DesignWare",
-         "soc:i2cdsi",   // Raspberry Pi
-         "smu",          // Mac G5, probing causes system hang
-         "mac-io",       // Mac G5
-         "u4",           // Mac G5
-         NULL };
-   if (name) {
-      if (starts_with_any(name, ignorable_prefixes) >= 0)
-         result = true;
-      else if (streq(driver, "nouveau")) {
-         if ( !str_starts_with(name, "nvkm-") ) {
-            result = true;
-            // printf("(%s) name=|%s|, driver=|%s| - Ignore\n", __func__, name, driver);
-         }
-      }
-   }
-   // printf("(%s) name=|%s|, driver=|%s|, returning: %s\n", __func__, name, driver, sbool(result));
-   return result;
-}
-
-
-/** Checks if an I2C bus cannot be a DDC/CI connected monitor
- *  and therefore can be ignored, e.g. if it is an SMBus device.
- *
- *  \param  busno  I2C bus number
- *  \return true if ignorable, false if not
- *
- *  \remark
- *  This function avoids unnecessary calls to i2cdetect, which can be
- *  slow for SMBus devices and fills the system logs with errors
+ *  if result == true, *value_loc will be set iff non-null
  */
 bool
-sysfs_is_ignorable_i2c_device(int busno) {
-   bool result = false;
-   char * name = get_i2c_device_sysfs_name(busno);
-   char * driver = get_i2c_device_sysfs_driver(busno);
-   if (name)
-      result = ignorable_i2c_device_sysfs_name(name, driver);
+rpt_attr_edid(
+       int           depth,
+       GByteArray ** value_loc,
+       const char *  fn_segment,
+       ...)
+ {
+    bool debug = false;
+    if (debug) {
+       printf("(%s) Starting.  depth=%d, value_loc=%p\n", __func__, depth, value_loc);
+       if (debug && depth < 0)
+          depth=1;
+    }
 
-   // printf("(%s) busno=%d, name=|%s|, returning: %s\n", __func__, busno, name, bool_repr(result));
-   free(name);    // safe if NULL
-   free(driver);  // ditto
-   return result;
+    char pb1[PATH_MAX];
+    va_list ap;
+    va_start(ap, fn_segment);
+    assemble_sysfs_path2(pb1, PATH_MAX, fn_segment, ap);
+    va_end(ap);
+    // DBGMSG("pb1=%s", pb1);
+
+    bool found = false;
+    if (value_loc)
+       *value_loc = NULL;
+    GByteArray * edid = NULL;
+    found = rpt_attr_binary(depth, &edid, pb1, NULL);
+    assert( (found && edid) || (!found && edid==NULL) );
+    if (edid) {
+       if (depth >= 0)
+          rpt_hex_dump(edid->data, edid->len, depth+4);
+       if (value_loc)
+          *value_loc = edid;
+       else {
+          g_byte_array_free(edid, true);
+       }
+    }
+
+    if (debug) {
+       printf("(%s) Returning %s. *value_loc=%p\n", __func__, SBOOL(found), *value_loc);
+       if (*value_loc) {
+          GByteArray * gba = *value_loc;
+          printf("(%s)               data=%p, len=%d\n",
+                 __func__, (void*) gba->data, gba->len);
+       }
+    }
+
+    if (value_loc)
+       ASSERT_IFF(found, *value_loc);
+    return found;
+ }
+
+
+/** Reports the realpath of a file name, or "Invalid path" if the file name
+ *  is invalid.
+ *
+ *  \param  depth      logical indentation depth, if < 0, output nothing
+ *  \param  value_loc  if non-NULL, the address at which to return a pointer to
+ *                     the path name (caller is responsible for freeing).
+ *                     If the path is invalid, NULL is returned.
+ *  \param  fn_segment first segment of attribute name
+ *  \param  ...        remaining segments of name
+ *  \return true if attribute found, false if not
+ *
+ *  \remark
+ *  *value_loc is set iff result is true
+ */
+bool
+rpt_attr_realpath(
+      int          depth,
+      char **      value_loc,
+      const char * fn_segment,
+      ...)
+{
+   if (value_loc)
+      *value_loc = NULL;
+   char pb1[PATH_MAX];
+
+   va_list ap;
+   va_start(ap, fn_segment);
+   assemble_sysfs_path2(pb1, PATH_MAX, fn_segment, ap);
+   va_end(ap);
+
+   char * result = realpath(pb1, NULL);
+   bool found = (result);
+   if (result) {
+      rpt_attr_output(depth, pb1, "->", result);
+      if (value_loc)
+         *value_loc = result;
+      else
+         free(result);
+   }
+   else {
+      rpt_attr_output(depth, pb1, "->", "Invalid path");
+   }
+
+   if (value_loc)
+      ASSERT_IFF(found, *value_loc);
+   return found;
+}
+
+
+/** Reports the base name of a file name's realpath, or "Invalid path" if the file name
+ *  is invalid.
+ *
+ *  \param  depth      logical indentation depth, if < 0, output nothing
+ *  \param  value_loc  if non-NULL, the address at which to return a pointer to
+ *                     the name (caller is responsible for freeing).
+ *                     If the path is invalid, NULL is returned.
+ *  \param  fn_segment first segment of attribute name
+ *  \param  ...        remaining segments of name
+ *  \return true if attribute found, false if not
+ *
+ *  \remark
+ *  *value_loc is set iff result is true
+ */
+bool
+rpt_attr_realpath_basename(
+      int          depth,
+      char **      value_loc,
+      const char * fn_segment,
+      ...)
+{
+   char pb1[PATH_MAX];
+   va_list ap;
+   va_start(ap, fn_segment);
+   assemble_sysfs_path2(pb1, PATH_MAX, fn_segment, ap);
+   va_end(ap);
+
+   bool found = false;
+   if (value_loc)
+      *value_loc = NULL;
+   char pb2[PATH_MAX];
+   char * rpath = realpath(pb1, pb2);  // without assignment, get warning that return value unused
+   if (rpath) {
+      char * bpath = basename(rpath);
+      if (bpath) {
+         found = true;
+         rpt_attr_output(depth, pb1, "->", bpath);
+         if (value_loc)
+            *value_loc = g_strdup(bpath);
+      }
+   }
+   if (!found) {
+      rpt_attr_output(depth, pb1, "->", "Invalid path");
+   }
+
+   if (value_loc)
+      ASSERT_IFF(found, *value_loc);
+   return found;
+}
+
+
+/** Checks for the first subdirectory of a given directory whose name satisfies
+ *  some predicate, and reports whether it is found and if so its name.
+ *
+ *  \param  depth      logical indentation depth, if < 0, output nothing
+ *  \param  value_loc  if non-NULL, the address at which to return a pointer to
+ *                     the name (caller is responsible for freeing).
+ *                     If the path is invalid, NULL is returned.
+ *  \param  predicate_function pointer to test function
+ *  \param  predicate_value    comparison argument passed to test function
+ *  \param  fn_segment first segment of attribute name
+ *  \param  ...        remaining segments of name
+ *  \return true if subdirectory found, false if not
+ *
+ *  \remark
+ *  *value_loc is set iff result is true
+ */
+bool
+rpt_attr_single_subdir(
+      int          depth,
+      char **      value_loc,
+      Fn_Filter    predicate_function,
+      const char * predicate_value,
+      const char * fn_segment,
+      ...)
+{
+   bool debug = false;
+   if (debug)
+      printf("(%s) Starting. depth=%d, value_loc=%p\n", __func__, depth, (void*)value_loc);
+
+   char pb1[PATH_MAX];
+   va_list ap;
+   va_start(ap, fn_segment);
+   assemble_sysfs_path2(pb1, PATH_MAX, fn_segment, ap);
+   va_end(ap);
+   if (debug)
+      printf("(%s) pb1=|%s|\n", __func__, pb1);
+
+   if (value_loc)
+      *value_loc = NULL;
+   char * subdir_name = get_single_subdir_name(pb1, predicate_function, predicate_value);
+   bool found = false;
+   if (subdir_name) {
+      char buf[PATH_MAX+100];
+      g_snprintf(buf, PATH_MAX+100, "Found subdirectory = %s", subdir_name);
+      rpt_attr_output(depth, pb1, ":", buf);
+      if (value_loc)
+         *value_loc = subdir_name;
+      else
+         free(subdir_name);
+      found = true;
+   }
+   else {
+      char buf[PATH_MAX+100];
+      g_snprintf(buf, PATH_MAX+100, "No %s subdirectory found", predicate_value);
+      rpt_attr_output(depth, pb1, ":", buf);
+   }
+   if (debug)
+      printf("(%s) Done.    Returning %s\n", __func__, SBOOL(found));
+
+   if (value_loc)
+      ASSERT_IFF(found, *value_loc);
+   return found;
+}
+
+
+/** Reports whether an indirect directory exists.
+ *
+ *  \param  depth      logical indentation depth, if < 0, output nothing
+ *  \param  value_loc  if non-NULL, *value_loc is always set = NULL
+ *  \param  fn_segment first segment of directory name
+ *  \param  ...        remaining segments of name (requires at least 2)
+ *  \return true if subdirectory found, false if not
+ */
+bool
+rpt_attr_note_indirect_subdir(
+      int          depth,
+      char **      value_loc,
+      const char * fn_segment,
+      ...)
+{
+   bool debug = false;
+   DBGF(debug, "fn_segment=|%s|", fn_segment);
+
+   char pb1[PATH_MAX];
+   va_list ap;
+   va_start(ap, fn_segment);
+   assemble_sysfs_path2(pb1, PATH_MAX, fn_segment, ap);
+   va_end(ap);
+
+   if (value_loc)
+      *value_loc = NULL;
+
+   bool found = directory_exists(pb1);
+
+   if (found)
+      rpt_attr_output(depth, pb1, ":", "Subdirectory");
+   else
+      rpt_attr_output(depth, pb1, ":", "No such subdirectory");
+
+   return found;
 }
 

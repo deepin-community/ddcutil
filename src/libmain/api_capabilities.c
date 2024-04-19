@@ -3,12 +3,13 @@
  *  Capabilities related functions of the API
  */
 
-// Copyright (C) 2015-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2015-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "config.h"
 
 #include <assert.h>
+#include <glib-2.0/glib.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
@@ -20,11 +21,12 @@
 #include "util/report_util.h"
 #include "util/string_util.h"
 
+#include "base/ddc_command_codes.h"
 #include "base/displays.h"
 #include "base/feature_metadata.h"
+#include "base/rtti.h"
 #include "base/vcp_version.h"
 
-#include "vcp/ddc_command_codes.h"
 #include "vcp/parse_capabilities.h"
 #include "vcp/parsed_capabilities_feature.h"
 #include "vcp/vcp_feature_codes.h"
@@ -39,6 +41,7 @@
 #include "libmain/api_displays_internal.h"
 #include "libmain/api_metadata_internal.h"
 
+#include "libmain/api_error_info_internal.h"
 #include "libmain/api_capabilities_internal.h"
  
 
@@ -52,31 +55,32 @@ ddca_get_capabilities_string(
       char**               pcaps_loc)
 {
    bool debug = false;
-   DBGMSF(debug, "Starting. ddca_dh=%s", dh_repr((Display_Handle *) ddca_dh ));
    free_thread_error_detail();
-   // assert(pcaps_loc);
-   PRECOND(pcaps_loc);
+   API_PROLOGX(debug, "ddca_dh=%s", dh_repr((Display_Handle *) ddca_dh ) );
+   API_PRECOND_W_EPILOG(pcaps_loc);
    *pcaps_loc = NULL;
    Error_Info * ddc_excp = NULL;
-   WITH_DH(ddca_dh,
+   DDCA_Status psc = 0;
+
+   WITH_VALIDATED_DH3(ddca_dh, psc,
       {
          char * p_cap_string = NULL;
-         ddc_excp = get_capabilities_string(dh, &p_cap_string);
+         ddc_excp = ddc_get_capabilities_string(dh, &p_cap_string);
          psc = (ddc_excp) ? ddc_excp->status_code : 0;
          save_thread_error_detail(error_info_to_ddca_detail(ddc_excp));
          errinfo_free(ddc_excp);
          if (psc == 0) {
             // make copy to prevent caller from mucking around in ddcutil's
             // internal data structures
-            *pcaps_loc = strdup(p_cap_string);
-            // DBGMSF(debug, "*pcaps_loc=%p", *pcaps_loc);
+            *pcaps_loc = g_strdup(p_cap_string);
          }
-        //  DBGMSF(debug, "psc=%s", ddca_rc_desc(psc));
-         assert( (psc==0 && *pcaps_loc) || (psc!=0 && !*pcaps_loc));
-         DBGMSF(debug, "Done.     ddca_dh=%s, *pcaps_loc=%p, Returning: %s",
-                        dh_repr((Display_Handle *) ddca_dh ), *pcaps_loc, ddca_rc_desc(psc));
+         ASSERT_IFF(psc==0, *pcaps_loc);
       }
    );
+
+   API_EPILOG(debug, psc, "ddca_dh=%s, *pcaps_loc=%p -> |%s|",
+                     dh_repr((Display_Handle *) ddca_dh),
+                     *pcaps_loc, *pcaps_loc );
 }
 
 
@@ -89,7 +93,6 @@ dbgrpt_ddca_cap_vcp(DDCA_Cap_Vcp * cap, int depth) {
    rpt_vstring(d1, "value_ct:        %d", cap->value_ct);
    if (cap->value_ct > 0) {
       rpt_label(d1, "Values: ");
-
       for (int ndx = 0; ndx < cap->value_ct; ndx++) {
          rpt_vstring(d2, "Value:   0x%02x", cap->values[ndx]);
       }
@@ -129,12 +132,11 @@ ddca_parse_capabilities_string(
       DDCA_Capabilities **     parsed_capabilities_loc)
 {
    bool debug = false;
-   DBGMSF(debug, "Starting. capabilities_string: |%s|", capabilities_string);
-   // assert(parsed_capabilities_loc);
    free_thread_error_detail();
-   PRECOND(parsed_capabilities_loc);
+   API_PROLOGX(debug, "parsed_capabilities_loc=%p, capabilities_string: |%s|",
+                     parsed_capabilities_loc, capabilities_string);
+   API_PRECOND_W_EPILOG(parsed_capabilities_loc);
    DDCA_Status ddcrc = DDCRC_BAD_DATA;
-   DBGMSF(debug, "ddcrc initialized to %s", psc_desc(ddcrc));
    DDCA_Capabilities * result = NULL;
 
    // need to control messages?
@@ -147,7 +149,7 @@ ddca_parse_capabilities_string(
       }
       result = calloc(1, sizeof(DDCA_Capabilities));
       memcpy(result->marker, DDCA_CAPABILITIES_MARKER, 4);
-      result->unparsed_string = strdup(capabilities_string);     // needed?
+      result->unparsed_string = g_strdup(capabilities_string);     // needed?
       result->version_spec = pcaps->parsed_mccs_version;
       DBGMSF(debug, "version: %d.%d", result->version_spec.major,  result->version_spec.minor);
       Byte_Value_Array bva = pcaps->commands;
@@ -174,7 +176,7 @@ ddca_parse_capabilities_string(
             cur_cap_vcp->feature_code = cur_cfr->feature_id;
             DBGMSF(debug, "cur_cfr = %p, feature_code - 0x%02x", cur_cfr, cur_cfr->feature_id);
 
-            // cur_cap_vcp->raw_values = strdup(cur_cfr->value_string);
+            // cur_cap_vcp->raw_values = g_strdup(cur_cfr->value_string);
             // TODO: get values from Byte_Bit_Flags cur_cfr->bbflags
 #ifdef CFR_BVA
             Byte_Value_Array bva = cur_cfr->values;
@@ -207,13 +209,11 @@ ddca_parse_capabilities_string(
       ddcrc = 0;
       free_parsed_capabilities(pcaps);
    }
-
    *parsed_capabilities_loc = result;
-   DBGMSF(debug, "Done.    *parsed_capabilities_loc=%p, Returning: %d", *parsed_capabilities_loc, ddcrc);
-   if (debug && *parsed_capabilities_loc)
-      dbgrpt_ddca_capabilities(*parsed_capabilities_loc, 2);
+   API_EPILOG_WO_RETURN(debug, ddcrc, "*parsed_capabilities_loc=%p", *parsed_capabilities_loc);
    ASSERT_IFF(ddcrc==0, *parsed_capabilities_loc);
-   assert( (ddcrc==0 && *parsed_capabilities_loc) || (ddcrc!=0 && !*parsed_capabilities_loc));
+   if ( IS_DBGTRC(debug, DDCA_TRC_API) && *parsed_capabilities_loc)
+      dbgrpt_ddca_capabilities(*parsed_capabilities_loc, 2);
    return ddcrc;
 }
 
@@ -223,10 +223,10 @@ ddca_free_parsed_capabilities(
       DDCA_Capabilities * pcaps)
 {
    bool debug = false;
+   DBGTRC_STARTING(debug, DDCA_TRC_API, "pcaps=%p", pcaps);
    if (pcaps) {
       assert(memcmp(pcaps->marker, DDCA_CAPABILITIES_MARKER, 4) == 0);
       free(pcaps->unparsed_string);
-
       DBGMSF(debug, "vcp_code_ct = %d", pcaps->vcp_code_ct);
       for (int ndx = 0; ndx < pcaps->vcp_code_ct; ndx++) {
          DDCA_Cap_Vcp * cur_vcp = &pcaps->vcp_codes[ndx];
@@ -234,11 +234,13 @@ ddca_free_parsed_capabilities(
          cur_vcp->marker[3] = 'x';
          free(cur_vcp->values);
       }
-
+      free(pcaps->vcp_codes);
+      free(pcaps->cmd_codes);
       ntsa_free(pcaps->messages, true);
       pcaps->marker[3] = 'x';
       free(pcaps);
    }
+   DBGTRC_DONE(debug, DDCA_TRC_API, "");
 }
 
 
@@ -249,24 +251,19 @@ ddca_report_parsed_capabilities_by_dref(
       int                      depth)
 {
    bool debug = false;
-   DBGMSF(debug, "Starting. p_caps=%p, ddca_dref=%s", p_caps, dref_repr_t((Display_Ref*) ddca_dref));
-
-   free_thread_error_detail();
    DDCA_Status ddcrc = 0;
+   free_thread_error_detail();
+   API_PROLOGX(debug, "Starting. p_caps=%p, ddca_dref=%s",
+                      p_caps, dref_repr_t((Display_Ref*) ddca_dref));
+   API_PRECOND_W_EPILOG(p_caps);   // no need to check marker, DDCA_CAPABILITIES not opaque
 
-   PRECOND(p_caps);
-#ifdef ALT
-   // no need to check marker since DDCA_Capabilities not opaque
-   if (!p_caps) {
-      ddcrc = DDCRC_ARG;
-      goto bye;
-   }
-#endif
-
-   Display_Ref * dref = (Display_Ref *) ddca_dref;
-   if (dref != NULL && memcmp(dref->marker, DISPLAY_REF_MARKER, 4) != 0 ) {
-      ddcrc = DDCRC_ARG;
-      goto bye;
+   Display_Ref * dref = NULL;
+   // dref may be NULL, but if not it must be valid
+   if (ddca_dref) {
+      ddcrc = validate_ddca_display_ref(ddca_dref, /*basic_only*/ true, /*require_not_alseep*/ false, &dref);
+      if (ddcrc != 0) {
+         goto bye;
+      }
    }
 
    int d0 = depth;
@@ -302,7 +299,7 @@ ddca_report_parsed_capabilities_by_dref(
       assert( memcmp(cur_vcp->marker, DDCA_CAP_VCP_MARKER, 4) == 0);
 
       Display_Feature_Metadata * dfm =
-         dyn_get_feature_metadata_by_dref_dfm(
+         dyn_get_feature_metadata_by_dref(
                cur_vcp->feature_code,
                ddca_dref,
                true);    // create_default_if_not_found);
@@ -345,7 +342,7 @@ ddca_report_parsed_capabilities_by_dref(
    }
 
 bye:
-   return ddcrc;
+   API_EPILOG(debug, ddcrc, "");
 }
 
 
@@ -365,10 +362,11 @@ ddca_report_parsed_capabilities_by_dh(
       int                      depth)
 {
    bool debug = false;
-   DBGMSF(debug, "Starting. p_caps=%p, ddca_dh=%s, depth=%d", p_caps, ddca_dh_repr(ddca_dh), depth);
-   DDCA_Status ddcrc = 0;
    free_thread_error_detail();
-   assert(library_initialized);
+   API_PROLOGX(debug, "p_caps=%p, ddca_dh=%s, depth=%d",
+                      p_caps, ddca_dh_repr(ddca_dh), depth);
+   DDCA_Status ddcrc = 0;
+
 
    Display_Handle * dh = (Display_Handle *) ddca_dh;
    if (dh == NULL || memcmp(dh->marker, DISPLAY_HANDLE_MARKER, 4) != 0 ) {
@@ -378,16 +376,43 @@ ddca_report_parsed_capabilities_by_dh(
 
    // Ensure dh->dref->vcp_version is not unqueried,
    // ddca_report_parsed_capabilities_by_dref() will fail trying to lock the already open device
-   get_vcp_version_by_display_handle(dh);
-   DBGMSF(debug, "After get_vcp_version_by_display_handle(), dh->dref->vcp_version=%s",
-                 format_vspec(dh->dref->vcp_version) );
+   get_vcp_version_by_dh(dh);
+   DBGMSF(debug, "After get_vcp_version_by_dh(), dh->dref->vcp_version_df=%s",
+                 format_vspec_verbose(dh->dref->vcp_version_xdf));
 
    ddca_report_parsed_capabilities_by_dref(p_caps, dh->dref, depth);
 
 bye:
-   DBGMSF(debug, "Done. Returning %s", ddca_rc_desc(ddcrc));
-   return ddcrc;
+   API_EPILOG(debug, ddcrc, "");
 }
+
+
+#ifdef UNPUBLISHED
+// UNPUBLISHED
+/** Parses a capabilities string, and reports the parsed string
+ *  using the code of command "ddcutil capabilities".
+ *
+ *  The report is written to the current FOUT location.
+ *
+ *  The detail level written is sensitive to the current output level.
+ *
+ *  @param[in]  capabilities_string  capabilities string
+ *  @param[in]  dref                 display reference
+ *  @param[in]  depth  logical       indentation depth
+ *
+ *  @remark
+ *  This function exists as a development aide.  Internally, ddcutil uses
+ *  a different data structure than DDCA_Parsed_Capabilities.  That
+ *  data structure uses internal collections that are not exposed at the
+ *  API level.
+ *  @remark
+ *  Signature changed in 0.9.3
+ *  @since 0.9.0
+ */
+void ddca_parse_and_report_capabilities(
+      char *                    capabilities_string,
+      DDCA_Display_Ref          dref,
+      int                       depth);
 
 
 // UNPUBLISHED
@@ -401,6 +426,7 @@ ddca_parse_and_report_capabilities(
       dyn_report_parsed_capabilities(pcaps, NULL, dref, 0);
       free_parsed_capabilities(pcaps);
 }
+#endif
 
 
 DDCA_Feature_List
@@ -415,4 +441,10 @@ ddca_feature_list_from_capabilities(
    return result;
 }
 
-
+void init_api_capabilities() {
+   // printf("(%s) Executing\n", __func__);
+   RTTI_ADD_FUNC(ddca_get_capabilities_string);
+   RTTI_ADD_FUNC(ddca_parse_capabilities_string);
+   RTTI_ADD_FUNC(ddca_report_parsed_capabilities_by_dref);
+   RTTI_ADD_FUNC(ddca_report_parsed_capabilities_by_dh);
+}

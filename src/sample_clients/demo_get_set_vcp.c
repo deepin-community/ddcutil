@@ -29,24 +29,17 @@
 #define SBOOL(val) ( (val) ? "true" : "false" )
 
 
-static bool saved_report_ddc_errors = false;
 static bool saved_verify_setvcp = false;
 
 void
 set_standard_settings() {
-   printf("Seting standard settings in function %s()\n", __func__);
-   saved_report_ddc_errors = ddca_is_report_ddc_errors_enabled();
-   // printf("   Calling ddca_enable_report_ddc_errors(true)...\n");
-   // ddca_enable_report_ddc_errors(true);
-   printf("   Calling ddca_enable_verify(true)...\n");
+   // Read value after setting it as verification
    saved_verify_setvcp = ddca_enable_verify(true);
-   // ddca_report_error_info(true);
 }
 
 void
 restore_standard_settings() {
    ddca_enable_verify(saved_verify_setvcp);
-   ddca_enable_report_ddc_errors(saved_report_ddc_errors);
 }
 
 
@@ -55,6 +48,8 @@ void show_any_value(
         DDCA_Vcp_Value_Type     value_type,
         DDCA_Vcp_Feature_Code   feature_code)
 {
+    char * libopts = "--ddc";  // report DDC/CI data errors to the terminal
+    ddca_init(libopts, DDCA_SYSLOG_ERROR, DDCA_INIT_OPTIONS_NONE);
     DDCA_Status ddcrc;
     DDCA_Any_Vcp_Value * valrec;
 

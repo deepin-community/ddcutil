@@ -3,7 +3,7 @@
  * Functions for debugging
  */
 
-// Copyright (C) 2016-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2016-2021 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "config.h"
@@ -17,11 +17,27 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#ifdef UNUSED
+#ifdef TARGET_BSD
+#include <pthread_np.h>
+#else
+#include <sys/types.h>
+#include <sys/syscall.h>
+#include <syslog.h>
+#endif
+#endif
+
 /** \endcond */
 
 #include "string_util.h"
 
 #include "debug_util.h"
+
+// HACK
+#ifdef TARGET_BSD
+#undef HAVE_EXECINFO_H
+#endif
 
 #ifdef HAVE_EXECINFO_H
 /* Extracts the function name and offset from a backtrace line
@@ -38,7 +54,7 @@ static char * extract_function(char * bt_line, bool name_only) {
    char * result = NULL;
    char * start = strchr(bt_line, '(');
    if (!start) {
-      result = strdup("???");
+      result = g_strdup("???");
    }
    else {
       start++;          // character after paren
@@ -57,12 +73,16 @@ static char * extract_function(char * bt_line, bool name_only) {
    }
    if (name_only) {
       char *p = strchr(result, '+');
-      if (p)
+      if (p) {
          *p = '\0';
+         char * res = g_strdup(result);
+         free(result);
+         result = res;
+      }
    }
 
    if (debug)
-      printf("(%s) Returning |%s|\n", __func__, result);
+      printf("(%s) Returning %p -> |%s|\n", __func__, result, result);
    return result;
 }
 #endif
@@ -120,6 +140,11 @@ void show_backtrace(int stack_adjust)
 }
 #endif
 
+/** Returns an array of function names for the backtrace stack.
+ *
+ *  @param stack_adjust  adjust the start of the reported functions
+ *  @return array of strings of names of functions, caller must deep free
+ */
 GPtrArray * get_backtrace(int stack_adjust) {
 #ifdef HAVE_EXECINFO_H
    bool debug = false;
@@ -152,7 +177,7 @@ GPtrArray * get_backtrace(int stack_adjust) {
          }
          else {
             // printf("   %s\n", strings[j]);
-            char * s = extract_function(strings[j], true);
+            char * s = extract_function(strings[j], true); // caller must free s
             if (debug)
                printf("   %s\n", s);
             g_ptr_array_add(result, s);
@@ -171,7 +196,7 @@ GPtrArray * get_backtrace(int stack_adjust) {
 }
 
 void show_backtrace(int stack_adjust) {
-   GPtrArray * callstack = get_backtrace(stack_adjust);
+   GPtrArray * callstack = get_backtrace(stack_adjust+2); // +2 for get_backtrace(), backtrace()
    if (!callstack) {
       perror("backtrace unavailable");
    }
@@ -180,8 +205,56 @@ void show_backtrace(int stack_adjust) {
       for (int ndx = 0; ndx < callstack->len; ndx++) {
          printf("   %s\n", (char *) g_ptr_array_index(callstack, ndx));
       }
+      g_ptr_array_set_free_func(callstack, g_free);
       g_ptr_array_free(callstack, true);
    }
 }
+
+static int min_funcname_size = 32;
+
+void set_simple_dbgmsg_min_funcname_size(int new_size) {
+   min_funcname_size = new_size;
+}
+
+bool simple_dbgmsg(
+        bool              debug_flag,
+        const char *      funcname,
+        const int         lineno,
+        const char *      filename,
+        const char *      format,
+        ...)
+{
+   bool debug_func = false;
+   if (debug_func)
+      printf("(simple_dbgmsg) Starting. debug_flag=%s, funcname=%s filename=%s, lineno=%d\n",
+                       sbool(debug_flag), funcname, filename, lineno);
+
+#ifdef UNUSED
+   char thread_prefix[15] = "";
+    int tid = pthread_getthreadid_np();
+       pid_t pid = syscall(SYS_getpid);
+       snprintf(thread_prefix, 15, "[%7jd]", (intmax_t) pid);  // is this proper format for pid_t
+#endif
+
+   bool msg_emitted = false;
+   if ( debug_flag ) {
+      va_list(args);
+      va_start(args, format);
+      char * buffer = g_strdup_vprintf(format, args);
+      va_end(args);
+
+      char * buf2 = g_strdup_printf("(%-*s) %s", min_funcname_size, funcname, buffer);
+
+      f0puts(buf2, stdout);
+      f0putc('\n', stdout);
+      fflush(stdout);
+      free(buffer);
+      free(buf2);
+      msg_emitted = true;
+   }
+
+   return msg_emitted;
+}
+
 
 

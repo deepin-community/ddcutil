@@ -3,7 +3,7 @@
  *  drm reporting for the environment command
  */
 
-// Copyright (C) 2017-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2017-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 
@@ -12,7 +12,7 @@
 /** \cond */
 #include <assert.h>
 #include <errno.h>
-#include <glib.h>
+#include <glib-2.0/glib.h>
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -28,6 +28,7 @@
 #include <drm/drm_mode.h>
 #endif
 
+#include "util/drm_common.h"
 #include "util/edid.h"
 #include "util/file_util.h"
 #include "util/glib_util.h"
@@ -145,7 +146,7 @@ static void probe_open_device_using_libdrm(int fd, int depth) {
 
    rpt_nl();
 
-   DBGTRC(debug, TRACE_GROUP, "Starting. fd=%d", fd);
+   DBGTRC_STARTING(debug, TRACE_GROUP, "fd=%d", fd);
 
    // succeeds if run as root, fails w errno=EACCES(13) if not
    // but no effect on subsequent failures for nvidia
@@ -282,6 +283,7 @@ static void probe_open_device_using_libdrm(int fd, int depth) {
    rpt_nl();
    rpt_vstring(d1, "Retrieving DRM resources...");
    drmModeResPtr res = drmModeGetResources(fd);
+   DBGMSF(debug,"res=%p", (void*)res);
    if (!res) {
       int errsv = errno;
       rpt_vstring(d1, "Failure retrieving DRM resources, errno=%s", linux_errno_desc(errno));
@@ -294,8 +296,14 @@ static void probe_open_device_using_libdrm(int fd, int depth) {
 
    int edid_prop_id         = 0;
    int subconnector_prop_id = 0;
-   drmModePropertyPtr edid_prop_ptr   = NULL;
-   drmModePropertyPtr subconn_prop_ptr = NULL;
+   int dpms_prop_id         = 0;
+   int link_status_prop_id  = 0;
+   int type_prop_id         = 0;
+   drmModePropertyPtr edid_prop_ptr        = NULL;
+   drmModePropertyPtr subconn_prop_ptr     = NULL;
+   drmModePropertyPtr dpms_prop_ptr        = NULL;
+   drmModePropertyPtr link_status_prop_ptr = NULL;
+   drmModePropertyPtr type_prop_ptr        = NULL;
 
    rpt_nl();
    rpt_vstring(d1, "Scanning defined properties...");
@@ -306,7 +314,7 @@ static void probe_open_device_using_libdrm(int fd, int depth) {
             report_drm_modeProperty(prop_ptr, d2);
          else {
             // TMI
-            // summarize_drm_modeProperty(prop_ptr, d2);
+            summarize_drm_modeProperty(prop_ptr, d2);
          }
 
          // printf("prop_id=%d\n", prop_id);
@@ -319,7 +327,52 @@ static void probe_open_device_using_libdrm(int fd, int depth) {
             // rpt_vstring(d1, "Found subconnector property, prop_id=%d, prop_ptr->prop_id=%u", prop_id, prop_ptr->prop_id);
             subconnector_prop_id = prop_id;
             subconn_prop_ptr = prop_ptr;
+            if (subconn_prop_ptr->flags & DRM_MODE_PROP_ENUM) {
+               // rpt_vstring(d2, "Property values table:");
+               for (int i = 0;  i < subconn_prop_ptr->count_enums; i++) {
+                  rpt_vstring(d3, "enum value: %"PRIu64", enum name: %s",
+                        subconn_prop_ptr->enums[i].value, subconn_prop_ptr->enums[i].name);
+               }
+            }
          }
+         else if (streq(prop_ptr->name, "DPMS")) {
+            // rpt_vstring(d1, "Found DPMS property, prop_id=%d, prop_ptr->prop_id=%u", prop_id, prop_ptr->prop_id);
+            dpms_prop_id = prop_id;
+            dpms_prop_ptr = prop_ptr;
+            if (prop_ptr->flags & DRM_MODE_PROP_ENUM) {
+                // rpt_vstring(d2, "Property values table:");
+                for (int i = 0;  i < prop_ptr->count_enums; i++) {
+                   rpt_vstring(d3, "enum value: %"PRIu64", enum name: %s",
+                         prop_ptr->enums[i].value, prop_ptr->enums[i].name);
+                }
+            }
+         }
+         else if (streq(prop_ptr->name, "link-status")) {
+            // rpt_vstring(d1, "Found link-status property, prop_id=%d, prop_ptr->prop_id=%u", prop_id, prop_ptr->prop_id);
+            link_status_prop_id = prop_id;
+            link_status_prop_ptr = prop_ptr;
+            if (prop_ptr->flags & DRM_MODE_PROP_ENUM) {
+                // rpt_vstring(d2, "Property values table:");
+                for (int i = 0;  i < prop_ptr->count_enums; i++) {
+                   rpt_vstring(d3, "enum value: %"PRIu64", enum name: %s",
+                         prop_ptr->enums[i].value, prop_ptr->enums[i].name);
+                }
+            }
+         }
+
+         else if (streq(prop_ptr->name, "type")) {
+            // rpt_vstring(d1, "Found type property, prop_id=%d, prop_ptr->prop_id=%u", prop_id, prop_ptr->prop_id);
+            type_prop_id = prop_id;
+            type_prop_ptr = prop_ptr;
+            if (prop_ptr->flags & DRM_MODE_PROP_ENUM) {
+                // rpt_vstring(d2, "Property values table:");
+                for (int i = 0;  i < prop_ptr->count_enums; i++) {
+                   rpt_vstring(d3, "enum value: %"PRIu64", enum name: %s",
+                         prop_ptr->enums[i].value, prop_ptr->enums[i].name);
+                }
+            }
+         }
+
          else {
             drmModeFreeProperty(prop_ptr);
          }
@@ -370,6 +423,7 @@ static void probe_open_device_using_libdrm(int fd, int depth) {
       if (penc) {
          rpt_vstring(d3, "%-20s %d - %s",    "encoder type (signal format):",
                           penc->encoder_type,  encoder_type_title(penc->encoder_type));
+         free(penc);
       }
       else {
          rpt_vstring(d2, "Encoder with id %d not found", encoder_id);
@@ -389,7 +443,7 @@ static void probe_open_device_using_libdrm(int fd, int depth) {
                report_drmModePropertyBlob(blob_ptr, d3);
 
                if (blob_ptr->length >= 128) {
-                  Parsed_Edid * parsed_edid = create_parsed_edid(blob_ptr->data);
+                  Parsed_Edid * parsed_edid = create_parsed_edid2(blob_ptr->data, "DRM");
                   if (parsed_edid) {
                      report_parsed_edid_base(
                            parsed_edid,
@@ -398,7 +452,6 @@ static void probe_open_device_using_libdrm(int fd, int depth) {
                            d3);
                      free_parsed_edid(parsed_edid);
                   }
-
 
                   // DBGMSG("Before xref lookup by edid");
                   // Initial bus scan by I2C device must already have occurred,
@@ -421,9 +474,9 @@ static void probe_open_device_using_libdrm(int fd, int depth) {
                   Device_Id_Xref * xref = device_xref_find_by_edid(edidbytes);
                   if (xref) {
                   // TODO check for multiple entries with same edid
-                  xref->drm_connector_name = strdup(connector_name);
+                  xref->drm_connector_name = g_strdup(connector_name);
                   xref->drm_connector_type = conn->connector_type;
-                  // xref->drm_device_path    = strdup(conn->
+                  // xref->drm_device_path    = g_strdup(conn->
 
                   if (xref->ambiguous_edid) {
                      rpt_vstring(d3, "Multiple displays have same EDID ...%s", xref->edid_tag);
@@ -442,31 +495,93 @@ static void probe_open_device_using_libdrm(int fd, int depth) {
             }
          }
          else if (conn->props[ndx] == subconnector_prop_id) {
+            rpt_vstring(d2, "Subconnector property");
             assert(subconn_prop_ptr);   // if subconnector_prop_id found, subconn_prop_ptr must have been set
             uint32_t enum_value = conn->prop_values[ndx];
-            // printf("subconnector value: %d\n", enum_value);
+            // printf("subconnector value: %d, count_enums:%d\n", enum_value, subconn_prop_ptr->count_enums);
+            assert(subconn_prop_ptr->flags & DRM_MODE_PROP_ENUM);
+            bool found = false;
+            for (int i = 0; i < subconn_prop_ptr->count_enums && !found; i++) {
+               if (subconn_prop_ptr->enums[i].value == enum_value) {
+                  rpt_vstring(d3, "Subconnector value = %2d - %s",
+                                  enum_value, subconn_prop_ptr->enums[i].name);
+                  found = true;
+               }
+            }
+            if (!found) {
+               rpt_vstring(d3, "Unrecognized subconnector value: %d", enum_value);
+            }
+         }
 
-            // assert(subconn_prop_ptr->flags & DRM_MODE_PROP_ENUM);
-            // assert(enum_value < subconn_prop_ptr->count_enums);
+         else if (conn->props[ndx] == dpms_prop_id) {
+            rpt_vstring(d2, "DPMS property");
+            assert(dpms_prop_ptr);   // if dpms_prop_id found, dpms_prop_ptr must have been set
+            uint32_t enum_value = conn->prop_values[ndx];
+            // printf("dpms value: %d\n", enum_value);
 
-            if (subconn_prop_ptr->flags & DRM_MODE_PROP_ENUM) {
+            assert(dpms_prop_ptr->flags & DRM_MODE_PROP_ENUM);
+
+            if (dpms_prop_ptr->flags & DRM_MODE_PROP_ENUM) {
                bool found = false;
-                for (int i = 0; i < subconn_prop_ptr->count_enums && !found; i++) {
-                   if (subconn_prop_ptr->enums[i].value == enum_value) {
-                      rpt_vstring(d2, "Subconnector value = %d - %s",
-                                      enum_value, subconn_prop_ptr->enums[i].name);
+                for (int i = 0; i < dpms_prop_ptr->count_enums && !found; i++) {
+                   if (dpms_prop_ptr->enums[i].value == enum_value) {
+                      rpt_vstring(d3, "dpms value = %d - %s",
+                                      enum_value, dpms_prop_ptr->enums[i].name);
                       found = true;
                    }
                 }
                 if (!found) {
-                   rpt_vstring(d2, "Unrecognized subconnector value: %d", enum_value);
+                   rpt_vstring(d3, "Unrecognized dpms value: %d", enum_value);
                 }
             }
             else {
-               rpt_vstring(d2, "Subconnector not type enum!.  Value = %d", enum_value);
+               rpt_vstring(d2, "dpms not type enum!.  Value = %d", enum_value);
             }
-
          }
+
+         else if (conn->props[ndx] == link_status_prop_id) {
+            rpt_vstring(d2, "link-status property");
+            assert(link_status_prop_ptr);   // if link_status_prop_id found, link_status_prop_ptr must have been set
+            uint64_t enum_value = conn->prop_values[ndx];
+            // printf("link_status value: %d\n", enum_value);
+
+            assert(link_status_prop_ptr->flags & DRM_MODE_PROP_ENUM);
+
+            bool found = false;
+             for (int i = 0; i < link_status_prop_ptr->count_enums && !found; i++) {
+                if (link_status_prop_ptr->enums[i].value == enum_value) {
+                   rpt_vstring(d3, "link-status value = %u - %s",
+                                   (unsigned) enum_value, link_status_prop_ptr->enums[i].name);
+                   found = true;
+                }
+             }
+             if (!found) {
+                rpt_vstring(d2, "Unrecognized link-status value: %u", (unsigned) enum_value);
+             }
+         }
+
+         else if (conn->props[ndx] == type_prop_id) {
+            rpt_vstring(d2, "type property");
+            assert(type_prop_ptr);   // if type_prop_id found, type_prop_ptr must have been set
+            uint32_t enum_value = conn->prop_values[ndx];
+            // printf("type value: %d\n", enum_value);
+
+            assert(type_prop_ptr->flags & DRM_MODE_PROP_ENUM);
+
+            bool found = false;
+             for (int i = 0; i < type_prop_ptr->count_enums && !found; i++) {
+                if (type_prop_ptr->enums[i].value == enum_value) {
+                   rpt_vstring(d2, "type value = %u - %s",
+                                   enum_value, type_prop_ptr->enums[i].name);
+                   found = true;
+                }
+             }
+             if (!found) {
+                rpt_vstring(d2, "Unrecognized type value: %u", enum_value);
+             }
+         }
+
+
 #ifdef FUTURE
          else {
             drmModePropertyPtr prop_ptr = drmModeGetProperty(fd, conn->props[ndx]);
@@ -485,6 +600,7 @@ static void probe_open_device_using_libdrm(int fd, int depth) {
 #endif
 
       }
+      drmModeFreeConnector(conn);
       rpt_nl();
    }
 
@@ -494,9 +610,20 @@ static void probe_open_device_using_libdrm(int fd, int depth) {
    if (subconn_prop_ptr) {
       drmModeFreeProperty(subconn_prop_ptr);
    }
+   if (dpms_prop_ptr) {
+      drmModeFreeProperty(dpms_prop_ptr);
+   }
+   if (link_status_prop_ptr) {
+      drmModeFreeProperty(link_status_prop_ptr);
+   }
+   if (type_prop_ptr) {
+      drmModeFreeProperty(type_prop_ptr);
+   }
+   DBGMSF(debug, "freeing res=%p", (void*)res);
+   drmModeFreeResources(res);
 
 bye:
-   DBGTRC0(debug, TRACE_GROUP, "Done");
+   DBGTRC_DONE(debug, TRACE_GROUP, "");
    rpt_nl();
    return;
 }
@@ -643,7 +770,7 @@ static void probe_one_device_using_libdrm(char * devname, int depth) {
    }
 }
 
-
+#ifdef DUPLICATE
 /* Filter to find driN files using scandir() in get_filenames_by_filter() */
 static int is_dri(const struct dirent *ent) {
    return !strncmp(ent->d_name, "card", strlen("card"));
@@ -660,6 +787,7 @@ GPtrArray * get_dri_device_names_using_filesys() {
    g_ptr_array_sort(dev_names, gaux_ptr_scomp);   // needed?
    return dev_names;
 }
+#endif
 
 
 /* Main function for probing device information, particularly EDIDs,
@@ -670,22 +798,25 @@ GPtrArray * get_dri_device_names_using_filesys() {
  * the functions, set errno=22 (EINVAL).
  */
 void probe_using_libdrm() {
-   rpt_title("Probing connected monitors using libdrm...",0);
+   int d0 = 0;
+   int d1 = d0+1;
+   int d2 = d0+2;
+   rpt_label(d0, "*** Probing connected monitors using libdrm ***");
 
    if ( directory_exists("/proc/driver/nvidia/") ) {
       rpt_nl();
       rpt_vstring(1,"Checking Nvidia options to see if experimental kernel modesetting enabled:");
       char * cmd = "modprobe -c | grep \"^options nvidia\"";
-      rpt_vstring(1, "Executing command: %s", cmd);
-      execute_shell_cmd_rpt(cmd, 2 /* depth */);
+      rpt_vstring(d1, "Executing command: %s", cmd);
+      execute_shell_cmd_rpt(cmd, d2);
    }
 
    // Check libdrm version, since there seems to be some sensitivity
    rpt_nl();
    if (is_command_in_path("pkg-config")) {
-      rpt_vstring(1, "Checking libdrm version using pkg-config...");
+      rpt_vstring(d1, "Checking libdrm version using pkg-config...");
       char * cmd = "pkg-config --modversion libdrm";
-      execute_shell_cmd_rpt(cmd, 2);
+      execute_shell_cmd_rpt(cmd, d2);
    }
 
    else {
@@ -693,15 +824,15 @@ void probe_using_libdrm() {
 
       if (is_command_in_path("dpkg-query")) {
          char * cmd = "dpkg-query -l libdrm2 | grep ii";
-         rpt_vstring(1, "Checking libdrm version using dpkg-query...");
-         execute_shell_cmd_rpt(cmd, 2);
+         rpt_vstring(d1, "Checking libdrm version using dpkg-query...");
+         execute_shell_cmd_rpt(cmd, d2);
       }
 
       rpt_nl();
       if (is_command_in_path("rpm")) {
          char * cmd = "rpm -qa | grep libdrm";
-         rpt_vstring(1, "Checking libdrm version using rpm...");
-         execute_shell_cmd_rpt(cmd, 2);
+         rpt_vstring(d1, "Checking libdrm version using rpm...");
+         execute_shell_cmd_rpt(cmd, d2);
       }
    }
 
@@ -713,8 +844,8 @@ void probe_using_libdrm() {
    rpt_nl();
    // returns 1 if the DRM driver is loaded, 0 otherwise
    int drm_available = drmAvailable();
-   rpt_vstring(1, "Has a DRM kernel driver been loaded? (drmAvailable()): %s",
-                  sbool(drm_available));
+   rpt_vstring(d1, "Has a DRM kernel driver been loaded? (drmAvailable()): %s",
+                   sbool(drm_available));
 
 #ifdef DOESNT_WORK
    // function drmOpenMinor() is static

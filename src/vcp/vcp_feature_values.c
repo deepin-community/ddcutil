@@ -1,10 +1,10 @@
 // vcp_feature_values.c
 
-// Copyright (C) 2014-2018 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <assert.h>
-#include <glib.h>
+#include <glib-2.0/glib.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -225,20 +225,32 @@ void free_single_vcp_value(DDCA_Any_Vcp_Value * vcp_value) {
 }
 
 
+#ifdef UNUSED
 // wrap free_single_vcp_value() in signature of GDestroyNotify()
 void free_single_vcp_value_func(gpointer data) {
    free_single_vcp_value((DDCA_Any_Vcp_Value *) data);
 }
+#endif
 
 
-   DDCA_Any_Vcp_Value *
-   create_nontable_vcp_value(
-         Byte feature_code,
-         Byte mh,
-         Byte ml,
-         Byte sh,
-         Byte sl)
-   {
+/** Creates a #DDCA_Any_Vcp_Value from the individual field values.
+ *
+ *  @param  feature_code
+ *  @param  mh
+ *  @param  ml
+ *  @param  sh
+ *  @param  sl
+ *  @return newly allocated #DDCA_Any_Vcp_Value instance
+ *          (caller is responsible for freeing)
+ */
+DDCA_Any_Vcp_Value *
+create_nontable_vcp_value(
+      Byte feature_code,
+      Byte mh,
+      Byte ml,
+      Byte sh,
+      Byte sl)
+{
    DDCA_Any_Vcp_Value * valrec = calloc(1,sizeof(DDCA_Any_Vcp_Value));
 
    valrec->value_type = DDCA_NON_TABLE_VCP_VALUE;
@@ -256,9 +268,9 @@ void free_single_vcp_value_func(gpointer data) {
 
 DDCA_Any_Vcp_Value *
 create_cont_vcp_value(
-      Byte feature_code,
-      ushort max_val,
-      ushort cur_val)
+      Byte    feature_code,
+      gushort max_val,
+      gushort cur_val)
 {
    DDCA_Any_Vcp_Value * valrec = calloc(1,sizeof(DDCA_Any_Vcp_Value));
    valrec->value_type = DDCA_NON_TABLE_VCP_VALUE;
@@ -273,9 +285,9 @@ create_cont_vcp_value(
 
 DDCA_Any_Vcp_Value *
 create_table_vcp_value_by_bytes(
-      Byte   feature_code,
-      Byte * bytes,
-      ushort bytect)
+      Byte    feature_code,
+      Byte *  bytes,
+      gushort bytect)
 {
    DDCA_Any_Vcp_Value * valrec = calloc(1,sizeof(DDCA_Any_Vcp_Value));
    valrec->value_type = DDCA_TABLE_VCP_VALUE;
@@ -323,6 +335,7 @@ create_single_vcp_value_by_parsed_vcp_response(
 }
 
 
+#ifdef UNUSED
 // temp for aid in conversion
 
 Parsed_Vcp_Response * single_vcp_value_to_parsed_vcp_response(
@@ -331,16 +344,15 @@ Parsed_Vcp_Response * single_vcp_value_to_parsed_vcp_response(
    presp->response_type = valrec->value_type;
    if (valrec->value_type == DDCA_NON_TABLE_VCP_VALUE) {
       presp->non_table_response = calloc(1, sizeof(Parsed_Nontable_Vcp_Response));
-      presp->non_table_response->cur_value = VALREC_CUR_VAL(valrec);
-      presp->non_table_response->max_value = VALREC_MAX_VAL(valrec);
+      // presp->non_table_response->cur_value = VALREC_CUR_VAL(valrec);
+      // presp->non_table_response->max_value = VALREC_MAX_VAL(valrec);
       presp->non_table_response->mh  = valrec->val.c_nc.mh;
-      presp->non_table_response->ml   = valrec->val.c_nc.ml;
+      presp->non_table_response->ml  = valrec->val.c_nc.ml;
       presp->non_table_response->sh  = valrec->val.c_nc.sh;
-      presp->non_table_response->sl   = valrec->val.c_nc.sl;
+      presp->non_table_response->sl  = valrec->val.c_nc.sl;
       presp->non_table_response->supported_opcode = true;
       presp->non_table_response->valid_response = true;
       presp->non_table_response->vcp_code = valrec->opcode;
-
    }
    else {
       assert(valrec->value_type == DDCA_TABLE_VCP_VALUE);
@@ -350,6 +362,7 @@ Parsed_Vcp_Response * single_vcp_value_to_parsed_vcp_response(
    }
    return presp;
 }
+#endif
 
 
 Nontable_Vcp_Value * single_vcp_value_to_nontable_vcp_value(DDCA_Any_Vcp_Value * valrec) {
@@ -437,7 +450,7 @@ Single_Vcp_Value * any_vcp_value_to_single_vcp_value(DDCA_Any_Vcp_Value * anyval
 
 Vcp_Value_Set vcp_value_set_new(int initial_size){
    GPtrArray* ga = g_ptr_array_sized_new(initial_size);
-   g_ptr_array_set_free_func(ga, free_single_vcp_value_func);
+   g_ptr_array_set_free_func(ga, (GDestroyNotify) free_single_vcp_value);
    return ga;
 }
 

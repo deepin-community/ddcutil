@@ -1,13 +1,13 @@
 /* \file ddc_output.h
  */
 
-// Copyright (C) 2014-202- Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2022 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DDC_OUTPUT_H_
 #define DDC_OUTPUT_H_
 
-#include <glib.h>
+#include <glib-2.0/glib.h>
 #include <stdio.h>
 #include <time.h>
 
@@ -15,11 +15,8 @@
 #include "base/displays.h"
 #include "base/status_code_mgt.h"
 
-#include "vcp/vcp_feature_codes.h"
 #include "vcp/vcp_feature_set.h"
 #include "vcp/vcp_feature_values.h"
-
-#include "dynvcp/dyn_feature_codes.h"
 
 
 // TODO: Should probably be in a more general location
@@ -53,7 +50,7 @@ ddc_collect_raw_subset_values(
       FILE *              msg_fh);
 
 Public_Status_Code
-ddc_get_formatted_value_for_display_feature_metadata(
+ddc_get_formatted_value_for_dfm(
       Display_Handle *            dh,
       Display_Feature_Metadata *  dfm,
       bool                        suppress_unsupported,
@@ -67,7 +64,7 @@ ddc_show_vcp_values(
       VCP_Feature_Subset  subset,
       GPtrArray *         collector,
       Feature_Set_Flags   flags,
-      Byte_Bit_Flags      features_seen);
+      Bit_Set_256 *       features_seen);
 
 
 void init_ddc_output();

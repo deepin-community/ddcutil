@@ -1,7 +1,7 @@
 /** @file usb_displays.c
  */
 
-// Copyright (C) 2014-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 /** \cond */
@@ -17,12 +17,12 @@
 #include "util/device_id_util.h"
 #include "util/report_util.h"
 #include "util/string_util.h"
-#include "util/udev_util.h"
 #include "util/udev_usb_util.h"
+#include "util/udev_util.h"
 
-#include "usb_util/usb_hid_common.h"
 #include "usb_util/hiddev_reports.h"
 #include "usb_util/hiddev_util.h"
+#include "usb_util/usb_hid_common.h"
 
 #include "base/core.h"
 #include "base/ddc_errno.h"
@@ -49,6 +49,7 @@ static DDCA_Trace_Group TRACE_GROUP = DDCA_TRC_USB;  // may be unused if all dia
 
 // Global variables
 static GPtrArray * usb_monitors = NULL;    // array of Usb_Monitor_Info
+static GPtrArray * usb_open_errors = NULL;
 
 
 #define HID_USAGE_PAGE_MASK   0xffff0000
@@ -69,15 +70,14 @@ static GPtrArray * usb_monitors = NULL;    // array of Usb_Monitor_Info
 // Some data structures are defined here, others in usb_core.h
 //
 
-/* Reports contents of usb_monitor_vcp_rec struct
+/** Emits a debugging report of a #Usb_Monitor_Vcp_Rec struct describing
+ *  a single USB "report"
  *
- * Arguments:
- *   vcprec
- *   depth
- *
- * Returns:   nothing
+ *  @param vcprec  pointer to struct
+ *  @param depth   logical indentation depth
  */
-static void report_usb_monitor_vcp_rec(Usb_Monitor_Vcp_Rec * vcprec, int depth) {
+static void
+dbgrpt_usb_monitor_vcp_rec(Usb_Monitor_Vcp_Rec * vcprec, int depth) {
    const int d1 = depth+1;
    rpt_structure_loc("Usb_Monitor_Vcp_Rec", vcprec, depth);
    rpt_vstring(d1, "%-20s:    %-4.4s", "marker",       vcprec->marker);
@@ -93,15 +93,31 @@ static void report_usb_monitor_vcp_rec(Usb_Monitor_Vcp_Rec * vcprec, int depth) 
 }
 
 
-/* Reports contents of Usb_Monitor_Info struct
+static void
+free_usb_monitor_vcp_rec(gpointer p) {
+   struct usb_monitor_vcp_rec * vrec = p;
+   bool debug = false;
+   DBGTRC_STARTING(debug, DDCA_TRC_USB, "vrec = %p", vrec);
+
+   if (vrec) {
+      assert(memcmp(vrec->marker, USB_MONITOR_VCP_REC_MARKER, 4) == 0);
+      free(vrec->rinfo);
+      free(vrec->finfo);
+      free(vrec->uref);
+      vrec->marker[3] = 'x';
+      free(vrec);
+   }
+   DBGTRC_DONE(debug, DDCA_TRC_USB, "");
+}
+
+
+/** Emits a debugging report of a #Usb_Monitor_Info struct
  *
- * Arguments:
- *    moninfo     pointer to Monitor_Info
- *    depth       logical indentation depth
- *
- * Returns:       nothing
+ *  @param  moninfo     pointer to instance
+ *  @param  depth       logical indentation depth
  */
-void dbgrpt_usb_monitor_info(Usb_Monitor_Info * moninfo, int depth) {
+void
+dbgrpt_usb_monitor_info(Usb_Monitor_Info * moninfo, int depth) {
    const int d1 = depth+1;
    const int d2 = depth+2;
    rpt_structure_loc("Usb_Monitor_Info", moninfo, d1);
@@ -114,25 +130,50 @@ void dbgrpt_usb_monitor_info(Usb_Monitor_Info * moninfo, int depth) {
    for (feature_code = 0; feature_code < 256; feature_code++) {
       GPtrArray * monrecs = moninfo->vcp_codes[feature_code];
       if (monrecs) {
-         rpt_vstring(d1, "vcp feature code 0x%02x has %d records:", feature_code, monrecs->len);
+         rpt_vstring(d1, "vcp_codes[0x%02x]=%p is a GPtrArray with %d records:",
+               feature_code, monrecs, monrecs->len);
          for (int ndx=0; ndx<monrecs->len; ndx++) {
-            report_usb_monitor_vcp_rec( g_ptr_array_index(monrecs, ndx), d2);
+            dbgrpt_usb_monitor_vcp_rec( g_ptr_array_index(monrecs, ndx), d2);
          }
       }
    }
 }
 
 
-/* Reports on an array of Usb_Monitor_info structs
+static void
+free_usb_monitor_info(gpointer p) {
+   struct usb_monitor_info * moninfo = p;
+   bool debug = false;
+   DBGTRC_STARTING(debug, TRACE_GROUP, "moninfo = %p", moninfo);
+
+   if (moninfo) {
+      assert(memcmp(moninfo->marker, USB_MONITOR_INFO_MARKER, 4) == 0);
+      if (debug)
+         dbgrpt_usb_monitor_info(moninfo, 2);
+      free(moninfo->hiddev_device_name);
+      DBGMSF(debug, "Freeing moninfo->edid = %p", moninfo->edid);
+      free_parsed_edid(moninfo->edid);
+      free(moninfo->hiddev_devinfo);
+      for (int ndx = 0; ndx < 256; ndx++) {
+         if (moninfo->vcp_codes[ndx]) {
+            g_ptr_array_set_free_func(moninfo->vcp_codes[ndx], free_usb_monitor_vcp_rec);
+            g_ptr_array_free(moninfo->vcp_codes[ndx], true);
+         }
+      }
+      moninfo->marker[3] = 'x';
+      free(moninfo);
+   }
+   DBGTRC_DONE(debug, TRACE_GROUP, "");
+}
+
+
+/** Reports on an array of #Usb_Monitor_info structs
  *
- * Arguments:
- *   monitors    pointer to GPtrArray of pointer to struct Usb_Monitor_Info
- *   depth       logical indentation depth
- *
- * Returns:      nothing
+ *  @param monitors    pointer to GPtrArray of pointer to struct #Usb_Monitor_Info
+ *  @param depth       logical indentation depth
  */
-// static
-void report_usb_monitors(GPtrArray * monitors, int depth) {
+static void
+report_usb_monitors(GPtrArray * monitors, int depth) {
    const int d1 = depth+1;
 
    rpt_vstring(depth, "GPtrArray of %d Usb_Monitor_Info at %p", monitors->len, monitors);
@@ -146,13 +187,28 @@ void report_usb_monitors(GPtrArray * monitors, int depth) {
 // HID Report Inquiry
 //
 
-/* Locates all USB HID reports relating to querying and setting VCP feature values.
- *
- * Returns:  array of Usb_Monitor_Vcp_Rec for each usage
- */
-GPtrArray * collect_vcp_reports(int fd) {
+Usb_Monitor_Vcp_Rec * create_usb_monitor_vcp_rec(Byte feature_code) {
    bool debug = false;
-   DBGTRC(debug, TRACE_GROUP, "Starting");
+   DBGTRC_STARTING(debug, TRACE_GROUP, "feature_code=0x%02x", feature_code);
+   Usb_Monitor_Vcp_Rec * vcprec = calloc(1, sizeof(Usb_Monitor_Vcp_Rec));
+   memcpy(vcprec->marker, USB_MONITOR_VCP_REC_MARKER, 4);
+   vcprec->vcp_code = feature_code;
+   DBGTRC_DONE(debug, TRACE_GROUP, "Returning: %p", vcprec);
+   return vcprec;
+}
+
+
+
+/** Locates all USB HID reports for a device that relate to querying and
+ *  setting VCP feature values.
+ *
+ *  @param  fd  file descriptor of open HID device
+ *  @return array of #Usb_Monitor_Vcp_Rec for each usage
+ */
+static GPtrArray *
+collect_vcp_reports(int fd) {
+   bool debug = false;
+   DBGTRC_STARTING(debug, TRACE_GROUP, "");
    GPtrArray * vcp_reports = g_ptr_array_new();
    for (__u32 report_type = HID_REPORT_TYPE_MIN; report_type <= HID_REPORT_TYPE_MAX; report_type++) {
       int reportinfo_rc = 0;
@@ -166,8 +222,7 @@ GPtrArray * collect_vcp_reports(int fd) {
            //       __func__, rptct, rinfo.report_id, interpret_report_id(rinfo.report_id));
 
           errno = 0;
-          // eliminated CALLOPT_ERR_ABORT:
-          reportinfo_rc = hiddev_get_report_info(fd, &rinfo, CALLOPT_ERR_MSG);
+          reportinfo_rc = hiddev_get_report_info(fd, &rinfo, CALLOPT_ERR_MSG); //HIDIOCGDEVINFO
           // reportinfo_rc = ioctl(fd, HIDIOCGREPORTINFO, &rinfo);
           if (reportinfo_rc != 0) {    // no more reports
              assert( reportinfo_rc == -1);
@@ -186,7 +241,7 @@ GPtrArray * collect_vcp_reports(int fd) {
                    .report_id   = rinfo.report_id,
                    .field_index = fndx
              };
-             Byte callopts = CALLOPT_ERR_MSG;    //  | CALLOPT_ERR_ABORT;
+             Byte callopts = CALLOPT_ERR_MSG;
              if (debug)
                 callopts |= CALLOPT_WARN_FINDEX;
              int rc = hiddev_get_field_info(fd, &finfo, callopts);
@@ -202,16 +257,14 @@ GPtrArray * collect_vcp_reports(int fd) {
                        .field_index = fndx,
                        .usage_index = undx
                 };
-                int rc = hiddev_get_usage_code(fd, &uref, CALLOPT_ERR_MSG); // |CALLOPT_ERR_ABORT);
+                int rc = hiddev_get_usage_code(fd, &uref, CALLOPT_ERR_MSG);
                 if (rc < 0)
                    continue;
                 if ( (uref.usage_code & 0xffff0000) != 0x00820000)  // Monitor VESA Virtual Controls page
                    continue;
                 Byte vcp_feature = uref.usage_code & 0xff;
 
-                Usb_Monitor_Vcp_Rec * vcprec = calloc(1, sizeof(Usb_Monitor_Vcp_Rec));
-                memcpy(vcprec->marker, USB_MONITOR_VCP_REC_MARKER, 4);
-                vcprec->vcp_code = vcp_feature;
+                Usb_Monitor_Vcp_Rec * vcprec = create_usb_monitor_vcp_rec(vcp_feature);
                 vcprec->report_type = report_type;
                 vcprec->report_id   = rinfo.report_id;
                 vcprec->field_index = fndx;
@@ -235,7 +288,7 @@ GPtrArray * collect_vcp_reports(int fd) {
           rinfo.report_id |= HID_REPORT_ID_NEXT;
        }
    }
-   DBGTRC(debug, TRACE_GROUP, "Returning %d VCP reports", vcp_reports->len);
+   DBGTRC_DONE(debug, TRACE_GROUP, "Returning %d VCP reports", vcp_reports->len);
    return vcp_reports;
 }
 
@@ -246,13 +299,16 @@ GPtrArray * collect_vcp_reports(int fd) {
 
 /** Creates a capabilities string for the USB device.
  *
- *  Returns:   synthesized capabilities string, containing only a vcp segment
+ *  @param  pointer to #Usb_Monitor_Info instance
+ *  @return synthesized capabilities string, containing only a vcp segment
  *
+ *  It is the responsibility of the caller to free the returned string
+ *
+ *  @remark
  *  Note that the USB HID Monitor spec does not define a capabilities report.
- *
- *  It is the responsibility of the caller to free the returned string.
  */
-static char * usb_synthesize_capabilities_string(Usb_Monitor_Info * moninfo) {
+static char *
+usb_synthesize_capabilities_string(Usb_Monitor_Info * moninfo) {
    assert(moninfo);
    char buf[1000];
    strcpy(buf,"(vcp(");
@@ -271,17 +327,22 @@ static char * usb_synthesize_capabilities_string(Usb_Monitor_Info * moninfo) {
       }
    }
    strcpy(buf+curlen, "))");
-   char * result = strdup(buf);
+   char * result = g_strdup(buf);
    return result;
 }
 
 
+/** Checks the interfaces for a device to determine if it may
+ *  be a keyboard or mouse, in which case it should not be probed.
+ *
+ *  @param  interfaces interface ids, separated by ":"
+ *  @return true/false
+ */
 static bool
 avoid_device_by_usb_interfaces_property_string(const char * interfaces) {
    bool debug = false;
+   DBGTRC_STARTING(debug, TRACE_GROUP, "interfaces = |%s|", interfaces);
 
-   DBGTRC(debug, TRACE_GROUP, "Starting. interfaces = |%s|", interfaces);
-   fflush(stdout);
    Null_Terminated_String_Array pieces = strsplit(interfaces, ":");
    // if (debug)
    //    ntsa_show(pieces);
@@ -306,35 +367,37 @@ avoid_device_by_usb_interfaces_property_string(const char * interfaces) {
           )
        {
           avoid = true;
-          DBGTRC(debug, TRACE_GROUP, "Avoiding device with interface %s", pieces[ndx]);
+          DBGTRC_NOPREFIX(debug, TRACE_GROUP, "Avoiding device with interface %s", pieces[ndx]);
           break;
        }
        ndx++;
     }
     ntsa_free(pieces, true);
-    DBGTRC(debug, TRACE_GROUP, "Returning: %s", sbool(avoid));
+
+    DBGTRC_RET_BOOL(debug, TRACE_GROUP, avoid, "");
     return avoid;
 }
 
 
 /**
- * Verifies that the device class of the Monitor is 3 (HID Device)
- * but the subclass and interface do not indicate a mouse or keybaord
+ * Verifies that the device class of the Monitor is 3 (HID Device) and
+ * that the subclass and interface do not indicate a mouse or keyboard.
  *
- *  @parmam   hiddev  device name
- *  @return   true/false
+ *  @param   hiddev  device name
+ *  @return  true/false
  */
 
-bool is_possible_monitor_by_hiddev_name(const char * hiddev_name) {
+bool
+is_possible_monitor_by_hiddev_name(const char * hiddev_name) {
    bool debug = false;
-   DBGTRC(debug, TRACE_GROUP, "Starting.  hiddev_name = %s", hiddev_name);
+   DBGTRC_STARTING(debug, TRACE_GROUP, "hiddev_name = %s", hiddev_name);
 
    Usb_Detailed_Device_Summary * devsum =  NULL;
    bool avoid = false;
    DBGTRC(debug, TRACE_GROUP, "Before lookup call");
    devsum = lookup_udev_usb_device_by_devname(hiddev_name, /* verbose = */ false);
    if (devsum) {
-      DBGTRC(debug, TRACE_GROUP, "detailed_device_summary: ");
+      DBGTRC_NOPREFIX(debug, TRACE_GROUP, "detailed_device_summary: ");
       if (debug || IS_TRACING()) {
          report_usb_detailed_device_summary(devsum, 2);
       }
@@ -343,79 +406,126 @@ bool is_possible_monitor_by_hiddev_name(const char * hiddev_name) {
       free_usb_detailed_device_summary(devsum);
    }
    else {
-      DBGTRC(debug, TRACE_GROUP, "Lookup failed");
+      DBGTRC_NOPREFIX(debug, TRACE_GROUP, "Lookup failed");
       avoid = true;
    }
 
-   DBGTRC(debug, TRACE_GROUP, "Returning: %s", sbool(!avoid));
-   return !avoid;
+   // can only pass a variable, not an expression, to DBGTRC_RET_BOOL()
+   // because failure simulation may assign a new value to the variable
+   bool result = !avoid;
+   DBGTRC_RET_BOOL(debug, TRACE_GROUP, result, "");
+   return result;
+}
+
+
+Usb_Monitor_Info * create_usb_monitor_info(const char * hiddev_name) {
+   bool debug = false;
+   DBGTRC_STARTING(debug, TRACE_GROUP, "hiddev_name |%s|", hiddev_name);
+   Usb_Monitor_Info * moninfo = calloc(1,sizeof(Usb_Monitor_Info));
+   memcpy(moninfo->marker, USB_MONITOR_INFO_MARKER, 4);
+   moninfo->hiddev_device_name = g_strdup(hiddev_name);
+   DBGTRC_DONE(debug, TRACE_GROUP, "Returning %p", moninfo);
+   return moninfo;
+}
+
+
+static
+void destroy_bus_open_error(gpointer p) {
+   Bus_Open_Error * boe = p;
+   free(boe->detail);
+   free(boe);
 }
 
 
 //
-// Probe HID devices, create USB_Mon_Info data stuctures
+// Probe HID devices, create USB_Mon_Info data structures
 //
 
-/*  Examines all hiddev devices to see if they are USB HID compliant monitors.
- *  If so, obtains the EDID, determines which reports to use for VCP feature
- *  values, etc.
+/**  Examines all hiddev devices to see if they are USB HID compliant monitors.
+ *   If so, obtains the EDID, determines which reports to use for VCP feature
+ *   values, etc.
  *
- *  Returns:   array of pointers to USB_Mon_Info records
+ *   @return:  array of pointers to USB_Mon_Info records
  *
- *  The result is cached in global variable usb_monitors
+ *   As a side effect, collects a GPtrArray of errors in global variable
+ *   usb_open_errors.
+ *
+ *  The result is cached in global variables usb_monitors and usb_open_errors.
  */
-GPtrArray * get_usb_monitor_list() {
+GPtrArray *
+get_usb_monitor_list() {
    bool debug = false;
-   DBGTRC(debug, TRACE_GROUP, "Starting...");
-   DDCA_Output_Level ol = get_output_level();
+   DBGTRC_STARTING(debug, TRACE_GROUP, "");
 
    if (usb_monitors)      // already initialized?
    {
-      DBGTRC(debug, TRACE_GROUP, "Returning previously calculated monitor list");
+      DBGTRC_DONE(debug, TRACE_GROUP, "Returning previously calculated monitor list");
       return usb_monitors;
    }
 
    usb_monitors = g_ptr_array_new();
+   usb_open_errors = g_ptr_array_new_with_free_func(destroy_bus_open_error);
 
    GPtrArray * hiddev_names = get_hiddev_device_names();
    for (int devname_ndx = 0; devname_ndx < hiddev_names->len; devname_ndx++) {
       char * hiddev_fn = g_ptr_array_index(hiddev_names, devname_ndx);
-      DBGTRC(debug, TRACE_GROUP, "Examining device: %s", hiddev_fn);
+      DBGTRC_NOPREFIX(debug, TRACE_GROUP, "Examining device: %s", hiddev_fn);
 
-      if (!is_possible_monitor_by_hiddev_name(hiddev_fn)) {
-         DBGTRC(debug, TRACE_GROUP, "Not a possible monitor: %s", hiddev_fn);
+      if (usb_is_ignored_hiddev(hiddev_name_to_number(hiddev_fn))) {
+         DBGTRC_NOPREFIX(debug, TRACE_GROUP, "Explicitly ignored: %s", hiddev_fn);
          continue;
       }
 
-      // will need better message handling for API
-      Byte calloptions = CALLOPT_RDONLY;
-      // if (ol >= DDCA_OL_VERBOSE)  // always give the user a clue as to why detection failed
-         calloptions |= CALLOPT_ERR_MSG;
-      int fd = usb_open_hiddev_device(hiddev_fn, calloptions);
-      if (fd < 0) {
-         if (ol >= DDCA_OL_VERBOSE) {
-            DBGTRC(debug, TRACE_GROUP, "Open failed");
-            Usb_Detailed_Device_Summary * devsum =
-               lookup_udev_usb_device_by_devname(hiddev_fn, /* verbose = */ false);
-            if (devsum) {
+      // Ensures we don't touch a keyboard, mouse or some non-HID device.
+      // Probing a keyboard or mouse can hang the system.
+      if (!is_possible_monitor_by_hiddev_name(hiddev_fn)) {
+         DBGTRC_NOPREFIX(debug, TRACE_GROUP, "Not a possible monitor: %s", hiddev_fn);
+         continue;
+      }
 
-               // report_usb_detailed_device_summary(devsum, 4);
-
-               f0printf(fout(), "  USB bus %s, device %s, vid:pid: %s:%s - %s:%s\n",
-                           devsum->busnum_s,
-                           devsum->devnum_s,
-                           devsum->vendor_id,
-                           devsum->product_id,
-                           devsum->vendor_name,
-                           devsum->product_name);
-               free_usb_detailed_device_summary(devsum);
-            }
+      bool deny_checked = false;
+      char * detail = NULL;
+      Bus_Open_Error * boe = NULL;
+      Usb_Detailed_Device_Summary * devsum =
+            lookup_udev_usb_device_by_devname(hiddev_fn, /* verbose = */ false);
+      if (devsum) {
+         // report_usb_detailed_device_summary(devsum, 4);
+         detail = g_strdup_printf("  USB bus %s, device %s, vid:pid: %s:%s - %s:%s",
+                        devsum->busnum_s,
+                        devsum->devnum_s,
+                        devsum->vendor_id,
+                        devsum->product_id,
+                        devsum->vendor_name,
+                        devsum->product_name);
+         bool denied = deny_hid_monitor_by_vid_pid(devsum->vid, devsum->pid);
+         denied |= usb_is_ignored_vid_pid(devsum->vid, devsum->pid);
+         deny_checked = true;
+         if (denied) {
+            DBGTRC_NOPREFIX(debug, TRACE_GROUP, "Denied monitor %s:%s", devsum->vendor_id, devsum->product_id);
          }
+
+         free_usb_detailed_device_summary(devsum);
+         if (denied)
+            continue;
+      }
+      DBGTRC_NOPREFIX(debug, TRACE_GROUP, "detail = |%s|", detail);
+
+      int fd = usb_open_hiddev_device(hiddev_fn, CALLOPT_RDONLY);
+      if (fd < 0) {
+         DBGTRC_NOPREFIX(debug, TRACE_GROUP, "Open failed");
+         f0printf(ferr(), "Open failed for %s: errno=%s %s\n", hiddev_fn, linux_errno_desc(-fd),
+               (detail) ? detail : "");
+         boe = calloc(1, sizeof(Bus_Open_Error));
+         boe->io_mode = DDCA_IO_USB;
+         boe->devno = hiddev_name_to_number(hiddev_fn);    // is this simple or fully qualified?
+         boe->error = fd;
+         boe->detail = detail;
+         g_ptr_array_add(usb_open_errors, boe);
       }
       else {     // fd == 0 should never occur
          assert(fd != 0);
-         DBGTRC(debug, TRACE_GROUP, "open succeeded");
-         // DBGTRC(debug, TRACE_GROUP, "Open succeeded");
+         DBGTRC_NOPREFIX(debug, TRACE_GROUP, "open succeeded");
+         free(detail);
          // Declare variables here and initialize them to NULL so that code at label close: works
          struct hiddev_devinfo *   devinfo     = NULL;
          char *                    cgname      = NULL;
@@ -424,15 +534,39 @@ GPtrArray * get_usb_monitor_list() {
          Usb_Monitor_Info *        moninfo =     NULL;
 
          cgname = get_hiddev_name(fd);               // HIDIOCGNAME
+
          devinfo = calloc(1,sizeof(struct hiddev_devinfo));
-         if ( hiddev_get_device_info(fd, devinfo, CALLOPT_ERR_MSG) != 0 )
+         Status_Errno rc2 = hiddev_get_device_info(fd, devinfo, CALLOPT_ERR_MSG);     //  HIDIOCGDEVINFO
+         if (rc2 != 0) {
+            DBGTRC_NOPREFIX(debug, TRACE_GROUP, "hiddev_get_device_info() failed. rc=%d", rc2);
+            goto close;
+         }
+
+         if (!deny_checked) {
+            bool deny = deny_hid_monitor_by_vid_pid(devinfo->vendor, devinfo->product);
+            deny |= usb_is_ignored_vid_pid(devinfo->vendor, devinfo->product);
+            if (deny) {
+               DBGTRC_NOPREFIX(debug, TRACE_GROUP, "Denied monitor 0x%04x:0x%04x", devinfo->vendor, devinfo->product);
+               goto close;
+            }
+         }
+
+         // DBGMSF(debug, "Calling is_hiddev_monitor()...");
+         bool is_hid_monitor = is_hiddev_monitor(fd);           // HIDIOCGCOLLECTIONINFO
+         DBGTRC_NOPREFIX(debug, TRACE_GROUP, "is_hiddev_monitor() returned %s", sbool(is_hid_monitor));
+         if (!is_hid_monitor)
             goto close;
 
-         if (deny_hid_monitor_by_vid_pid(devinfo->vendor, devinfo->product) )
+         // Solves problem of ddc detect not getting edid unless ddcutil env called first
+         DBGMSF(debug, "calling ioctl(,HIDIOCINITREPORT)...");
+         int rc = ioctl(fd, HIDIOCINITREPORT);
+         DBGMSF(debug, "ioctl() returned %d", rc);
+         if (rc < 0) {
+            int errsv = errno;
+            // call should never fail.  always write an error message
+            REPORT_IOCTL_ERROR("HIDIOCINITGREPORT", errsv);
             goto close;
-
-         if (!is_hiddev_monitor(fd))
-            goto close;
+         }
 
          parsed_edid = get_hiddev_edid_with_fallback(fd, devinfo);
          if (!parsed_edid) {
@@ -443,11 +577,10 @@ GPtrArray * get_usb_monitor_list() {
          }
 
          DBGTRC(debug, TRACE_GROUP, "Collecting USB reports...");
-         vcp_reports = collect_vcp_reports(fd);
+         vcp_reports = collect_vcp_reports(fd);   // HIDIOCGDEVINFO
 
-         moninfo = calloc(1,sizeof(Usb_Monitor_Info));
-         memcpy(moninfo->marker, USB_MONITOR_INFO_MARKER, 4);
-         moninfo-> hiddev_device_name = strdup(hiddev_fn);
+
+         moninfo = create_usb_monitor_info(hiddev_fn);
          moninfo->edid = parsed_edid;
          moninfo->hiddev_devinfo = devinfo;
          devinfo = NULL;        // so that struct not freed
@@ -469,6 +602,10 @@ GPtrArray * get_usb_monitor_list() {
          g_ptr_array_free(vcp_reports, true);
 
          g_ptr_array_add(usb_monitors, moninfo);
+         if (debug) {
+            DBGMSG("Added monitor:");
+            dbgrpt_usb_monitor_info(moninfo, 3);
+         }
 
  close:
          if (devinfo)
@@ -477,30 +614,55 @@ GPtrArray * get_usb_monitor_list() {
             free(cgname);
          // TODO, free device summary
          usb_close_device(fd, hiddev_fn, CALLOPT_NONE); // return error if failure
-         DBGTRC(debug, TRACE_GROUP, "Closed");
+         DBGTRC_NOPREFIX(debug, TRACE_GROUP, "Closed");
       }  // monitor opened
    } // loop over device names
 
-   g_ptr_array_set_free_func(hiddev_names, free);
+   g_ptr_array_set_free_func(hiddev_names, g_free);
    g_ptr_array_free(hiddev_names, true);
 
-   if ( debug || IS_TRACING() ) {
-      DBGMSG("Returning  %d monitors ", usb_monitors->len);
-      report_usb_monitors(usb_monitors,1);
-   }
+//   if ( debug || IS_TRACING() ) {
+//      DBGTRC_DONE(debug, TRACE_GROUP, "Returning  %d monitors ", usb_monitors->len);
+//      report_usb_monitors(usb_monitors,1);
+//   }
 
+   DBGTRC_RET_STRUCT(debug, TRACE_GROUP, "usb_monitors",report_usb_monitors, usb_monitors);
    return usb_monitors;
 }
 
+
+GPtrArray * get_usb_open_errors() {
+   return usb_open_errors;
+}
+
+
+void
+discard_usb_monitor_list() {
+   bool debug = false;
+   DBGTRC_STARTING(debug, TRACE_GROUP, "usb_monitors=%p, usb_open_errors=%p", usb_monitors, usb_open_errors);
+
+   if (usb_monitors) {
+      g_ptr_array_set_free_func(usb_monitors, free_usb_monitor_info);
+      DBGMSF(debug, "Freeing usb_monitors = %p", usb_monitors);
+      g_ptr_array_free(usb_monitors, true);
+      usb_monitors = NULL;
+      DBGMSF(debug, "Freeing usb_open_errors = %p", usb_open_errors);
+      g_ptr_array_free(usb_open_errors, true);
+      usb_open_errors = NULL;
+   }
+
+   DBGTRC_DONE(debug, TRACE_GROUP, "");
+}
 
 
 //
 // Functions to find Usb_Monitor_Info for a display
 //
 
-static Usb_Monitor_Info * usb_find_monitor_by_busnum_devnum(int busnum, int devnum) {
+static Usb_Monitor_Info *
+usb_find_monitor_by_busnum_devnum(int busnum, int devnum) {
    bool debug = false;
-   DBGMSF(debug, "Starting. busnum=%d, devnum=%d", busnum, devnum);
+   DBGTRC_STARTING(debug, TRACE_GROUP, "busnum=%d, devnum=%d", busnum, devnum);
    assert(usb_monitors);
    Usb_Monitor_Info * result = NULL;
    for (int ndx = 0; ndx < usb_monitors->len; ndx++) {
@@ -513,37 +675,45 @@ static Usb_Monitor_Info * usb_find_monitor_by_busnum_devnum(int busnum, int devn
          break;
       }
    }
-   DBGMSF(debug, "Returning %p", result);
+   DBGTRC_DONE(debug, TRACE_GROUP, "Returning %p", result);
    return result;
 }
 
 
-static Usb_Monitor_Info * usb_find_monitor_by_display_ref(Display_Ref * dref) {
+static Usb_Monitor_Info *
+usb_find_monitor_by_dref(Display_Ref * dref) {
    bool debug = false;
-   DBGMSF(debug, "Starting. dref = %s", dref_repr_t(dref));
+   DBGTRC_STARTING(debug, TRACE_GROUP, "dref = %s", dref_repr_t(dref));
    assert(dref->io_path.io_mode == DDCA_IO_USB);
    Usb_Monitor_Info * result = usb_find_monitor_by_busnum_devnum(dref->usb_bus, dref->usb_device);
-   DBGMSF(debug, "Returning %p", result);
+   DBGTRC_DONE(debug, TRACE_GROUP, "Returning %p", result);
    return result;
 }
 
 
-Usb_Monitor_Info * usb_find_monitor_by_display_handle(Display_Handle * dh) {
-   // printf("(%s) Starting. dh=%p\n", __func__, dh);
+/** Gets the #Usb_Monitor_Info struct for a display
+ *
+ *  @param  dh  display handle
+ *  @return pointer to #Usb_Monitor_Info struct, NULL if not found
+ */
+Usb_Monitor_Info *
+usb_find_monitor_by_dh(Display_Handle * dh) {
    bool debug = false;
-   DBGMSF(debug, "Starting. dh = %s", dh_repr(dh));
+   DBGTRC_STARTING(debug, TRACE_GROUP, "dh = %s", dh_repr(dh));
    assert(dh && dh->dref);
    assert(dh->dref->io_path.io_mode == DDCA_IO_USB);
-   Usb_Monitor_Info * result = NULL;
-   result = usb_find_monitor_by_busnum_devnum(dh->dref->usb_bus, dh->dref->usb_device);
-   DBGMSF(debug, "Returning %p", result);
+
+   Usb_Monitor_Info * result =
+         usb_find_monitor_by_busnum_devnum(dh->dref->usb_bus, dh->dref->usb_device);
+
+   DBGTRC_DONE(debug, TRACE_GROUP, "Returning %p", result);
    return result;
 }
 
 
 #ifdef APPARENTLY_UNUSED
-char * get_hiddev_devname_by_display_ref(Display_Ref * dref) {
-   Usb_Monitor_Info * moninfo = usb_find_monitor_by_display_ref(dref);
+char * get_hiddev_devname_by_dref(Display_Ref * dref) {
+   Usb_Monitor_Info * moninfo = usb_find_monitor_by_dref(dref);
    char * result = moninfo->hiddev_device_name;
    DBGMSG("dref=%s, returning: %s", dref_short_name(dref), result);
    return result;
@@ -601,157 +771,62 @@ Display_Info_List usb_get_valid_displays() {
 
 //  *** Functions to return a Display_Ref for a USB monitor ***
 
-#ifdef PRE_DISPLAY_REF
-
-static Display_Ref *
-create_display_ref_from_usb_monitor_info(Usb_Monitor_Info * moninfo) {
-   // hacky - to be cleaned up
-   Display_Ref * dref = create_usb_display_ref(moninfo->hiddev_devinfo->busnum,
-                                               moninfo->hiddev_devinfo->devnum,
-                                               moninfo->hiddev_device_name);
-   return dref;
-}
-
-
-Display_Ref *
-usb_find_display_by_mfg_model_sn(const char * mfg_id, const char * model, const char * sn) {
-   Display_Ref * result = NULL;
-
-   Usb_Monitor_Info * found_monitor = NULL;
-   GPtrArray * all_usb_monitors = get_usb_monitor_list();
-   for (int ndx=0; ndx<all_usb_monitors->len; ndx++) {
-      Usb_Monitor_Info * curmon = g_ptr_array_index(all_usb_monitors, ndx);
-      bool some_test_passed = false;
-      bool some_test_failed = false;
-
-      if (mfg_id && strlen(mfg_id) > 0) {
-         if ( streq(mfg_id, curmon->edid->mfg_id) )
-            some_test_passed = true;
-         else
-            some_test_failed = false;
-      }
-
-      if (model && strlen(model) > 0) {
-         if ( streq(model, curmon->edid->model_name) )
-            some_test_passed = true;
-         else
-            some_test_failed = false;
-      }
-
-      if (sn && strlen(sn) > 0) {
-         if ( streq(sn, curmon->edid->serial_ascii) )
-            some_test_passed = true;
-         else
-            some_test_failed = false;
-      }
-
-      // if ( strcmp(model, curmon->edid->model_name)   == 0 &&
-      //      strcmp(sn,    curmon->edid->serial_ascii) == 0
-      //    )
-      if (some_test_passed && !some_test_failed)
-      {
-          found_monitor = curmon;
-          break;
-       }
-    }
-    if (found_monitor)
-       result = create_display_ref_from_usb_monitor_info(found_monitor);
-
-   return result;
-}
-
-
-Display_Ref *
-usb_find_display_by_busnum_devnum(int busnum, int devnum) {
-   Display_Ref * result = NULL;
-
-   Usb_Monitor_Info * found_monitor = NULL;
-   GPtrArray * all_usb_monitors = get_usb_monitor_list();
-   for (int ndx=0; ndx<all_usb_monitors->len; ndx++) {
-      Usb_Monitor_Info * curmon = g_ptr_array_index(all_usb_monitors, ndx);
-      if ( curmon->hiddev_devinfo->busnum == busnum &&
-           curmon->hiddev_devinfo->devnum == devnum
-         )
-      {
-          found_monitor = curmon;
-          break;
-       }
-    }
-    if (found_monitor)
-       result = create_display_ref_from_usb_monitor_info(found_monitor);
-
-   return result;
-}
-
-
-Display_Ref *
-usb_find_display_by_edid(const Byte * edidbytes) {
-   Display_Ref * result = NULL;
-
-   Usb_Monitor_Info * found_monitor = NULL;
-    GPtrArray * all_usb_monitors = get_usb_monitor_list();
-    for (int ndx=0; ndx<all_usb_monitors->len; ndx++) {
-       Usb_Monitor_Info * curmon = g_ptr_array_index(all_usb_monitors, ndx);
-       if ( memcmp(edidbytes, curmon->edid->bytes, 128) == 0) {
-          found_monitor = curmon;
-          break;
-       }
-    }
-    if (found_monitor)
-       result = create_display_ref_from_usb_monitor_info(found_monitor);
-
-   return result;
-}
-#endif
-
-
-bool usb_is_valid_display_ref(Display_Ref * dref, bool emit_error_msg) {
+#ifdef UNUSED
+bool
+usb_is_valid_display_ref(Display_Ref * dref, bool emit_error_msg) {
    bool result = true;
-   if (!usb_find_monitor_by_display_ref(dref)) {
+   if (!usb_find_monitor_by_dref(dref)) {
       result = false;
       if (emit_error_msg)
          fprintf(stderr, "Invalid Display_Ref\n");
    }
    return result;
 }
+#endif
 
 
-void usb_show_active_display_by_display_ref(Display_Ref * dref, int depth) {
+/** Output of DETECT command for a USB connected monitor.
+ *
+ *  @param dref  display reference
+ *  @param depth logical indentation depth
+ */
+void
+usb_show_active_display_by_dref(Display_Ref * dref, int depth) {
+   bool debug = false;
+   DBGTRC(debug, TRACE_GROUP, "dref = %s", dref_repr_t(dref) );
    DDCA_Output_Level output_level = get_output_level();
    rpt_vstring(depth, "USB bus:device:      %d:%d", dref->usb_bus, dref->usb_device);
 
-   Usb_Monitor_Info * moninfo = usb_find_monitor_by_display_ref(dref);
+   Usb_Monitor_Info * moninfo = usb_find_monitor_by_dref(dref);
 
-#ifdef OLD
-   if (output_level == DDCA_OL_TERSE || output_level == OL_PROGRAM)
-#else
-   if (output_level == DDCA_OL_TERSE)
-#endif
+   if (output_level == DDCA_OL_TERSE) {
       rpt_vstring(depth, "Monitor:             %s:%s:%s",
                          moninfo->edid->mfg_id,
                          moninfo->edid->model_name,
                          moninfo->edid->serial_ascii);
-   Pci_Usb_Id_Names usb_names =  devid_get_usb_names(moninfo->hiddev_devinfo->vendor,
-                                                     moninfo->hiddev_devinfo->product,
-                                                     0,
-                                                     2);
+   }
+   else {
+      assert(output_level >= DDCA_OL_NORMAL);
+      Pci_Usb_Id_Names usb_names = devid_get_usb_names(moninfo->hiddev_devinfo->vendor,
+                                                       moninfo->hiddev_devinfo->product,
+                                                       0, 2);
+      char vname[80] = {'\0'};
+      char dname[80] = {'\0'};
+      if (usb_names.vendor_name)
+         snprintf(vname, 80, "(%s)", usb_names.vendor_name);
+      if (usb_names.device_name)
+         snprintf(dname, 80, "(%s)", usb_names.device_name);
 
-   char vname[80] = {'\0'};
-   char dname[80] = {'\0'};
-   if (usb_names.vendor_name)
-      snprintf(vname, 80, "(%s)", usb_names.vendor_name);
-   if (usb_names.device_name)
-      snprintf(dname, 80, "(%s)", usb_names.device_name);
-   if (output_level >= DDCA_OL_NORMAL) {
       rpt_vstring(depth, "Device name:         %s",    dref->usb_hiddev_name);
       rpt_vstring(depth, "Vendor id:           %04x  %s",
                          moninfo->hiddev_devinfo->vendor  & 0xffff, vname);
       rpt_vstring(depth, "Product id:          %04x  %s",
                          moninfo->hiddev_devinfo->product & 0xffff, dname);
-      bool dump_edid = (output_level >= DDCA_OL_VERBOSE);
 
+      bool dump_edid = (output_level >= DDCA_OL_VERBOSE);
       report_parsed_edid(moninfo->edid, dump_edid /* verbose */, depth);
    }
+   DBGTRC_DONE(debug, TRACE_GROUP, "");
 }
 
 
@@ -760,19 +835,23 @@ void usb_show_active_display_by_display_ref(Display_Ref * dref, int depth) {
 // (for hiding Usb_Monitor_Info from higher software levels)
 //
 
-Parsed_Edid * usb_get_parsed_edid_by_display_ref(Display_Ref * dref) {
-   Usb_Monitor_Info * moninfo = usb_find_monitor_by_display_ref(dref);
-   return moninfo->edid;
-}
-
-Parsed_Edid * usb_get_parsed_edid_by_display_handle(Display_Handle * dh) {
-   Usb_Monitor_Info * moninfo = usb_find_monitor_by_display_handle(dh);
+Parsed_Edid *
+usb_get_parsed_edid_by_dref(Display_Ref * dref) {
+   Usb_Monitor_Info * moninfo = usb_find_monitor_by_dref(dref);
    return moninfo->edid;
 }
 
 
-char * usb_get_capabilities_string_by_display_handle(Display_Handle * dh) {
-   Usb_Monitor_Info * moninfo = usb_find_monitor_by_display_handle(dh);
+Parsed_Edid *
+usb_get_parsed_edid_by_dh(Display_Handle * dh) {
+   Usb_Monitor_Info * moninfo = usb_find_monitor_by_dh(dh);
+   return moninfo->edid;
+}
+
+
+char *
+usb_get_capabilities_string_by_dh(Display_Handle * dh) {
+   Usb_Monitor_Info * moninfo = usb_find_monitor_by_dh(dh);
    assert(dh);
    return usb_synthesize_capabilities_string(moninfo);
 }
@@ -782,22 +861,22 @@ char * usb_get_capabilities_string_by_display_handle(Display_Handle * dh) {
 // *** Miscellaneous services ***
 //
 
-/* Tests if a hiddev device (specified by its name) appears to
- * be a USB HID compliant monitor.
+/** Tests if a hiddev device (specified by its name) appears to
+ *  be a USB HID compliant monitor.
  *
- * This stripped down test implements the ddcutil chkusbmon command,
- * which is intended for use in a udev rules test.
+ *  This stripped down test implements the ddcutil chkusbmon command,
+ *  which is intended for use in a udev rules test.
  *
- * Arguments:
- *    device_name        e.g. /dev/usb/hiddev3
+ *  @param  device_name   e.g. /dev/usb/hiddev3
+ *  @retval true  device is a monitor,
+ *  @retval false device is not a monitor, or unable to open device
  *
- * Returns:              true if device is a monitor,
- *                       false if not, or unable to open device
- *
+ * @remark
  * Note that messages will not appear when this function runs as part
  * of normal udev execution.  They are intended to aid in debugging.
  */
-bool check_usb_monitor( char * device_name ) {
+bool
+check_usb_monitor( char * device_name ) {
    assert(device_name);
    bool debug = false;
    DDCA_Output_Level ol = get_output_level();
@@ -807,6 +886,7 @@ bool check_usb_monitor( char * device_name ) {
    DBGMSF(debug, "Examining device: %s", device_name);
    bool result = false;
 
+#ifdef OLD
    if (is_possible_monitor_by_hiddev_name(device_name))  {
       // only check if a HID device that isn't a mouse or keyboard
       int fd = open(device_name, O_RDONLY);
@@ -819,10 +899,12 @@ bool check_usb_monitor( char * device_name ) {
       }
       close(fd);
    }
+#endif
+   result = is_possible_monitor_by_hiddev_name(device_name);
 
    if (ol >= DDCA_OL_VERBOSE) {
       if (result)
-         printf("Device %s appears to be a USB HID compliant monitor.\n", device_name);
+         printf("Device %s may be a USB HID compliant monitor.\n", device_name);
       else
          printf("Device %s is not a USB HID compliant monitor.\n", device_name);
    }
@@ -830,11 +912,27 @@ bool check_usb_monitor( char * device_name ) {
  }
 
 
-void init_usb_displays() {
-   rtti_func_name_table_add(get_usb_monitor_list, "get_usb_monitor_list");
-   rtti_func_name_table_add(avoid_device_by_usb_interfaces_property_string,
-                            "avoid_device_by_usb_interfaces_property_string");
-   rtti_func_name_table_add(is_possible_monitor_by_hiddev_name,
-                            "is_possible_monitor_by_hiddev_name");
-   // dbgrpt_func_name_table(0);
+void
+init_usb_displays() {
+   RTTI_ADD_FUNC(avoid_device_by_usb_interfaces_property_string);
+   RTTI_ADD_FUNC(collect_vcp_reports);
+   RTTI_ADD_FUNC(create_usb_monitor_info);
+   RTTI_ADD_FUNC(create_usb_monitor_vcp_rec);
+   RTTI_ADD_FUNC(discard_usb_monitor_list);
+   RTTI_ADD_FUNC(free_usb_monitor_info);
+   RTTI_ADD_FUNC(free_usb_monitor_vcp_rec);
+   RTTI_ADD_FUNC(get_usb_monitor_list);
+   RTTI_ADD_FUNC(is_possible_monitor_by_hiddev_name);
+   RTTI_ADD_FUNC(usb_find_monitor_by_busnum_devnum);
+   RTTI_ADD_FUNC(usb_find_monitor_by_dh);
+   RTTI_ADD_FUNC(usb_find_monitor_by_dref);
+   RTTI_ADD_FUNC(usb_show_active_display_by_dref);
 }
+
+
+void
+terminate_usb_displays() {
+    // discard_usb_monitor_list();   // unnecessary, already called
+}
+
+

@@ -4,7 +4,7 @@
  *  and applicable multipliers.
  */
 
-// Copyright (C) 2019-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2019-2022 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef TUNED_SLEEP_H_
@@ -12,21 +12,24 @@
 
 /** \cond */
 #include <stdbool.h>
-#include "public/ddcutil_types.h"
+// #include "public/ddcutil_types.h"
 /** \endcond */
 #include "base/displays.h"
 #include "base/execution_stats.h"   // for Sleep_Event_Type
 
-bool enable_sleep_suppression(bool enable);
-bool is_sleep_suppression_enabled();
+extern bool suppress_se_post_read;
+extern bool null_msg_adjustment_enabled;
 
 bool enable_deferred_sleep(bool enable);
 bool is_deferred_sleep_enabled();
 
+void check_deferred_sleep(
+      Display_Handle * dh,
+      const char *     func,
+      int              lineno,
+      const char *     filename);
 
-// Perform tuned sleep
-void tuned_sleep_with_tracex(
-      // DDCA_IO_Mode     io_mode,
+void tuned_sleep_with_trace(
       Display_Handle * dh,
       Sleep_Event_Type event_type,
       int              special_sleep_time_millis,
@@ -35,24 +38,17 @@ void tuned_sleep_with_tracex(
       const char *     filename,
       const char *     msg);
 
-// Convenience functions and macros:
-// void tuned_sleep_dh(Display_Handle* dh, Sleep_Event_Type event_type);
+// Convenience macros:
 
-#define TUNED_SLEEP_WITH_TRACE(_dh, _event_type, _msg) \
-   tuned_sleep_with_tracex(_dh, _event_type, 0, __func__, __LINE__, __FILE__, _msg)
-
-#define SPECIAL_TUNED_SLEEP_WITH_TRACE(_dh, _time_millis, _msg) \
-   tuned_sleep_with_tracex(_dh, SE_SPECIAL, _time_millis, __func__, __LINE__, __FILE__, _msg)
-
-#ifdef UNUSED
-#define TUNED_SLEEP_I2C_WITH_TRACE(_event_type, _msg) \
-   tuned_sleep_with_tracex(_dh, _event_type, __func__, __LINE__, __FILE__, _msg)
-#endif
-
-void check_deferred_sleep(Display_Handle * dh, const char * func, int lineno, const char * filename);
 #define CHECK_DEFERRED_SLEEP(_dh) \
    check_deferred_sleep(_dh, __func__, __LINE__, __FILE__)
 
+#define TUNED_SLEEP_WITH_TRACE(_dh, _event_type, _msg) \
+   tuned_sleep_with_trace(_dh, _event_type, 0, __func__, __LINE__, __FILE__, _msg)
 
+#define SPECIAL_TUNED_SLEEP_WITH_TRACE(_dh, _time_millis, _msg) \
+   tuned_sleep_with_trace(_dh, SE_SPECIAL, _time_millis, __func__, __LINE__, __FILE__, _msg)
+
+void init_tuned_sleep();
 
 #endif /* TUNED_SLEEP_H_ */

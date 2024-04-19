@@ -3,13 +3,13 @@
  *  VCP (aka MCCS) version specification
  */
 
-// Copyright (C) 2014-2020 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2022 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 
 /** \cond */
 #include <assert.h>
-#include <glib.h>
+#include <glib-2.0/glib.h>
 #include <stdio.h>
 #include <string.h>
 /** \endcond */
@@ -56,6 +56,7 @@ bool vcp_version_is_valid(DDCA_MCCS_Version_Spec vspec, bool allow_unknown) {
    DBGMSF(debug, "Returning: %s", SBOOL(result));
    return result;
 }
+const char * valid_vcp_versions = "1.0, 2.0, 2.1, 3.0, 2.2";
 
 /** \file
 * Note that MCCS (VCP) versioning forms a directed graph, not a linear ordering.
@@ -131,6 +132,11 @@ bool vcp_version_eq(DDCA_MCCS_Version_Spec v1,  DDCA_MCCS_Version_Spec v2){
    return (v1.major == v2.major) && (v1.minor == v2.minor);
 }
 
+bool vcp_version_lt(DDCA_MCCS_Version_Spec v1,  DDCA_MCCS_Version_Spec v2){
+   return vcp_version_gt(v2, v1);
+}
+
+
 
 // use    if (vcp_version_eq(vspec, DDCA_VSPEC_UNQUERIED))
 #ifdef DEPRECATED
@@ -160,16 +166,33 @@ char * format_vspec(DDCA_MCCS_Version_Spec vspec) {
    char * private_buffer = get_thread_fixed_buffer(&format_vspec_key, 20);
 
    if ( vcp_version_eq(vspec, DDCA_VSPEC_UNQUERIED) )
-      g_strlcpy(private_buffer,  "Unqueried", 20);  // g_strlcpy() to quiet coverity
+      strcpy(private_buffer,  "Unqueried");
    else if ( vcp_version_eq(vspec, DDCA_VSPEC_UNKNOWN) )
-      strcpy(private_buffer,  "Unknown");     // will coverity flag this?
+      strcpy(private_buffer,  "Unknown");
    else
       g_snprintf(private_buffer, 20, "%d.%d", vspec.major, vspec.minor);
    // DBGMSG("Returning: |%s|", private_buffer);
    return private_buffer;
 }
 
+char * format_vspec_verbose(DDCA_MCCS_Version_Spec vspec) {
+   bool debug = false;
+   DBGMSF(debug, "Starting. vspec=%d.%d", vspec.major, vspec.minor);
+   static GPrivate  format_vspec_verbose_key = G_PRIVATE_INIT(g_free);
+   char * private_buffer = get_thread_fixed_buffer(&format_vspec_verbose_key, 30);
 
+   if ( vcp_version_eq(vspec, DDCA_VSPEC_UNQUERIED) )
+      g_snprintf(private_buffer, 30, "Unqueried (%d.%d)", vspec.major, vspec.minor);
+   else if ( vcp_version_eq(vspec, DDCA_VSPEC_UNKNOWN) )
+      g_snprintf(private_buffer, 30, "Unknown (%d.%d)", vspec.major, vspec.minor);
+   else
+      g_snprintf(private_buffer, 20, "%d.%d", vspec.major, vspec.minor);
+   DBGMSF(debug, "Returning: |%s|", private_buffer);
+   return private_buffer;
+}
+
+
+#ifdef MCCS_VERSION_ID
 Value_Name_Title_Table version_id_table = {
       VNT(DDCA_MCCS_V10,   "1.0"),
       VNT(DDCA_MCCS_V20,   "2.0"),
@@ -188,6 +211,8 @@ Value_Name_Title_Table version_id_table = {
  * @return value in external form.
  */
 char * format_vcp_version_id(DDCA_MCCS_Version_Id version_id) {
+   char * result2 = vnt_title(version_id_table, version_id);
+#ifndef NDEBUG
    char * result = NULL;
    switch (version_id) {
    case DDCA_MCCS_V10:    result = "1.0";     break;
@@ -198,9 +223,9 @@ char * format_vcp_version_id(DDCA_MCCS_Version_Id version_id) {
    case DDCA_MCCS_VNONE:  result = "unknown"; break;
    case DDCA_MCCS_VANY:   result = "any";     break;
    }
-   char * result2 = vnt_title(version_id_table, version_id);
    assert(streq(result, result2));
-   return result;
+#endif
+   return result2;
 }
 
 
@@ -218,6 +243,7 @@ char * vcp_version_id_name(DDCA_MCCS_Version_Id version_id) {
    DBGMSF(debug, "Returning: %s", result);
    return result;
 }
+#endif
 
 
 /** Converts a string representation of an MCCS version, e.g. "2.2"
@@ -237,6 +263,7 @@ DDCA_MCCS_Version_Spec parse_vspec(char * s) {
 }
 
 
+#ifdef MCCS_VERSION_SPEC
 /** Converts a MCCS version spec (integer pair) to a version id (enumeration).
  *
  * @param vspec version spec
@@ -296,3 +323,4 @@ DDCA_MCCS_Version_Spec mccs_version_id_to_spec(DDCA_MCCS_Version_Id id) {
    DBGMSF(debug, "Returning: %d.%d", vspec.major, vspec.minor);
    return vspec;
 }
+#endif

@@ -2,7 +2,7 @@
  *
  *  Status Code Management
  */
-// Copyright (C) 2014-2018 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2022 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef STATUS_CODE_MGT_H_
@@ -58,7 +58,7 @@ Status_Code_Info * (*Retcode_Description_Finder)(int rc);
 /** Pointer to a function that converts a symbolic status code name
  *  to its integer value
  *
- * \param name status code symbolic name
+ * @param name status code symbolic name
  * @param p_number where to return status code
  * @return true if conversion succeeded, false if name not found
  */
@@ -98,8 +98,10 @@ Retcode_Range_Id get_modulation(int rc);
 Status_Code_Info * find_status_code_info(Public_Status_Code status_code);
 
 // Return status code description and name.  Do not free after use.
-char * psc_desc(Public_Status_Code rc);
-char * psc_name(Public_Status_Code status_code);
+char * psc_desc(     Public_Status_Code status_code);
+char * psc_name_code(Public_Status_Code status_code);
+char * psc_name(     Public_Status_Code status_code);
+char * psc_text(Public_Status_Code psc);
 
 bool status_name_to_unmodulated_number(
         const char *         status_code_name,

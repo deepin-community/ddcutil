@@ -1,11 +1,11 @@
 /** @file hid_report_descriptor.c
  */
 
-// Copyright (C) 2014-2019 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <assert.h>
-#include <glib.h>
+#include <glib-2.0/glib.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -87,16 +87,18 @@ void free_parsed_hid_field(Parsed_Hid_Field * phf) {
    }
 }
 
+#ifdef UNUSED
 // wrap free_parsed_hid_field() in signature of GDestroyNotify()
 void free_parsed_hid_field_func(gpointer data) {
    free_parsed_hid_field((Parsed_Hid_Field *) data);
 }
+#endif
 
 
 void free_parsed_hid_report(Parsed_Hid_Report * phr) {
    if (phr) {
       if (phr->hid_fields) {
-          g_ptr_array_set_free_func(phr->hid_fields, free_parsed_hid_field_func);
+          g_ptr_array_set_free_func(phr->hid_fields, (GDestroyNotify) free_parsed_hid_field);
           g_ptr_array_free(phr->hid_fields, true);
       }
       free(phr);
@@ -109,28 +111,31 @@ void free_parsed_hid_report_func(gpointer data) {
 }
 
 
+#ifdef UNUSED
 void free_parsed_hid_collection_func(gpointer data);   // forward ref
+#endif
 
 
 void free_parsed_hid_collection(Parsed_Hid_Collection * phc) {
    if (phc) {
       if (phc->reports) {
-         g_ptr_array_set_free_func(phc->reports, free_parsed_hid_report_func);
+         g_ptr_array_set_free_func(phc->reports,(GDestroyNotify) free_parsed_hid_field);
          g_ptr_array_free(phc->reports, true);
       }
       if (phc->child_collections) {
-         g_ptr_array_set_free_func(phc->child_collections, free_parsed_hid_collection_func);
+         g_ptr_array_set_free_func(phc->child_collections, (GDestroyNotify) free_parsed_hid_collection);
          g_ptr_array_free(phc->child_collections, true);
       }
       free(phc);
    }
 }
 
-
+#ifdef UNUSED
 // wrap free_parsed_hid_collection() in signature of GDestroyNotify()
 void free_parsed_hid_collection_func(gpointer data) {
    free_parsed_hid_collection((Parsed_Hid_Collection *) data);
 }
+#endif
 
 
 
@@ -164,7 +169,7 @@ void report_hid_field(Parsed_Hid_Field * hf, int depth) {
    //                 devid_usage_code_id_name(hf->usage_page, hf->usage_id));
 
 
-   char * ucode_name = "";
+   char * ucode_name = NULL;
 #ifdef OLD
    if (hf->extended_usage) {
       ucode_name = devid_usage_code_name_by_extended_id(hf->extended_usage);
@@ -443,7 +448,8 @@ void free_cur_report_locals(Cur_Report_Locals * locals) {
 }
 
 
-Parsed_Hid_Report * find_hid_report(Parsed_Hid_Collection * col, Byte report_type, uint16_t report_id) {
+Parsed_Hid_Report *
+find_hid_report(Parsed_Hid_Collection * col, Byte report_type, uint16_t report_id) {
    Parsed_Hid_Report * result = NULL;
 
    if (col->reports->len) {
@@ -580,8 +586,8 @@ static int32_t maybe_signed_data(uint32_t data, int bytect) {
 
    assert(bytect == 0 || bytect == 1 || bytect==2 || bytect==4);
    if (bytect > 0) {
-      int sign_bitno = (bytect * 8) - 1;
-      uint32_t sign_mask = 1 << sign_bitno;
+      unsigned int sign_bitno = (bytect * 8) - 1;
+      uint32_t sign_mask = (uint32_t) 1 << sign_bitno;  // cast to avoid clang warning
       // printf("     sign_bitno = %d, sign_mask=0x%08x\n", sign_bitno, sign_mask);
       if (data & sign_mask)
             result = -data;

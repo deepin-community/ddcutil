@@ -1,12 +1,12 @@
 // vcp_feature_values.h
 
-// Copyright (C) 2014-2019 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2022 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef VCP_FEATURE_VALUES_H_
 #define VCP_FEATURE_VALUES_H_
 
-#include <glib.h>
+#include <glib-2.0/glib.h>
 
 #include "ddcutil_types.h"
 
@@ -69,14 +69,14 @@ create_nontable_vcp_value(
 DDCA_Any_Vcp_Value *
 create_cont_vcp_value(
       Byte     feature_code,
-      ushort   max_val,
-      ushort   cur_val);
+      gushort   max_val,
+      gushort   cur_val);
 
 DDCA_Any_Vcp_Value *
 create_table_vcp_value_by_bytes(
       Byte   feature_code,
       Byte * bytes,
-      ushort bytect);
+      gushort bytect);
 
 DDCA_Any_Vcp_Value *
 create_table_vcp_value_by_buffer(
@@ -88,9 +88,11 @@ create_single_vcp_value_by_parsed_vcp_response(
       Byte feature_id,
       Parsed_Vcp_Response * presp);
 
+#ifdef UNUSED
 Parsed_Vcp_Response *
 single_vcp_value_to_parsed_vcp_response(
             DDCA_Any_Vcp_Value * valrec);
+#endif
 
 #ifdef MOVED_TO_FEATURE_METADATA
 // Simple stripped-down version of Parsed_Nontable_Vcp_Response
@@ -99,8 +101,8 @@ single_vcp_value_to_parsed_vcp_response(
 typedef
 struct {
    Byte   vcp_code;
-   ushort max_value;
-   ushort cur_value;
+   gushort max_value;
+   gushort cur_value;
    // for new way
    Byte   mh;
    Byte   ml;
