@@ -128,13 +128,15 @@ CONFIG_CLEAN_VPATH_FILES =
 LTLIBRARIES = $(noinst_LTLIBRARIES)
 libutil_la_LIBADD =
 am__libutil_la_SOURCES_DIST = data_structures.c ddcutil_config_file.c \
-	debug_util.c edid.c error_info.c file_util.c file_util_base.c \
-	glib_util.c glib_string_util.c i2c_util.c linux_util.c \
-	multi_level_map.c pnp_ids.c report_util.c simple_ini_file.c \
-	string_util.c sysfs_util.c subprocess_util.c timestamp.c \
-	utilrpt.c xdg_util.c sysfs_filter_functions.c sysfs_i2c_util.c \
-	device_id_util.c udev_i2c_util.c udev_usb_util.c udev_util.c \
-	failsim.c libdrm_util.c drm_common.c x11_util.c
+	debug_util.c backtrace.c edid.c error_info.c file_util.c \
+	file_util_base.c glib_util.c glib_string_util.c i2c_util.c \
+	linux_util.c msg_util.c multi_level_map.c pnp_ids.c \
+	regex_util.c report_util.c simple_ini_file.c string_util.c \
+	sysfs_util.c subprocess_util.c timestamp.c \
+	traced_function_stack.c utilrpt.c xdg_util.c \
+	sysfs_filter_functions.c sysfs_i2c_util.c device_id_util.c \
+	udev_i2c_util.c udev_usb_util.c udev_util.c failsim.c \
+	libdrm_util.c drm_common.c x11_util.c
 @ENABLE_TARGETBSD_COND_FALSE@am__objects_1 =  \
 @ENABLE_TARGETBSD_COND_FALSE@	sysfs_filter_functions.lo \
 @ENABLE_TARGETBSD_COND_FALSE@	sysfs_i2c_util.lo
@@ -146,11 +148,12 @@ am__libutil_la_SOURCES_DIST = data_structures.c ddcutil_config_file.c \
 @USE_LIBDRM_COND_TRUE@am__objects_6 = libdrm_util.lo drm_common.lo
 @USE_X11_COND_TRUE@am__objects_7 = x11_util.lo
 am_libutil_la_OBJECTS = data_structures.lo ddcutil_config_file.lo \
-	debug_util.lo edid.lo error_info.lo file_util.lo \
+	debug_util.lo backtrace.lo edid.lo error_info.lo file_util.lo \
 	file_util_base.lo glib_util.lo glib_string_util.lo i2c_util.lo \
-	linux_util.lo multi_level_map.lo pnp_ids.lo report_util.lo \
-	simple_ini_file.lo string_util.lo sysfs_util.lo \
-	subprocess_util.lo timestamp.lo utilrpt.lo xdg_util.lo \
+	linux_util.lo msg_util.lo multi_level_map.lo pnp_ids.lo \
+	regex_util.lo report_util.lo simple_ini_file.lo string_util.lo \
+	sysfs_util.lo subprocess_util.lo timestamp.lo \
+	traced_function_stack.lo utilrpt.lo xdg_util.lo \
 	$(am__objects_1) $(am__objects_2) $(am__objects_3) \
 	$(am__objects_4) $(am__objects_5) $(am__objects_6) \
 	$(am__objects_7)
@@ -174,7 +177,8 @@ am__v_at_1 =
 DEFAULT_INCLUDES = -I.@am__isrc@ -I$(top_builddir)
 depcomp = $(SHELL) $(top_srcdir)/config/depcomp
 am__maybe_remake_depfiles = depfiles
-am__depfiles_remade = ./$(DEPDIR)/data_structures.Plo \
+am__depfiles_remade = ./$(DEPDIR)/backtrace.Plo \
+	./$(DEPDIR)/data_structures.Plo \
 	./$(DEPDIR)/ddcutil_config_file.Plo ./$(DEPDIR)/debug_util.Plo \
 	./$(DEPDIR)/device_id_util.Plo ./$(DEPDIR)/drm_common.Plo \
 	./$(DEPDIR)/edid.Plo ./$(DEPDIR)/error_info.Plo \
@@ -182,16 +186,18 @@ am__depfiles_remade = ./$(DEPDIR)/data_structures.Plo \
 	./$(DEPDIR)/file_util_base.Plo \
 	./$(DEPDIR)/glib_string_util.Plo ./$(DEPDIR)/glib_util.Plo \
 	./$(DEPDIR)/i2c_util.Plo ./$(DEPDIR)/libdrm_util.Plo \
-	./$(DEPDIR)/linux_util.Plo ./$(DEPDIR)/multi_level_map.Plo \
-	./$(DEPDIR)/pnp_ids.Plo ./$(DEPDIR)/report_util.Plo \
+	./$(DEPDIR)/linux_util.Plo ./$(DEPDIR)/msg_util.Plo \
+	./$(DEPDIR)/multi_level_map.Plo ./$(DEPDIR)/pnp_ids.Plo \
+	./$(DEPDIR)/regex_util.Plo ./$(DEPDIR)/report_util.Plo \
 	./$(DEPDIR)/simple_ini_file.Plo ./$(DEPDIR)/string_util.Plo \
 	./$(DEPDIR)/subprocess_util.Plo \
 	./$(DEPDIR)/sysfs_filter_functions.Plo \
 	./$(DEPDIR)/sysfs_i2c_util.Plo ./$(DEPDIR)/sysfs_util.Plo \
-	./$(DEPDIR)/timestamp.Plo ./$(DEPDIR)/udev_i2c_util.Plo \
-	./$(DEPDIR)/udev_usb_util.Plo ./$(DEPDIR)/udev_util.Plo \
-	./$(DEPDIR)/utilrpt.Plo ./$(DEPDIR)/x11_util.Plo \
-	./$(DEPDIR)/xdg_util.Plo
+	./$(DEPDIR)/timestamp.Plo \
+	./$(DEPDIR)/traced_function_stack.Plo \
+	./$(DEPDIR)/udev_i2c_util.Plo ./$(DEPDIR)/udev_usb_util.Plo \
+	./$(DEPDIR)/udev_util.Plo ./$(DEPDIR)/utilrpt.Plo \
+	./$(DEPDIR)/x11_util.Plo ./$(DEPDIR)/xdg_util.Plo
 am__mv = mv -f
 COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
 	$(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
@@ -288,6 +294,7 @@ ECHO_C = @ECHO_C@
 ECHO_N = @ECHO_N@
 ECHO_T = @ECHO_T@
 EGREP = @EGREP@
+ENABLE_BUILD_TIMESTAMP_FLAG = @ENABLE_BUILD_TIMESTAMP_FLAG@
 ENABLE_ENVCMDS_FLAG = @ENABLE_ENVCMDS_FLAG@
 ENABLE_SHARED_LIB_FLAG = @ENABLE_SHARED_LIB_FLAG@
 ENABLE_TARGETBSD_FLAG = @ENABLE_TARGETBSD_FLAG@
@@ -430,13 +437,14 @@ CLEANFILES = \
 # Intermediate Libraries
 noinst_LTLIBRARIES = libutil.la
 libutil_la_SOURCES = data_structures.c ddcutil_config_file.c \
-	debug_util.c edid.c error_info.c file_util.c file_util_base.c \
-	glib_util.c glib_string_util.c i2c_util.c linux_util.c \
-	multi_level_map.c pnp_ids.c report_util.c simple_ini_file.c \
-	string_util.c sysfs_util.c subprocess_util.c timestamp.c \
-	utilrpt.c xdg_util.c $(am__append_1) $(am__append_2) \
-	$(am__append_3) $(am__append_4) $(am__append_5) \
-	$(am__append_6) $(am__append_7)
+	debug_util.c backtrace.c edid.c error_info.c file_util.c \
+	file_util_base.c glib_util.c glib_string_util.c i2c_util.c \
+	linux_util.c msg_util.c multi_level_map.c pnp_ids.c \
+	regex_util.c report_util.c simple_ini_file.c string_util.c \
+	sysfs_util.c subprocess_util.c timestamp.c \
+	traced_function_stack.c utilrpt.c xdg_util.c $(am__append_1) \
+	$(am__append_2) $(am__append_3) $(am__append_4) \
+	$(am__append_5) $(am__append_6) $(am__append_7)
 all: all-am
 
 .SUFFIXES:
@@ -491,6 +499,7 @@ mostlyclean-compile:
 distclean-compile:
 	-rm -f *.tab.c
 
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/backtrace.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/data_structures.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ddcutil_config_file.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/debug_util.Plo@am__quote@ # am--include-marker
@@ -506,8 +515,10 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/i2c_util.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libdrm_util.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/linux_util.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/msg_util.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/multi_level_map.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/pnp_ids.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/regex_util.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/report_util.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/simple_ini_file.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/string_util.Plo@am__quote@ # am--include-marker
@@ -516,6 +527,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/sysfs_i2c_util.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/sysfs_util.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/timestamp.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/traced_function_stack.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/udev_i2c_util.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/udev_usb_util.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/udev_util.Plo@am__quote@ # am--include-marker
@@ -684,7 +696,8 @@ clean-am: clean-generic clean-libtool clean-local \
 	clean-noinstLTLIBRARIES mostlyclean-am
 
 distclean: distclean-am
-		-rm -f ./$(DEPDIR)/data_structures.Plo
+		-rm -f ./$(DEPDIR)/backtrace.Plo
+	-rm -f ./$(DEPDIR)/data_structures.Plo
 	-rm -f ./$(DEPDIR)/ddcutil_config_file.Plo
 	-rm -f ./$(DEPDIR)/debug_util.Plo
 	-rm -f ./$(DEPDIR)/device_id_util.Plo
@@ -699,8 +712,10 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/i2c_util.Plo
 	-rm -f ./$(DEPDIR)/libdrm_util.Plo
 	-rm -f ./$(DEPDIR)/linux_util.Plo
+	-rm -f ./$(DEPDIR)/msg_util.Plo
 	-rm -f ./$(DEPDIR)/multi_level_map.Plo
 	-rm -f ./$(DEPDIR)/pnp_ids.Plo
+	-rm -f ./$(DEPDIR)/regex_util.Plo
 	-rm -f ./$(DEPDIR)/report_util.Plo
 	-rm -f ./$(DEPDIR)/simple_ini_file.Plo
 	-rm -f ./$(DEPDIR)/string_util.Plo
@@ -709,6 +724,7 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/sysfs_i2c_util.Plo
 	-rm -f ./$(DEPDIR)/sysfs_util.Plo
 	-rm -f ./$(DEPDIR)/timestamp.Plo
+	-rm -f ./$(DEPDIR)/traced_function_stack.Plo
 	-rm -f ./$(DEPDIR)/udev_i2c_util.Plo
 	-rm -f ./$(DEPDIR)/udev_usb_util.Plo
 	-rm -f ./$(DEPDIR)/udev_util.Plo
@@ -760,7 +776,8 @@ install-ps-am:
 installcheck-am:
 
 maintainer-clean: maintainer-clean-am
-		-rm -f ./$(DEPDIR)/data_structures.Plo
+		-rm -f ./$(DEPDIR)/backtrace.Plo
+	-rm -f ./$(DEPDIR)/data_structures.Plo
 	-rm -f ./$(DEPDIR)/ddcutil_config_file.Plo
 	-rm -f ./$(DEPDIR)/debug_util.Plo
 	-rm -f ./$(DEPDIR)/device_id_util.Plo
@@ -775,8 +792,10 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/i2c_util.Plo
 	-rm -f ./$(DEPDIR)/libdrm_util.Plo
 	-rm -f ./$(DEPDIR)/linux_util.Plo
+	-rm -f ./$(DEPDIR)/msg_util.Plo
 	-rm -f ./$(DEPDIR)/multi_level_map.Plo
 	-rm -f ./$(DEPDIR)/pnp_ids.Plo
+	-rm -f ./$(DEPDIR)/regex_util.Plo
 	-rm -f ./$(DEPDIR)/report_util.Plo
 	-rm -f ./$(DEPDIR)/simple_ini_file.Plo
 	-rm -f ./$(DEPDIR)/string_util.Plo
@@ -785,6 +804,7 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/sysfs_i2c_util.Plo
 	-rm -f ./$(DEPDIR)/sysfs_util.Plo
 	-rm -f ./$(DEPDIR)/timestamp.Plo
+	-rm -f ./$(DEPDIR)/traced_function_stack.Plo
 	-rm -f ./$(DEPDIR)/udev_i2c_util.Plo
 	-rm -f ./$(DEPDIR)/udev_usb_util.Plo
 	-rm -f ./$(DEPDIR)/udev_util.Plo

@@ -44,6 +44,7 @@ typedef enum {
    CMDID_SAVE_SETTINGS = 0x010000,
    CMDID_DISCARD_CACHE = 0x020000,
    CMDID_LIST_RTTI     = 0x040000,
+   CMDID_NOOP          = 0x080000,
    CMDID_C1            = 0x100000,         // utility command id, for tests
    CMDID_C2            = 0x200000,
    CMDID_C3            = 0x400000,
@@ -52,7 +53,8 @@ typedef enum {
 
 typedef enum {
    CMD_FLAG_DDCDATA                  = 0x0001,
-   CMD_FLAG_FORCE_UNRECOGNIZED_VCP_CODE = 0x0002,
+   CMD_FLAG_FORCE_UNRECOGNIZED_VCP_CODE
+                                     = 0x0002,
    CMD_FLAG_FORCE_SLAVE_ADDR         = 0x0004,
    CMD_FLAG_TIMESTAMP_TRACE          = 0x0008,  // prepend trace and debug msgs with elapsed time
    CMD_FLAG_SHOW_UNSUPPORTED         = 0x0010,
@@ -78,23 +80,18 @@ typedef enum {
 
    CMD_FLAG_ENABLE_UDF             = 0x100000,
    CMD_FLAG_ENABLE_USB             = 0x200000,
-   CMD_FLAG_F13                    = 0x400000,
-   CMD_FLAG_F14                    = 0x800000,
 
-   CMD_FLAG_F1                   = 0x01000000,
-   CMD_FLAG_F2                   = 0x02000000,
-   CMD_FLAG_F3                   = 0x04000000,
-   CMD_FLAG_F4                   = 0x08000000,
-   CMD_FLAG_F5                   = 0x10000000,
-   CMD_FLAG_F6                   = 0x20000000,
-   CMD_FLAG_FLOCK                = 0x40000000,
+   CMD_FLAG_TRY_GET_EDID_FROM_SYSFS
+                                 = 0x10000000,
+   CMD_FLAG_FLOCK                = 0x20000000,
+   CMD_FLAG_DEFER_SLEEPS         = 0x40000000,
 
-   CMD_FLAG_DEFER_SLEEPS         = 0x80000000,
    CMD_FLAG_X52_NO_FIFO        = 0x0100000000,
    CMD_FLAG_VERBOSE_STATS      = 0x0200000000,
    CMD_FLAG_SHOW_SETTINGS      = 0x0400000000,
    CMD_FLAG_ENABLE_CACHED_CAPABILITIES
                                = 0x0800000000,
+
 // CMD_FLAG_CLEAR_PERSISTENT_CACHE
 //                             = 0x1000000000,
    CMD_FLAG_WALLTIME_TRACE     = 0x2000000000,
@@ -106,19 +103,16 @@ typedef enum {
                              = 0x100000000000,
    CMD_FLAG_DSA2             = 0x200000000000,
 
-   CMD_FLAG_QUICK            = 0x800000000000,
+   CMD_FLAG_QUICK            = 0x400000000000,
 
-   CMD_FLAG_F7             = 0x01000000000000,
-   CMD_FLAG_F8             = 0x02000000000000,
-   CMD_FLAG_MOCK           = 0x04000000000000,
-   CMD_FLAG_PROFILE_API    = 0x08000000000000,
 
-   CMD_FLAG_FL1_SET        = 0x10000000000000,
-   CMD_FLAG_FL2_SET        = 0x20000000000000,
+   CMD_FLAG_MOCK           = 0x01000000000000,
+   CMD_FLAG_PROFILE_API    = 0x02000000000000,
+
    CMD_FLAG_ENABLE_CACHED_DISPLAYS
-                           = 0x40000000000000,
+                           = 0x10000000000000,
    CMD_FLAG_TRACE_TO_SYSLOG_ONLY
-                           = 0x80000000000000,
+                           = 0x20000000000000,
    CMD_FLAG_STATS_TO_SYSLOG
 
                          = 0x0100000000000000,
@@ -126,14 +120,14 @@ typedef enum {
                          = 0x0200000000000000,
    CMD_FLAG_EXPLICIT_I2C_SOURCE_ADDR
                         =  0x0400000000000000,
-   CMD_FLAG_F9          =  0x0800000000000000,
 
-   CMD_FLAG_F10         =  0x1000000000000000,
-   CMD_FLAG_F11         =  0x2000000000000000,
-   CMD_FLAG_F12         =  0x4000000000000000,
-   CMD_FLAG_WATCH_DISPLAY_HOTPLUG_EVENTS
+   CMD_FLAG_ENABLE_TRACED_FUNCTION_STACK
+                         = 0x1000000000000000,
+   CMD_FLAG_TRACED_FUNCTION_STACK_ERRORS_FATAL
+                         = 0x2000000000000000,
+   CMD_FLAG_DISABLE_API =  0x4000000000000000,
+   CMD_FLAG_WATCH_DISPLAY_EVENTS
                         =  0x8000000000000000,
-
 
 
 #ifdef OLD
@@ -145,7 +139,38 @@ typedef enum {
 } Parsed_Cmd_Flags;
 
 typedef enum {
-   CMD_FLAG_TRY_GET_EDID_FROM_SYSFS =  0x01,
+   CMD_FLAG2_F1                   = 0x00000001,
+   CMD_FLAG2_F2                   = 0x00000002,
+   CMD_FLAG2_F3                   = 0x00000004,
+   CMD_FLAG2_F4                   = 0x00000008,
+   CMD_FLAG2_F5                   = 0x00000010,
+   CMD_FLAG2_F6                   = 0x00000020,
+   CMD_FLAG2_F7                   = 0x00000040,
+   CMD_FLAG2_F8                   = 0x00000080,
+   CMD_FLAG2_F9                   = 0x00000100,
+   CMD_FLAG2_F10                  = 0x00000200,
+   CMD_FLAG2_F11                  = 0x00000400,
+   CMD_FLAG2_F12                  = 0x00000800,
+   CMD_FLAG2_F13                  = 0x00001000,
+   CMD_FLAG2_F14                  = 0x00002000,
+   CMD_FLAG2_F15                  = 0x00004000,
+   CMD_FLAG2_F16                  = 0x00008000,
+   CMD_FLAG2_F17                  = 0x00010000,
+   CMD_FLAG2_F18                  = 0x00020000,
+   CMD_FLAG2_F19                  = 0x00040000,
+   CMD_FLAG2_F20                  = 0x00080000,
+   CMD_FLAG2_F21                  = 0x00100000,
+   CMD_FLAG2_F22                  = 0x00200000,
+   CMD_FLAG2_F23                  = 0x00400000,
+   CMD_FLAG2_F24                  = 0x00800000,
+   CMD_FLAG2_F25                  = 0x01000000,
+   CMD_FLAG2_F26                  = 0x02000000,
+   CMD_FLAG2_F27                  = 0x04000000,
+   CMD_FLAG2_F28                  = 0x08000000,
+   CMD_FLAG2_F29                  = 0x10000000,
+   CMD_FLAG2_F30                  = 0x20000000,
+   CMD_FLAG2_F31                  = 0x40000000,
+   CMD_FLAG2_F32                  = 0x80000000,
 
    CMD_FLAG2_I1_SET           = 0x010000000000,
    CMD_FLAG2_I2_SET           = 0x020000000000,
@@ -155,7 +180,16 @@ typedef enum {
    CMD_FLAG2_I6_SET           = 0x200000000000,
    CMD_FLAG2_I7_SET           = 0x400000000000,
    CMD_FLAG2_I8_SET           = 0x800000000000,
-
+   CMD_FLAG2_I9_SET         = 0x01000000000000,
+   CMD_FLAG2_I10_SET        = 0x02000000000000,
+   CMD_FLAG2_I11_SET        = 0x04000000000000,
+   CMD_FLAG2_I12_SET        = 0x08000000000000,
+   CMD_FLAG2_I13_SET        = 0x10000000000000,
+   CMD_FLAG2_I14_SET        = 0x20000000000000,
+   CMD_FLAG2_I15_SET        = 0x40000000000000,
+   CMD_FLAG2_I16_SET        = 0x80000000000000,
+   CMD_FLAG2_FL1_SET      = 0x1000000000000000,
+   CMD_FLAG2_FL2_SET      = 0x2000000000000000,
 
 } Parsed_Cmd_Flags2;
 
@@ -206,6 +240,7 @@ struct {
    // Behavior Modification
    uint8_t                explicit_i2c_source_addr;
    int                    edid_read_size;
+   gchar **               ddc_disabled;
 
    // Display Selection
    Display_Identifier*    pdid;
@@ -226,6 +261,9 @@ struct {
    DDCA_Stats_Type        stats_types;
    int16_t                i2c_bus_check_async_min;
    int16_t                ddc_check_async_min;
+   DDC_Watch_Mode         watch_mode;
+   uint16_t               xevent_watch_loop_millisec;
+   uint16_t               poll_watch_loop_millisec;
 
    // Tracing and logging
    DDCA_Trace_Group       traced_groups;
@@ -248,6 +286,14 @@ struct {
    int                    i6;         // for temporary use
    int                    i7;         // for temporary use
    int                    i8;         // for temporary use
+   int                    i9;         // for temporary use
+   int                   i10;         // for temporary use
+   int                   i11;         // for temporary use
+   int                   i12;         // for temporary use
+   int                   i13;         // for temporary use
+   int                   i14;         // for temporary use
+   int                   i15;         // for temporary use
+   int                   i16;         // for temporary use
    char *                 s1;         // for temporary use
    char *                 s2;         // for temporary use
    char *                 s3;         // for temporary use

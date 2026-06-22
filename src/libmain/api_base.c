@@ -1,34 +1,39 @@
 /** @file api_base.c
+#include <conn/ddc_dw_main.h>
  *
  *  C API base functions.
  */
 
-// Copyright (C) 2015-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2015-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "config.h"
 
-#define _GNU_SOURCE 1
-#include <assert.h>
 #include <dlfcn.h>     // _GNU_SOURCE for dladdr()
 #include <errno.h>
 #include <glib-2.0/glib.h>
 #include <signal.h>
 #include <string.h>
 #include <syslog.h>
+#include <unistd.h>
 
 #include "public/ddcutil_c_api.h"
 
 #include "util/ddcutil_config_file.h"
 #include "util/debug_util.h"
 #include "util/file_util.h"
+#include "util/msg_util.h"
+#include "util/regex_util.h"
 #include "util/report_util.h"
 #include "util/sysfs_filter_functions.h"
+#include "util/traced_function_stack.h"
 #include "util/xdg_util.h"
 
 #include "base/base_services.h"
 #include "base/build_info.h"
+#include "base/build_timestamp.h"
 #include "base/core_per_thread_settings.h"
+#include "base/display_lock.h"
 #include "base/core.h"
 #include "base/dsa2.h"
 #include "base/parms.h"
@@ -41,8 +46,9 @@
 #include "cmdline/cmd_parser.h"
 #include "cmdline/parsed_cmd.h"
 
+#include "sysfs/sysfs_base.h"
+
 #include "i2c/i2c_bus_core.h"   // for testing watch_devices
-#include "i2c/i2c_display_lock.h"
 #include "i2c/i2c_execute.h"    // for i2c_set_addr()
 
 #include "ddc/ddc_common_init.h"
@@ -53,7 +59,9 @@
 #include "ddc/ddc_services.h"
 #include "ddc/ddc_try_data.h"
 #include "ddc/ddc_vcp.h"
-#include "ddc/ddc_watch_displays.h"
+
+#include "dw/dw_main.h"
+#include "dw/dw_services.h"
 
 #include "libmain/api_error_info_internal.h"
 #include "libmain/api_base_internal.h"
@@ -77,6 +85,11 @@ static FILE * flog = NULL;
 static DDCA_Stats_Type requested_stats = 0;
 static bool per_display_stats = false;
 static bool dsa_detail_stats;
+static int    active_calls = 0;
+static int    max_active_calls = 0;
+static GMutex active_calls_mutex;
+static bool   api_quiesced = false;
+static GMutex api_quiesced_mutex;
 
 
 //
@@ -186,6 +199,110 @@ ddca_libddcutil_filename(void) {
    }
    return p;
 }
+
+
+bool increment_active_api_calls(const char * funcname) {
+   bool debug = false;
+   DBGMSF(debug, "Starting. funcname=%s, active_calls=%d", funcname, active_calls);
+
+   bool result = true;
+   g_mutex_lock(&api_quiesced_mutex);  // blocks API calls from starting
+   g_mutex_lock(&active_calls_mutex);
+   if (api_quiesced || library_disabled)
+      result = false;
+   else {
+      active_calls++;
+      if (active_calls > max_active_calls)
+         max_active_calls = active_calls;
+   }
+   g_mutex_unlock(&active_calls_mutex);
+   g_mutex_unlock(&api_quiesced_mutex);
+
+   DBGMSF(debug, "funcname=%s, returning %s", funcname, SBOOL(result));
+   return result;
+}
+
+
+void decrement_active_api_calls(const char * funcname) {
+   bool debug = false;
+   DBGMSF(debug, "Starting. funcname=%s, active_calls=%d", funcname, active_calls);
+
+   bool oops = false;
+   g_mutex_lock(&active_calls_mutex);
+   if (active_calls > 0) {
+      active_calls--;
+   }
+   else {
+      oops = true;
+   }
+   g_mutex_unlock(&active_calls_mutex);
+   if (oops) {
+      MSG_W_SYSLOG(DDCA_SYSLOG_ERROR, "Unmatched active call ct in %s", funcname);
+   }
+
+   DBGMSF(debug, "Done    funcname=%s, oops=%s", funcname, SBOOL(oops));
+}
+
+
+/** Quiesce the API.
+ *
+ *  When quiesced, API calls that can affect monitor state terminate immediately with status DDCRC_QUIESCED.
+ */
+void quiesce_api() {
+   bool debug = false;
+   DBGTRC_STARTING(debug, DDCA_TRC_API, "");
+
+   SYSLOG2(DDCA_SYSLOG_NOTICE, "Quiescing libddcutil API...");
+   bool oops = false;
+   int slept_nanosec = 0;
+
+   g_mutex_lock(&api_quiesced_mutex);
+
+   g_mutex_lock(&active_calls_mutex);
+   if (active_calls > 0) {
+      int poll_max_millisec = 3000;       // move to parms.h
+      int poll_interval_millisec = 100;   // move to parms.h
+      int poll_max_nanosec = poll_max_millisec * 1000;
+      int poll_interval_nanosec = poll_interval_millisec * 1000;
+      oops = true;
+      for (; slept_nanosec < poll_max_nanosec; slept_nanosec += poll_interval_nanosec) {
+         usleep(poll_interval_nanosec);
+         if (active_calls == 0) {
+            oops = false;
+            break;
+         }
+      }
+   }
+   g_mutex_unlock(&active_calls_mutex);
+
+   api_quiesced = true;
+   g_mutex_unlock(&api_quiesced_mutex);
+
+   if (oops) {
+      MSG_W_SYSLOG(DDCA_SYSLOG_ERROR, "Error queiscing libdducitl API. %d active API calls outstanding.", active_calls);
+   }
+   else {
+      SYSLOG2(DDCA_SYSLOG_NOTICE, "Quiesce libddcutil API complete");
+   }
+
+   DBGTRC_DONE(debug, DDCA_TRC_API, "Terminating with %d active API calls outstanding. Waited %d millisec", active_calls, slept_nanosec/1000);
+}
+
+
+/** Unquiesce the API.
+ */
+void unquiesce_api() {
+   bool debug = false;
+   DBGTRC_STARTING(debug, DDCA_TRC_API, "");
+
+   SYSLOG2(DDCA_SYSLOG_NOTICE, "Unquiescing libddcutil API...");
+   g_mutex_lock(&api_quiesced_mutex);
+   api_quiesced = false;
+   g_mutex_unlock(&api_quiesced_mutex);
+
+   DBGTRC_DONE(debug, DDCA_TRC_API, "");
+}
+
 
 
 Error_Info* perform_parse(
@@ -339,7 +456,7 @@ get_parsed_libmain_config(const char * libopts_string,
    if (!result) {   // if no errors
       assert(new_argc >= 1);
       char * combined = strjoin((const char**)(new_argv+1), new_argc, " ");
-      char * msg = g_strdup_printf("Applying combined options: %s", combined);
+      char * msg = g_strdup_printf("Applying combined libddcutil options: %s", combined);
       emit_parse_info_msg(msg, infomsgs);
       free(msg);
 
@@ -377,7 +494,6 @@ void atexit_func() {
 #endif
 
 
-
 /** Initializes the ddcutil library module.
  *
  *  Called automatically when the shared library is loaded.
@@ -386,17 +502,22 @@ void atexit_func() {
  *  that cannot fail.
  */
 void  __attribute__ ((constructor))
-_ddca_new_init(void) {
+_libddcutil_constructor(void) {
    bool debug = false;
    char * s = getenv("DDCUTIL_DEBUG_LIBINIT");
    if (s && strlen(s) > 0)
       debug = true;
 
-   DBGF(debug, "Starting. library_initialized=%s", sbool(library_initialized));
+   DBGF(debug, "Starting. library built %s at %s", BUILD_DATE, BUILD_TIME);
+   detect_stdout_stderr_redirection();
+   DBGF(debug, "stdout_stderr_redirected = %s", SBOOL(stdout_stderr_redirected));
+   syslog(LOG_NOTICE, "Starting libddcutil. library built %s at %s. stdout_stderr_redirected=%s",
+                      BUILD_DATE, BUILD_TIME, sbool(stdout_stderr_redirected));
 
    init_api_base();         // registers functions in RTTI table
    init_base_services();    // initializes tracing related modules
    init_ddc_services();     // initializes i2c, usb, ddc, vcp, dynvcp
+   init_dw_services();      // initializes dw
    init_api_services();     // other files in directory libmain
 
 #ifdef TESTING_CLEANUP
@@ -432,7 +553,8 @@ void profile_report(FILE * dest, bool by_thread) {
    if (dest) {
       rpt_push_output_dest(dest);
    }
-   ptd_profile_report_all_threads(0);
+   if (by_thread)
+      ptd_profile_report_all_threads(0);
    ptd_profile_report_stats_summary(0);
    if (dest) {
       rpt_pop_output_dest();
@@ -444,23 +566,33 @@ void profile_report(FILE * dest, bool by_thread) {
 // Tracing
 //
 
+/** Collects all output that normally goes to the terminal and appends it in
+ *  the specified file. The file is created if it does not already exist.
+ *
+ *  @param  library_trace_file  file in which to store the output.
+ *  @param  debug               if true, issue debug messages
+ *
+ *  If the file name is not fully qualified, it is considered to be a
+ *  subdirectory of the user's XDG state file, normally
+ *  $HOME/.local/state/libddcutil.
+ */
 void
-init_library_trace_file(char * library_trace_file, bool enable_syslog, bool debug) {
-   DBGF(debug, "library_trace_file = \"%s\", enable_syslog = %s", library_trace_file, sbool(enable_syslog));
-   char * trace_file = (library_trace_file[0] != '/')
-          ? xdg_state_home_file("ddcutil", library_trace_file)
+init_library_trace_file(char * library_trace_file, bool debug) {
+   DBGF(debug, "library_trace_file = \"%s\"", library_trace_file);
+   char * fq_trace_file = (library_trace_file[0] != '/')
+          ? xdg_state_home_file("libddcutil", library_trace_file)
           : g_strdup(library_trace_file);
-   DBGF(debug, "Setting trace destination %s", trace_file);
-   SYSLOG2(DDCA_SYSLOG_NOTICE, "Trace destination: %s", trace_file);
 
-   fopen_mkdir(trace_file, "a", stderr, &flog);
+   fopen_mkdir(fq_trace_file, "a", stderr, &flog);
    if (flog) {
+      DBGF(debug, "Writing %s trace output to %s", "libddcutil",fq_trace_file);
+      syslog(LOG_NOTICE, "Trace destination: %s", fq_trace_file);
       time_t trace_start_time = time(NULL);
       char * trace_start_time_s = asctime(localtime(&trace_start_time));
       if (trace_start_time_s[strlen(trace_start_time_s)-1] == 0x0a)
            trace_start_time_s[strlen(trace_start_time_s)-1] = 0;
       fprintf(flog, "%s tracing started %s\n", "libddcutil", trace_start_time_s);
-      DBGF(debug, "Writing %s trace output to %s", "libddcutil",trace_file);
+
       set_default_thread_output_settings(flog, flog);
       set_fout(flog);
       set_ferr(flog);
@@ -470,12 +602,12 @@ init_library_trace_file(char * library_trace_file, bool enable_syslog, bool debu
    }
    else {
       fprintf(stderr, "Error opening libddcutil trace file %s: %s\n",
-                      trace_file, strerror(errno));
-      SYSLOG2(DDCA_SYSLOG_ERROR, "Error opening libddcutil trace file %s: %s",
-                             trace_file, strerror(errno));
+                      fq_trace_file, strerror(errno));
+      syslog(LOG_ERR, "Error opening libddcutil trace file %s: %s",
+                             fq_trace_file, strerror(errno));
    }
-   free(trace_file);
-   DBGF(debug, "Done.");
+   free(fq_trace_file);
+   DBGF(debug, "Done");
 }
 
 
@@ -487,6 +619,7 @@ init_library_trace_file(char * library_trace_file, bool enable_syslog, bool debu
 void __attribute__ ((destructor))
 _ddca_terminate(void) {
    bool debug = false;
+   reset_current_traced_function_stack();  // ?? needed?
    DBGTRC_STARTING(debug, DDCA_TRC_API, "library_initialized = %s", SBOOL(library_initialized));
    if (library_initialized) {
       if (debug)
@@ -499,10 +632,15 @@ _ddca_terminate(void) {
       if (requested_stats)
          ddc_report_stats_main(requested_stats, per_display_stats, dsa_detail_stats, false, 0);
       DDCA_Display_Event_Class active_classes;
-      ddc_stop_watch_displays(/*wait=*/ false, &active_classes);   // in case it was started
+      if (dw_is_watch_displays_executing())
+         dw_stop_watch_displays(/*wait=*/ true, &active_classes);   // in case it was started
+      DBGTRC_NOPREFIX(debug, DDCA_TRC_API, "After ddc_stop_watch_displays");
+      // sleep(5); // still needed?
+      terminate_dw_services();
       terminate_ddc_services();
       terminate_base_services();
       free_regex_hash_table();
+
       library_initialized = false;
       if (flog)
          fclose(flog);
@@ -511,6 +649,10 @@ _ddca_terminate(void) {
    else {
       DBGTRC_DONE(debug, DDCA_TRC_API, "library was already terminated");   // should be impossible
    }
+   // Frees the traced function stack for the main thread.
+   // For created threads, is called at time of thread termination
+   free_current_traced_function_stack();  // must come after last DBG... call
+
    // special handling for termination msg
    if (syslog_level > DDCA_SYSLOG_NEVER)
       syslog(LOG_NOTICE, "libddcutil terminating.");
@@ -606,115 +748,156 @@ ddci_init(const char *      libopts,
    if (s && strlen(s) > 0)
       debug = true;
 
-   DBGF(debug, "Starting. library_initialized=%s", sbool(library_initialized));
+   DBGF(debug, "Starting. library built %s at %s, library_initialized=%s",
+               BUILD_DATE, BUILD_TIME, sbool(library_initialized));
 
    if (infomsg_loc)
       *infomsg_loc = NULL;
 
    Parsed_Cmd * parsed_cmd = NULL;
    Error_Info * master_error = NULL;
+   DDCA_Status ddcrc = 0;
+   enable_init_msgs = opts & DDCA_INIT_OPTIONS_ENABLE_INIT_MSGS;
+   // enable_init_msgs = true;  // *** TEMP ***
+   DBGF(debug, "enable_init_msgs=%s", SBOOL(enable_init_msgs));
+
    if (library_initialized) {
       master_error = ERRINFO_NEW(DDCRC_INVALID_OPERATION, "libddcutil already initialized");
-      SYSLOG2(DDCA_SYSLOG_ERROR, "libddcutil already initialized");
+      syslog(LOG_ERR, "libddcutil already initialized");
+      goto bye;
    }
-   else {
-      enable_init_msgs = opts & DDCA_INIT_OPTIONS_ENABLE_INIT_MSGS;
-      // enable_init_msgs = true;  // *** TEMP ***
-      client_opened_syslog = opts & DDCA_INIT_OPTIONS_CLIENT_OPENED_SYSLOG;
-      if (syslog_level_arg == DDCA_SYSLOG_NOT_SET)
-         syslog_level_arg = DEFAULT_LIBDDCUTIL_SYSLOG_LEVEL;
-      if (syslog_level_arg != DDCA_SYSLOG_NEVER) {
-         enable_syslog = true;
-         if (!client_opened_syslog) {
+
+   client_opened_syslog = opts & DDCA_INIT_OPTIONS_CLIENT_OPENED_SYSLOG;
+   DBGF(debug, "client_opened_syslog=%s, enable_syslog=%s",
+         sbool(client_opened_syslog), sbool(enable_syslog));
+   if (syslog_level_arg == DDCA_SYSLOG_NOT_SET)
+      syslog_level_arg = DEFAULT_LIBDDCUTIL_SYSLOG_LEVEL;
+   enable_syslog = (syslog_level_arg == DDCA_SYSLOG_NEVER) ? false : true;  // global in core.c
+
+   if (enable_syslog) {
+      if (!client_opened_syslog) {
          openlog("libddcutil",       // prepended to every log message
                  LOG_CONS | LOG_PID, // write to system console if error sending to system logger
                                      // include caller's process id
                  LOG_USER);          // generic user program, syslogger can use to determine how to handle
-         }
-         // special handling for start and termination msgs
-         // always output if syslog is opened
-         syslog(LOG_NOTICE, "Initializing libddcutil.  ddcutil version: %s, shared library: %s",
-                   get_full_ddcutil_version(), ddca_libddcutil_filename());
       }
+
+      // special handling for start and termination msgs
+      // always output if syslog is opened
+      syslog(LOG_NOTICE, "Initializing libddcutil.  ddcutil version: %s, shared library: %s",
+                   get_full_ddcutil_version(), ddca_libddcutil_filename());
+
       syslog_level = syslog_level_arg;  // global in trace_control.h
 
-      GPtrArray* infomsgs = NULL;
-         infomsgs = g_ptr_array_new_with_free_func(g_free);
+   }
 
-      if ((opts & DDCA_INIT_OPTIONS_DISABLE_CONFIG_FILE) && !libopts) {
-         parsed_cmd = new_parsed_cmd();
-      }
-      else {
-         master_error = get_parsed_libmain_config(
-                           libopts,
-                           opts & DDCA_INIT_OPTIONS_DISABLE_CONFIG_FILE,
-                           infomsgs,
-                           &parsed_cmd);
-         ASSERT_IFF(master_error, !parsed_cmd);
+   DBGF(debug, "syslog_level_arg = %s, syslog_level=%s, enable_syslog=%s",
+               syslog_level_name(syslog_level_arg), syslog_level_name(syslog_level), sbool(enable_syslog));
 
-         if (enable_init_msgs && infomsgs && infomsgs->len > 0) {
-            for (int ndx = 0; ndx < infomsgs->len; ndx++)
+   GPtrArray* infomsgs = g_ptr_array_new_with_free_func(g_free);
+
+   if ((opts & DDCA_INIT_OPTIONS_DISABLE_CONFIG_FILE) && !libopts) {
+      parsed_cmd = new_parsed_cmd();
+   }
+   else {
+      master_error = get_parsed_libmain_config(
+                        libopts,
+                        opts & DDCA_INIT_OPTIONS_DISABLE_CONFIG_FILE,
+                        infomsgs,
+                        &parsed_cmd);
+      ASSERT_IFF(master_error, !parsed_cmd);
+
+      if (infomsgs && infomsgs->len > 0) {
+         DBGF(debug, "emit infomsgs starting. enable_init_msgs=%s, stdout_stderr_redirected=%s, infomsgs->len=%d",
+               sbool(enable_init_msgs), sbool(stdout_stderr_redirected), infomsgs->len);
+         for (int ndx = 0; ndx < infomsgs->len; ndx++) {
+            if (enable_init_msgs && !stdout_stderr_redirected)
                fprintf(fout(), "%s\n", (char*) g_ptr_array_index(infomsgs, ndx));
+            // already done in emit_parse_info_msg():
+            // syslog(LOG_NOTICE, "%s", (char*) g_ptr_array_index(infomsgs, ndx));
          }
+         DBGF(debug, "emit infomsgs done");
+
          if (infomsg_loc) {
             *infomsg_loc = g_ptr_array_to_ntsa(infomsgs, /*duplicate=*/true);
          }
          g_ptr_array_free(infomsgs, true);
       }
-      if (!master_error) {
-         if (parsed_cmd->trace_destination) {
-            DBGF(debug, "Setting library trace file: %s", parsed_cmd->trace_destination);
-            init_library_trace_file(parsed_cmd->trace_destination, enable_syslog, debug);
-         }
-         master_error = init_tracing(parsed_cmd);
+   }
+   DBGF(debug, "parsing complete");
+
+   if (!master_error) {
+      if (parsed_cmd->trace_destination) {
+         DBGF(debug, "Setting library trace file: %s", parsed_cmd->trace_destination);
+         init_library_trace_file(parsed_cmd->trace_destination, debug);
       }
-      if (!master_error) {
-         requested_stats = parsed_cmd->stats_types;
-         ptd_api_profiling_enabled = parsed_cmd->flags & CMD_FLAG_PROFILE_API;
-         per_display_stats = parsed_cmd->flags & CMD_FLAG_VERBOSE_STATS;
-         dsa_detail_stats = parsed_cmd->flags & CMD_FLAG_INTERNAL_STATS;
-         if (!submaster_initializer(parsed_cmd))
-            master_error = ERRINFO_NEW(DDCRC_UNINITIALIZED, "Initialization failed");
+      master_error = init_tracing(parsed_cmd);
+      if (master_error) {
+         DBGF(debug, "init_tracing failed");
+         free_parsed_cmd(parsed_cmd);
+      }
+      else
+         DBGF(debug, "init_tracing succeeded");
+   }
+
+   if (!master_error) {
+      requested_stats = parsed_cmd->stats_types;
+      ptd_api_profiling_enabled = parsed_cmd->flags & CMD_FLAG_PROFILE_API;
+      per_display_stats = parsed_cmd->flags & CMD_FLAG_VERBOSE_STATS;
+      dsa_detail_stats = parsed_cmd->flags & CMD_FLAG_INTERNAL_STATS;
+      Error_Info * submaster_status = submaster_initializer(parsed_cmd);
+      if (submaster_status) {
+         master_error = ERRINFO_NEW(DDCRC_UNINITIALIZED, "Initialization failed");
+         errinfo_add_cause(master_error, submaster_status);
       }
    }
 
    assert(master_error || parsed_cmd);  // avoid null-dereference warning
-   DDCA_Status ddcrc = 0;
+
    if (master_error) {
-      ddcrc = master_error->status_code;
-      DDCA_Error_Detail * public_error_detail = error_info_to_ddca_detail(master_error);
-      save_thread_error_detail(public_error_detail);
-      if (test_emit_syslog(DDCA_SYSLOG_ERROR)) {
-         SYSLOG2(DDCA_SYSLOG_ERROR, "Library initialization failed: %s", psc_desc(master_error->status_code));
-         for (int ndx = 0; ndx < master_error->cause_ct; ndx++) {
-            SYSLOG2(DDCA_SYSLOG_ERROR, "%s", master_error->causes[ndx]->detail);
-         }
+      syslog(LOG_CRIT, "Library initialization failed: %s", psc_desc(master_error->status_code));
+      for (int ndx = 0; ndx < master_error->cause_ct; ndx++) {
+         syslog(LOG_CRIT, "%s", master_error->causes[ndx]->detail);
       }
+
       if (enable_init_msgs) {
-         printf("(%s) calling report_parse_errors()\n", __func__);
+         DBGF(debug, "Calling report_parse_errors()", __func__);
          report_parse_errors(master_error);
       }
-      errinfo_free(master_error);
+      // errinfo_free(master_error);
+      library_initialization_failed = true;
+   }
+   else if (library_disabled) {
+      DBGF(debug, "libddcutil disabled");
+      master_error = ERRINFO_NEW(DDCRC_INVALID_OPERATION, "libddcutil disabled");
+      syslog(LOG_ERR, "libddcutil disabled");
       library_initialization_failed = true;
    }
    else {
+      DBGF(debug, "performing display detection ...");
       i2c_detect_buses();
       ddc_ensure_displays_detected();
 #ifdef OUT
       if (parsed_cmd->flags&CMD_FLAG_WATCH_DISPLAY_HOTPLUG_EVENTS) {
-         ddc_start_watch_displays(DDCA_EVENT_CLASS_DISPLAY_CONNECTION | DDCA_EVENT_CLASS_DPMS);
+         dw_start_watch_displays(DDCA_EVENT_CLASS_DISPLAY_CONNECTION | DDCA_EVENT_CLASS_DPMS);
          SYSLOG2(DDCA_SYSLOG_NOTICE,
                "Started watch displays for DDCA_EVENT_CLASS_DISPLAY_CONNECTION | DDCA_EVENT_CLASS_DPMS");
-      }
+   }
 #endif
       library_initialized = true;
       library_initialization_failed = false;
-      SYSLOG2(DDCA_SYSLOG_NOTICE, "Library initialization complete.");
+      syslog(LOG_NOTICE, "Library initialization complete.");
+      free_parsed_cmd(parsed_cmd);
    }
-   free_parsed_cmd(parsed_cmd);
 
+bye:
+   if (master_error) {
+      ddcrc = master_error->status_code;
+      DDCA_Error_Detail * public_error_detail = error_info_to_ddca_detail(master_error);
+      save_thread_error_detail(public_error_detail);
+      errinfo_free(master_error);
+   }
    DBGF(debug, "Done.    Returning: %s", psc_desc(ddcrc));
-
    return ddcrc;
 }
 
@@ -741,44 +924,90 @@ ddca_init2(const char *     libopts,
 DDCA_Status
 ddca_start_watch_displays(DDCA_Display_Event_Class enabled_classes) {
    bool debug = false;
-   API_PROLOG(debug, "Starting");
+   API_PROLOGX(debug, RESPECT_QUIESCE, "enabled_classes=0x%02x", enabled_classes);
+
+   DBGTRC_NOPREFIX(debug, DDCA_TRC_API, "all_video_adapters_implement_drm=%s",
+         sbool(all_video_adapters_implement_drm));
+
+   if (enabled_classes == DDCA_EVENT_CLASS_ALL)
+      enabled_classes = DDCA_EVENT_CLASS_DISPLAY_CONNECTION;
 
    DDCA_Error_Detail * edet = NULL;
-   if (!drm_enabled) {
+#ifdef ENABLE_UDEV
+   if (!all_video_adapters_implement_drm) {
       edet = new_ddca_error_detail(DDCRC_INVALID_OPERATION,
                "Display hotplug detection requires DRM enabled video drivers");
    }
+   else if (enabled_classes == DDCA_EVENT_CLASS_NONE) {
+      edet = new_ddca_error_detail(DDCRC_ARG, "No event class specified");
+   }
+   else if (enabled_classes&DDCA_EVENT_CLASS_DPMS) {
+      edet = new_ddca_error_detail(DDCRC_UNIMPLEMENTED, "Watching for DPMS state changes unimplemented");
+   }
+   else if (enabled_classes != DDCA_EVENT_CLASS_DISPLAY_CONNECTION) {
+      edet = new_ddca_error_detail (DDCRC_ARG, "Invalid event class specified");
+   }
    else {
-      Error_Info * erec = ddc_start_watch_displays(enabled_classes);
+      Error_Info * erec = dw_start_watch_displays(enabled_classes);
       edet = error_info_to_ddca_detail(erec);
       ERRINFO_FREE(erec);
    }
+#else
+   edet = new_ddca_error_detail(DDCRC_INVALID_OPERATION, "Display change detection requires UDEV");
+#endif
 
    DDCA_Status ddcrc = 0;
    if (edet) {
       ddcrc = edet->status_code;
       save_thread_error_detail(edet);
    }
-   API_EPILOG(debug, ddcrc, "");
+   API_EPILOG_RET_DDCRC(debug, RESPECT_QUIESCE, ddcrc, "");
 }
 
 
 DDCA_Status
 ddca_stop_watch_displays(bool wait) {
    bool debug = false;
-   API_PROLOG(debug, "Starting");
+   API_PROLOGX(debug, NORESPECT_QUIESCE, "wait=%s", SBOOL(wait));
    DDCA_Display_Event_Class active_classes;
-   DDCA_Status ddcrc = ddc_stop_watch_displays(wait, &active_classes);
-   API_EPILOG(debug, ddcrc, "");
+   DDCA_Status ddcrc = dw_stop_watch_displays(wait, &active_classes);
+   API_EPILOG_RET_DDCRC(debug, NORESPECT_QUIESCE, ddcrc, "");
 }
 
 
 DDCA_Status
 ddca_get_active_watch_classes(DDCA_Display_Event_Class * classes_loc) {
    bool debug = false;
-   API_PROLOG(debug, "Starting classes_loc=%p", classes_loc);
-   DDCA_Status ddcrc = ddc_get_active_watch_classes(classes_loc);
-   API_EPILOG(debug, ddcrc, "*classes_loc=0x%02x", *classes_loc);
+   API_PROLOGX(debug, NORESPECT_QUIESCE, "Starting classes_loc=%p", classes_loc);
+   DDCA_Status ddcrc = dw_get_active_watch_classes(classes_loc);
+   API_EPILOG_RET_DDCRC(debug, NORESPECT_QUIESCE, ddcrc, "*classes_loc=0x%02x", *classes_loc);
+}
+
+DDCA_Status
+ddca_get_display_watch_settings(DDCA_DW_Settings * settings_buffer) {
+   bool debug = false;
+   API_PROLOGX(debug, NORESPECT_QUIESCE, "Starting");
+
+   DDCA_Status ddcrc = DDCRC_OK;
+   if (!settings_buffer)
+      ddcrc = DDCRC_ARG;
+   else
+      dw_get_display_watch_settings(settings_buffer);
+
+   API_EPILOG_RET_DDCRC(debug, NORESPECT_QUIESCE, ddcrc, "Done");
+}
+
+
+DDCA_Status
+ddca_set_display_watch_settings(DDCA_DW_Settings * settings_buffer) {
+   bool debug = false;
+   API_PROLOGX(debug, NORESPECT_QUIESCE, "Starting");
+
+   DDCA_Status ddcrc = DDCRC_ARG;
+   if (settings_buffer)
+      ddcrc = dw_set_display_watch_settings(settings_buffer);
+
+   API_EPILOG_RET_DDCRC(debug, NORESPECT_QUIESCE, ddcrc, "Done");
 }
 
 
@@ -880,13 +1109,20 @@ ddca_set_ferr_to_default(void) {
 
 void
 ddca_start_capture(DDCA_Capture_Option_Flags flags) {
+   bool debug = false;
+   DBGF(debug, "flags=0x%02x", flags);
    start_capture(flags);
 }
 
 
 char *
 ddca_end_capture(void) {
-   return end_capture();
+   bool debug = false;
+
+   char * result = end_capture();
+
+   DBGF(debug, "Returning %p", result);
+   return result;
 }
 
 
@@ -1035,6 +1271,7 @@ double
 ddca_set_sleep_multiplier(double multiplier)
 {
    bool debug = false;
+   reset_current_traced_function_stack();
    DBGTRC_STARTING(debug, DDCA_TRC_API, "Setting multiplier = %6.3f", multiplier);
 
    double old_value = -1.0;
@@ -1055,6 +1292,7 @@ double
 ddca_get_sleep_multiplier()
 {
    bool debug = false;
+   reset_current_traced_function_stack();
    DBGTRC(debug, DDCA_TRC_API, "");
 
    Per_Thread_Data * ptd = ptd_get_per_thread_data();
@@ -1176,9 +1414,17 @@ ddca_is_force_slave_address_enabled(void) {
 
 void
 ddca_reset_stats(void) {
-   // DBGMSG("Executing");
+   DBGMSG("Executing");
+   g_mutex_lock(&api_quiesced_mutex);
+   g_mutex_lock(&active_calls_mutex);
+
    ddc_reset_stats_main();
+   max_active_calls = 0;
+
+   g_mutex_unlock(&active_calls_mutex);
+   g_mutex_unlock(&api_quiesced_mutex);
 }
+
 
 // TODO: Functions that return stats in data structures
 void
@@ -1187,8 +1433,24 @@ ddca_show_stats(
       bool            per_display_stats,
       int             depth)
 {
-   if (stats_types)
+   bool debug = false;
+   API_PROLOG_NO_DISPLAY_IO(debug, "stats_types=0x%02x, per_display_stats=%s",
+         stats_types, SBOOL(per_display_stats) );
+   if (stats_types) {
       ddc_report_stats_main( stats_types, per_display_stats, per_display_stats, false, depth);
+      rpt_nl();
+   }
+
+   rpt_vstring(0, "Max concurrent API calls: %d", max_active_calls);
+#ifdef REDUNDANT
+   if (stats_types & DDCA_STATS_API) {
+      if (ptd_api_profiling_enabled) {
+         rpt_nl();
+         profile_report(NULL, false);  // redundant
+      }
+   }
+#endif
+   API_EPILOG_NO_RETURN(debug, NORESPECT_QUIESCE, "");
 }
 
 void
@@ -1205,6 +1467,10 @@ void init_api_base() {
    RTTI_ADD_FUNC(ddca_start_watch_displays);
    RTTI_ADD_FUNC(ddca_stop_watch_displays);
    RTTI_ADD_FUNC(ddca_get_active_watch_classes);
+   RTTI_ADD_FUNC(ddca_start_capture);
+   RTTI_ADD_FUNC(ddca_end_capture);
+   RTTI_ADD_FUNC(quiesce_api);
+   RTTI_ADD_FUNC(unquiesce_api);
 #ifdef REMOVED
    RTTI_ADD_FUNC(ddca_set_sleep_multiplier);
    RTTI_ADD_FUNC(ddca_set_default_sleep_multiplier);

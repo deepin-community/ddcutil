@@ -41,6 +41,9 @@ char * read_file_single_string(
       const char * filename,
       bool         verbose);
 
+bool any_file_exists(
+      const char * fqfn);
+
 bool regular_file_exists(
       const char *  fqfn);
 
@@ -113,6 +116,22 @@ void dir_filtered_ordered_foreach(
       Dir_Foreach_Func      func,
       void *                accumulator,
       int                   depth);
+
+
+/** Signature of function called by #dir_foreach_terminatable to process each file. */
+typedef bool (*Terminating_Dir_Foreach_Func)(
+      const char *  dirname,
+      const char *  fn,
+      void *        accumulator,
+      int           depth);
+
+void dir_foreach_terminatable(
+      const char *          dirname,
+      Filename_Filter_Func  fn_filter,
+      Terminating_Dir_Foreach_Func      func,
+      void *                accumulator,
+      int                   depth);
+
 
 void filter_and_limit_g_ptr_array(
       GPtrArray * line_array,

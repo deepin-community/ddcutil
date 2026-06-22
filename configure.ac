@@ -2,12 +2,12 @@
 # ddcutil autotools configure script 
 #
 
-# Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
+# Copyright (C) 2014-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 dnl General notes:  
 dnl - Macro names in comments are written in lower case to avoid processing as actual macros
-
+ 
 ###
 ### Initial Setup
 ###
@@ -15,10 +15,10 @@ dnl - Macro names in comments are written in lower case to avoid processing as a
 AC_PREREQ([2.69])
 
 m4_define([ddcutil_major_version], [2])
-m4_define([ddcutil_minor_version], [1])
-m4_define([ddcutil_micro_version], [4])
+m4_define([ddcutil_minor_version], [2])
+m4_define([ddcutil_micro_version], [0])
 dnl ddcutil_version_suffix does not begin with hyphen, e.g. "dev", not "-dev"
-m4_define([ddcutil_version_suffix], [""])
+m4_define([ddcutil_version_suffix], ["dev"])
 # m4_ifelse(ddcutil_version_suffix,[], m4_define([ddcutil_version], [a]),define([ddcutil_version],[b]))
 dnl mf_define( [ddcutil_version], m4_format([%s.%s.%s%s],[ddcutil_major_version],[ddcutil_minor_version],[ddcutil_micro_version],[ddcutil_version_suffix])
 m4_define([ddcutil_version], [ddcutil_major_version.ddcutil_minor_version.ddcutil_micro_version])
@@ -73,9 +73,11 @@ AC_CONFIG_FILES([
 	src/base/Makefile
 	src/vcp/Makefile
 	src/dynvcp/Makefile
+	src/sysfs/Makefile
 	src/i2c/Makefile
 	src/usb/Makefile
 	src/ddc/Makefile
+	src/dw/Makefile
 	src/test/Makefile
 	src/cmdline/Makefile
 	src/app_sysenv/Makefile
@@ -170,9 +172,9 @@ AC_SUBST([LIBTOOL_DEPS])
 # is --version-info "13:1:4", and the generated SO name looks like xxx.so.9.4.1
 
 dnl 7/29/19 first use, LT_CURRENT set to 1
-LT_CURRENT=6
-LT_REVISION=2
-LT_AGE=1
+LT_CURRENT=7
+LT_REVISION=0
+LT_AGE=2
 AC_SUBST(LT_CURRENT)
 AC_SUBST(LT_REVISION)
 AC_SUBST(LT_AGE)
@@ -201,11 +203,11 @@ dnl Set flag for automake.am:
 AM_CONDITIONAL([ENABLE_SHARED_LIB_COND], [test "x$enable_lib" = "xyes"] )
 dnl ENABLE_SHARED_LIB_FLAG used in package/ddcutil_spec.in
 AS_IF([test "x$enable_lib" = "xyes"],
-      AC_MSG_NOTICE( [lib...        enabled] )
+      AC_MSG_NOTICE( [lib...              enabled] )
       AC_SUBST(ENABLE_SHARED_LIB_FLAG, 1)
 	  AC_DEFINE( [BUILD_SHARED_LIB], [1], [If defined, buid shared library.])
      ,
-      AC_MSG_NOTICE( [lib...        disabled] )
+      AC_MSG_NOTICE( [lib...              disabled] )
       AC_SUBST(ENABLE_SHARED_LIB_FLAG, 0)
      )
      
@@ -216,42 +218,40 @@ AC_ARG_ENABLE([install-lib-only],
               [enable_install_lib_only=no] )
 AM_CONDITIONAL([INSTALL_LIB_ONLY_COND], [test "x$enable_install_lib_only" = "xyes"] )
 AS_IF([test "x$enable_install_lib_only" = "xyes"],
-      AC_MSG_NOTICE( [install_lib_only...        enabled] )
+      AC_MSG_NOTICE( [install_lib_only... enabled] )
      ,
-      AC_MSG_NOTICE( [install_lib_only...        disabled] )
+      AC_MSG_NOTICE( [install_lib_only... disabled] )
      )
-
 
 AS_IF([test "x$enable_lib" = "xno" -a "x$enable_install_lib_only" = "xyes" ],
        AC_MSG_ERROR( [--disable-lib contradicts --enable-install-lib-only] )
    ) 
 
-dnl *** configure option: --install-lib-only
-AC_ARG_ENABLE([install-lib-only],
-              [ AS_HELP_STRING([--enable-install-lib-only=@<:@yes/no@:>@], [Install only shared shared librarys@<:@default=no@:>@] )],
-              [enable_install_lib_only=${enableval}],
-              [enable_install_lib_only=no] )
-AM_CONDITIONAL([INSTALL_LIB_ONLY_COND], [test "x$enable_install_lib_only" = "xyes"] )
-AS_IF([test "x$enable_install_lib_only" = "xyes"],
-      AC_MSG_NOTICE( [install_lib_only...        enabled] )
+dnl *** configure option: --enable-build-timestamp
+AC_ARG_ENABLE([build-timestamp],
+              [ AS_HELP_STRING([--enable-build-timestamp=@<:@yes/no@:>@], [Insert build date/time in executables@<:@default=yes@:>@] )],
+              [enable_build_timestamp=${enableval}],
+              [enable_build_timestamp=yes] )
+dnl Set flag for automake.am:
+AM_CONDITIONAL([ENABLE_BUILD_TIMESTAMP_COND], [test "x$enable_build_timestamp" = "xyes"] )
+AS_IF([test "x$enable_build_timestamp" = "xyes"],
+      AC_MSG_NOTICE( [build-timestamp...  enabled] )
+      AC_SUBST(ENABLE_BUILD_TIMESTAMP_FLAG, 1)
+      AC_DEFINE( [BUILD_TIMESTAMP], [1], [If defined, include build date/time in executables.])
      ,
-      AC_MSG_NOTICE( [install_lib_only...        disabled] )
+      AC_MSG_NOTICE( [build-timestamp...  disabled] )
+      AC_SUBST(ENABLE_BUILD_TIMESTAMP_FLAG, 0)
      )
-
-
-AS_IF([test "x$enable_lib" = "xno" -a "x$enable_install_lib_only" = "xyes" ],
-       AC_MSG_ERROR( [--disable-lib contradicts --enable-install-lib-only] )
-   ) 
-
+   
 dnl *** configure option: --enable-envcmds
 AC_ARG_ENABLE([envcmds],
               [ AS_HELP_STRING([--enable-envcmds=@<:@yes/no@:>@], [Include environment and usbenvironment@<:@default=yes@:>@] )],
               [enable_envcmds=${enableval}],
               [enable_envcmds=yes] )
 AS_IF([test "x$enable_envcmds" = "xyes"],
-        AC_MSG_NOTICE( [envcmds...    enabled (provisional) ]  )
+        AC_MSG_NOTICE( [envcmds...          enabled (provisional) ]  )
       ,
-        AC_MSG_NOTICE( [envcmds...    disabled] )
+        AC_MSG_NOTICE( [envcmds...          disabled] )
      )
 
 dnl *** configure option: --enable-udev
@@ -271,44 +271,51 @@ AC_ARG_ENABLE([usb],
               [enable_usb=${enableval}],
               [enable_usb=yes] )
 AS_IF([test "x$enable_usb" = "xyes"],
-        AC_MSG_NOTICE( [usb...        enabled (provisional) ]  )
+        AC_MSG_NOTICE( [usb...              enabled (provisional) ]  )
       ,
-        AC_MSG_NOTICE( [usb...        disabled] )
+        AC_MSG_NOTICE( [usb...              disabled] )
      )
 
 dnl *** configure option: --enable-drm
 AC_ARG_ENABLE([drm],
-              [ AS_HELP_STRING( [--enable-drm=@<:@yes/no@:>@], [Use DRM in diagnostics@<:@default=yes@:>@] )],
+              [ AS_HELP_STRING( [--enable-drm=@<:@yes/no@:>@], [Use DRM@<:@default=yes@:>@] )],
               [enable_drm=${enableval}],
               [enable_drm=yes] )
 AS_IF([test "x$enable_drm" = "xyes"],
-        AC_MSG_NOTICE( [drm...        enabled (provisional) ]  )
+        AC_MSG_NOTICE( [drm...              enabled (provisional) ]  )
       ,
-        AC_MSG_NOTICE( [drm...        disabled] )
+        AC_MSG_NOTICE( [drm...              disabled] )
      )
 
 dnl *** configure option: --enable-x11
 AC_ARG_ENABLE([x11],
-              [ AS_HELP_STRING( [--enable-x11=@<:@no/yes@:>@], [Deprecated option X11 ignored.] )],
+              [ AS_HELP_STRING( [--enable-x11=@<:@yes/no@:>@], [Use X11@<:@default=yes@:>@] )],
               [enable_x11=${enableval}],
               [enable_x11=yes] )
-enable_x11=no
- AS_IF([test "x$enable_x11" = "xyes"],
-       AC_MSG_NOTICE( [x11...      Deprecated option ignored]  ),
-       AC_MSG_NOTICE( [x11...      disabled] )
-      )              
+# enable_x11=no
+#  AS_IF([test "x$enable_x11" = "xyes"],
+#        AC_MSG_NOTICE( [x11...              Deprecated option ignored]  ),
+#       AC_MSG_NOTICE( [x11...              disabled] )
+#       )              
+
+AS_IF([test "x$enable_x11" = "xyes"],
+        AC_MSG_NOTICE( [x11...              enabled (provisional) ]  )
+      ,
+        AC_MSG_NOTICE( [x11...              disabled] )
+     )
+
 
 dnl *** configure option: --enable-static-functions-visible
 AC_ARG_ENABLE([static-functions-visible],
-              [ AS_HELP_STRING( [--enable-static-functions-visible=@<:@no/yes@:>@], [Remove static qualifier from function names)@<:@default=no@:>@] )],
+              [ AS_HELP_STRING( [--enable-static-functions-visible=@<:@no/yes@:>@], [Remove static qualifier from functions@<:@default=no@:>@] )],
               [enable_static_functions_visible=${enableval}],
               [enable_static_functions_visible=no] )
 AM_CONDITIONAL([STATIC_FUNCTIONS_VISIBLE_COND], [test "x$enable_static_functions_visible" = "xyes"] )
 AS_IF( [test "x$enable_static_functions_visible" = "xyes"],
-         AC_DEFINE( [STATIC_FUNCTIONS_VISIBLE], [1], [If defined, remove static qualifier from function declarations.])
-         AC_MSG_NOTICE( [static_functions_visible...enabled] )
+         AC_DEFINE( [STATIC_FUNCTIONS_VISIBLE], [1], [If defined, remove static qualifier from function declarations and definitions.])
+         AC_MSG_NOTICE( [static_functions_visible... enabled] )
       ,
-         AC_MSG_NOTICE( [static_functions_visible...disabled] )
+         AC_MSG_NOTICE( [static_functions_visible... disabled] )
      )
 
 dnl *** configure option: --enable-asan
@@ -319,9 +326,9 @@ AC_ARG_ENABLE([asan],
 AM_CONDITIONAL([ASAN_COND], [test "x$enable_asan" = "xyes"] )
 AS_IF( [test "x$enable_asan" = "xyes"],
          AC_DEFINE( [WITH_ASAN], [1], [If defined, building for Asan instrumentation.])
-         AC_MSG_NOTICE( [asan..........enabled] )
+         AC_MSG_NOTICE( [asan...             enabled] )
       ,
-         AC_MSG_NOTICE( [asan..........disabled] )
+         AC_MSG_NOTICE( [asan...             disabled] )
      )
 
 
@@ -332,10 +339,10 @@ dnl               [ AS_HELP_STRING( [--enable-trace=@<:@yes/no@:>@], [Output tra
 dnl               [enable_trace=${enableval}],
 dnl               [enable_trace=yes] )
 dnl AS_IF([test "x$enable_trace" = "xyes"],
-dnl         AC_MSG_NOTICE( [trace...     enabled]  )
+dnl         AC_MSG_NOTICE( [trace...          enabled]  )
 dnl         AC_DEFINE([ENABLE_TRACE], [1], [If defined, enable trace messages.])
 dnl       ,
-dnl         AC_MSG_NOTICE( [TRACE...     disabled] )
+dnl         AC_MSG_NOTICE( [TRACE...          disabled] )
 dnl      )
 
 dnl *** configure option: --enable-targetbsd
@@ -393,20 +400,6 @@ AS_IF([test "x$enable_udev" != "xyes" -a "x$enable_usb" = "xyes" ],
 AS_IF([test "x$enable_install_lib_only" = "xyes" -a "x$enable_envcmds" = "xyes"  ],
        [ AC_MSG_NOTICE( [--enable-install-lib-only forces --disable-envcmds] )
         enable_envcmds=no
-       ]
-   ) 
-
-# --disable-envcmds => --disable-drm, --disable-x11
-
-AS_IF([test "x$enable_envcmds" != "xyes" -a "x$enable_drm" = "xyes" ],
-       [ AC_MSG_NOTICE( [--disable-envcmds forces --disable-drm] )
-        enable_drm=no
-       ]
-   ) 
-
-AS_IF([test "x$enable_envcmds" != "xyes" -a "x$enable_x11" = "xyes" ],
-       [ AC_MSG_NOTICE( [--disable-envcmds forces --disable-x11] )
-        enable_x11=no
        ]
    ) 
 
@@ -692,14 +685,7 @@ dnl        ])
  
 ### X11 
 
-dnl PKG_CHECK_MODULES(XRANDR, xrandr)
-dnl PKG_CHECK_MODULES(X11,    x11)
-
 dnl Duplicate of next section?
-
-dnl TODO: disable if enable-envcmds is false?
-
-dnl Force disable of options if environment commands disabled
 
 AS_IF([test "x$enable_x11" = "xyes"],
          [ PKG_CHECK_MODULES(LIBX11, x11)
@@ -710,14 +696,10 @@ AS_IF([test "x$enable_x11" = "xyes"],
 AM_CONDITIONAL([USE_X11_COND], [test "x$enable_x11" = "xyes"] )
 AS_IF([test "x$enable_x11" = "xyes"],
         AC_DEFINE([USE_X11], [1], [Use X11])
-        AC_MSG_NOTICE( [x11...        enabled]  )
+        AC_MSG_NOTICE( [x11...        enabled1]  )
       ,
-        AC_MSG_NOTICE( [x11...        disabled] )
+        AC_MSG_NOTICE( [x11...        disabled1] )
      )
-
-dnl AS_IF([test "x$enable_x11" = "xyes"],
-dnl          [ PKG_CHECK_MODULES(XRANDR, xrandr)  
-dnl         ])
 
 
 dnl Note cflags and libs, but don't need to use in makefiles 
@@ -726,7 +708,6 @@ AS_IF( [test 0$DBG -ne 0],
           AC_MSG_NOTICE( [LIBX11_CFLAGS:    $LIBX11_CFLAGS] )
           AC_MSG_NOTICE( [LIBX11_LIBS:      $LIBX11_LIBS] )
        ]) 
-
 
 
 ### DOXYGEN
@@ -896,6 +877,7 @@ AC_MSG_RESULT([
 
 	enable_lib:             ${enable_lib}
 	enable_install_lib_only ${enable_install_lib_only}
+	enable_build_timestamp  ${enable_build_timestamp}
 	enable_envcmds          ${enable_envcmds}
 	enable_udev             ${enable_udev}
 	enable_usb:             ${enable_usb}

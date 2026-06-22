@@ -268,6 +268,7 @@ ECHO_C = @ECHO_C@
 ECHO_N = @ECHO_N@
 ECHO_T = @ECHO_T@
 EGREP = @EGREP@
+ENABLE_BUILD_TIMESTAMP_FLAG = @ENABLE_BUILD_TIMESTAMP_FLAG@
 ENABLE_ENVCMDS_FLAG = @ENABLE_ENVCMDS_FLAG@
 ENABLE_SHARED_LIB_FLAG = @ENABLE_SHARED_LIB_FLAG@
 ENABLE_TARGETBSD_FLAG = @ENABLE_TARGETBSD_FLAG@
@@ -933,6 +934,7 @@ dist-hook:
 	find ${distdir}  -name "*old"  -type d -prune -exec rm -fv {} \;
 	find ${distdir}  -name "*new"  -type d -prune -exec rm -fv {} \;
 	find ${distdir}  -name ".gitignore"    -exec rm -v {} \;
+	rm -rfv ${distdir}/.github  
 
 # Too many false positives: 
 #  alpha.clone.CloneChecker

@@ -46,6 +46,8 @@ typedef enum {
    DDCA_TRC_DDCIO = 0x0400,       /**< DDC IO functions */
    DDCA_TRC_SLEEP = 0x0800,       /**< low level sleeps */
    DDCA_TRC_RETRY = 0x1000,       /**< successful retries, subset of DDCA_TRC_DDCIO */
+   DDCA_TRC_CONN  = 0x2000,       /**< watch for display connection/disconnection */
+   DDCA_TRC_SYSFS = 0x0400,       /**< access /sys */
 
    DDCA_TRC_NONE  = 0x0000,       /**< all tracing disabled    */
    DDCA_TRC_ALL   = 0xffff        /**< all tracing enabled     */
@@ -60,7 +62,5 @@ typedef struct {
 } DDCA_Adlno;
 #endif
 // uses -1,-1 for unset
-
-
 
 #endif /* DDCUTIL_TYPES_INTERNAL_H_ */

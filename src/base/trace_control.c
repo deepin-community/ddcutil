@@ -3,7 +3,7 @@
  *  Manage whether tracing is performed.
  */
 
-// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <glib-2.0/glib.h>
@@ -16,6 +16,7 @@
 #include "public/ddcutil_types.h"
 
 #include "util/data_structures.h"
+#include "util/debug_util.h"
 #include "util/glib_util.h"
 #include "util/glib_string_util.h"
 #include "util/report_util.h"
@@ -39,6 +40,8 @@ Value_Name_Title_Table trace_group_table = {
       VNT(DDCA_TRC_DDCIO, "DDCIO"),
       VNT(DDCA_TRC_SLEEP, "SLEEP"),
       VNT(DDCA_TRC_RETRY, "RETRY"),
+      VNT(DDCA_TRC_CONN,  "CONN"),
+      VNT(DDCA_TRC_SYSFS, "SYSFS"),
       VNT_END
 };
 const int trace_group_ct = (ARRAY_SIZE(trace_group_table)-1);
@@ -115,14 +118,16 @@ void dbgrpt_traced_object_table(GPtrArray * table, const char * table_name, int 
             rpt_vstring(depth+1, g_ptr_array_index(table, ndx));
       }
    }
-   else
+   else {
       rpt_vstring(depth, "%s: NULL", table_name);
    }
+}
 
 
 void dbgrpt_traced_function_table(int depth) {
    dbgrpt_traced_object_table(traced_function_table, "traced_function_table", depth);
 }
+
 
 void dbgrpt_traced_callstack_call_table(int depth) {
    dbgrpt_traced_object_table(traced_callstack_call_table, "traced_callstack_call_table", depth);
@@ -131,71 +136,99 @@ void dbgrpt_traced_callstack_call_table(int depth) {
 
 
 /** Adds a function to the list of functions to be traced.
- *  @param funcname function name
+ *
+ *  @param  funcname function name
+ *  @return true  if funcname has been registered as a traceable function,
+ *          false if not
+ *
+ *  @emark
+ *  If the **traced_function_table** does not already exist, it is created.
  */
 bool add_traced_function(const char * funcname) {
    bool debug = false;
-   if (debug)
-      printf("(%s) Starting. funcname=|%s|\n", __func__, funcname);
+   if (debug) {
+      DBG("Starting. funcname=|%s|", funcname);
+      //  report_rtti_func_name_table(2, "current function name table:");
+   }
 
-   if (!rtti_get_func_addr_by_name(funcname))
-      return false;
+   bool result = false;
+   bool missing = false;
+   if (rtti_get_func_addr_by_name(funcname)) {  // if it's a traceable function
+      DBGF(debug, "%s is a tracable function", funcname);
+      if (!traced_function_table)
+         traced_function_table = g_ptr_array_new();
+      // n. g_ptr_array_find_with_equal_func() requires glib 2.54
+      missing = (gaux_string_ptr_array_find(traced_function_table, funcname) < 0);
+      if (missing)
+         g_ptr_array_add(traced_function_table, g_strdup(funcname));
+      result = true;
+   }
 
-   if (!traced_function_table)
-      traced_function_table = g_ptr_array_new();
-   // n. g_ptr_array_find_with_equal_func() requires glib 2.54
-   bool missing = (gaux_string_ptr_array_find(traced_function_table, funcname) < 0);
-   if (missing)
-      g_ptr_array_add(traced_function_table, g_strdup(funcname));
-
-   if (debug)
-      printf("(%s) Done. funcname=|%s|, missing=%s\n",
-             __func__, funcname, SBOOL(missing));
-   return true;
+   DBGF(debug, "Done. funcname=|%s|, missing=%s, returning: %s", funcname,
+               sbool(missing), sbool(result));
+   return result;
 }
 
 
+/** Adds an API function name to the list of API calls to be traced.
+ *
+ *  @param  funcname function name
+ *  @return true if the API function name has been registered as a traceable function,
+ *          false if not
+ *
+ *  @remark
+ *  If the **traced_api_call_table** does not already exist, it is created.
+ */
 bool add_traced_api_call(const char * funcname) {
    bool debug = false;
-   if (debug)
-      printf("(%s) Starting. funcname=|%s|\n", __func__, funcname);
+   DBGF(debug, "Starting. funcname=|%s|", funcname);
 
-   if (!rtti_get_func_addr_by_name(funcname))
-      return false;
+   bool result = false;
+   bool missing = false;
+   if (rtti_get_func_addr_by_name(funcname)) {
+      if (!traced_api_call_table)
+         traced_api_call_table = g_ptr_array_new();
+      // n. g_ptr_array_find_with_equal_func() requires glib 2.54
+      bool missing = (gaux_string_ptr_array_find(traced_api_call_table, funcname) < 0);
+      if (missing)
+         g_ptr_array_add(traced_api_call_table, g_strdup(funcname));
+      result = true;
+   }
 
-   if (!traced_api_call_table)
-      traced_api_call_table = g_ptr_array_new();
-   // n. g_ptr_array_find_with_equal_func() requires glib 2.54
-   bool missing = (gaux_string_ptr_array_find(traced_api_call_table, funcname) < 0);
-   if (missing)
-      g_ptr_array_add(traced_api_call_table, g_strdup(funcname));
-
-   if (debug)
-      printf("(%s) Done. funcname=|%s|, missing=%s\n",
-             __func__, funcname, SBOOL(missing));
-   return true;
+   DBGF(debug, "Done. funcname=|%s|, missing=%s, returning: %s",
+               funcname, sbool(missing), sbool(result));
+   return result;
 }
 
 
+/** Adds a function to the traced callstack call list.
+ *
+ *  @param  funcname function name
+ *  @return true  if funcname has been registered as a traceable function,
+ *          false if not
+ *
+ *  @emark
+ *  If the **traced_callstack_call_table** does not already exist, it is created.
+ */
 bool add_traced_callstack_call(const char * funcname) {
    bool debug = false;
-   if (debug)
-      printf("(%s) Starting. funcname=|%s|\n", __func__, funcname);
+   DBGF(debug, "Starting. funcname=|%s|", funcname);
 
-   if (!rtti_get_func_addr_by_name(funcname))
-      return false;
+   bool result = false;
+   bool missing = false;
+   if (rtti_get_func_addr_by_name(funcname)) {
+      if (!traced_callstack_call_table)
+         traced_callstack_call_table = g_ptr_array_new();
+      // n. g_ptr_array_find_with_equal_func() requires glib 2.54
+      missing = (gaux_string_ptr_array_find(traced_callstack_call_table, funcname) < 0);
+      if (missing)
+         g_ptr_array_add(traced_callstack_call_table, g_strdup(funcname));
+      result = true;
+   }
 
-   if (!traced_callstack_call_table)
-      traced_callstack_call_table = g_ptr_array_new();
-   // n. g_ptr_array_find_with_equal_func() requires glib 2.54
-   bool missing = (gaux_string_ptr_array_find(traced_callstack_call_table, funcname) < 0);
-   if (missing)
-      g_ptr_array_add(traced_callstack_call_table, g_strdup(funcname));
-
-   if (debug)
-      printf("(%s) Done. funcname=|%s|, missing=%s\n",
-             __func__, funcname, SBOOL(missing));
-   return true;
+   DBGF(debug, "Done. funcname=|%s|, missing=%s, returning: %s",
+               funcname, sbool(missing), sbool(result));
+   return result;
 }
 
 
@@ -207,39 +240,42 @@ bool add_traced_callstack_call(const char * funcname) {
  *  Only the basename portion of the specified file name is used.
  *  @remark
  *  If the file name does not end in ".c", that suffix is appended.
+ *  @remark
+ *  The file name is not checked for validity.
  */
 void add_traced_file(const char * filename) {
    bool debug = false;
-   if (debug)
-      printf("(%s) Starting. filename = |%s| \n", __func__, filename);
+   DBGF(debug, "Starting. filename = |%s|", __func__, filename);
 
    if (!traced_file_table)
       traced_file_table = g_ptr_array_new();
    // n. g_ptr_array_find_with_equal_func() requires glib 2.54
 
-   gchar * bname = g_path_get_basename(filename);
-   if (!str_ends_with(bname, ".c")) {
-      int newsz = strlen(bname) + 2 + 1;
-      gchar * temp = calloc(1, newsz);
-      strcpy(temp, bname);
-      strcat(temp, ".c");
-      free(bname);
-      bname = temp;
+   bool missing = false;
+   gchar * bname = NULL;
+   if (filename) {
+      bname = g_path_get_basename(filename);
+      if (!str_ends_with(bname, ".c")) {
+         int newsz = strlen(bname) + 2 + 1;
+         gchar * temp = calloc(1, newsz);
+         strcpy(temp, bname);
+         strcat(temp, ".c");
+         free(bname);
+         bname = temp;
+      }
+
+      bool missing = (gaux_string_ptr_array_find(traced_file_table, bname) < 0);
+      if (missing)
+         g_ptr_array_add(traced_file_table, bname);
+      else
+         free(bname);
    }
 
-   bool missing = (gaux_string_ptr_array_find(traced_file_table, bname) < 0);
-   if (missing)
-      g_ptr_array_add(traced_file_table, bname);
-   else
-      free(bname);
-   if (debug)
-      printf("(%s) Done. filename=|%s|, bname=|%s|, missing=%s\n",
-             __func__, filename, bname, SBOOL(missing));
+   DBGF(debug, "Done. filename=|%s|, bname=|%s|, missing=%s", filename, bname, SBOOL(missing));
 }
 
 
 // n.b. caller must free result
-// TODO: add sort option to join_string_g_ptr_array()
 static char * get_gptrarray_as_joined_string(GPtrArray * arry, bool sort) {
    char * result = NULL;
    if (arry) {
@@ -300,42 +336,56 @@ static char * get_traced_files_as_joined_string() {
  *  @return **true** if the function is being traced, **false** if not
  */
 bool is_traced_function(const char * funcname) {
-   bool result = (traced_function_table && gaux_string_ptr_array_find(traced_function_table, funcname) >= 0);
-   // printf("(%s) funcname=|%s|, returning: %s\n", __func__, funcname, SBOOL(result2));
+   bool debug = false;
+
+   bool result = (traced_function_table &&
+                  gaux_string_ptr_array_find(traced_function_table, funcname) >= 0);
+
+   DBGF(debug, "funcname=|%s|, returning: %s", funcname, SBOOL(result));
    return result;
 }
 
 
+/** Checks if an API call function is being traced.
+ *
+ *  @param funcname function name
+ *  @return **true** if the function is being traced, **false** if not
+ */
 bool is_traced_api_call(const char * funcname) {
    bool debug = false;
    if (debug) {
-      printf("(%s) Starting. funcname = %s\n", __func__, funcname);
+      DBG("Starting. funcname = %s", funcname);
       char * buf = get_gptrarray_as_joined_string(traced_api_call_table, true);
-      printf("(%s) traced_api_calls: %s\n", __func__, buf);
+      DBG("traced_api_calls: %s", buf);
       free(buf);
    }
 
-   bool result = (traced_api_call_table && gaux_string_ptr_array_find(traced_api_call_table, funcname) >= 0);
+   bool result = (traced_api_call_table &&
+                  gaux_string_ptr_array_find(traced_api_call_table, funcname) >= 0);
 
-   if (debug)
-      printf("(%s) funcname=|%s|, returning: %s\n", __func__, funcname, SBOOL(result));
+   DBGF(debug, "funcname=|%s|, returning: %s\n", funcname, SBOOL(result));
    return result;
 }
 
 
+/** Checks if a function is in #traced_callstack_call_table.
+ *
+ *  @param funcname function name
+ *  @return **true** if the function is in the table, **false** if not
+ */
 bool is_traced_callstack_call(const char * funcname) {
    bool debug = false;
    if (debug) {
-      printf("(%s) Starting. funcname = %s\n", __func__, funcname);
+      DBG("Starting. funcname = %s", funcname);
       char * buf = get_gptrarray_as_joined_string(traced_callstack_call_table, true);
-      printf("(%s) traced_callstack_calls: %s\n", __func__, buf );
+      DBG("traced_callstack_calls: %s", buf );
       free(buf);
    }
 
-   bool result = (traced_callstack_call_table && gaux_string_ptr_array_find(traced_callstack_call_table, funcname) >= 0);
+   bool result = (traced_callstack_call_table &&
+                  gaux_string_ptr_array_find(traced_callstack_call_table, funcname) >= 0);
 
-   if (debug)
-      printf("(%s) funcname=|%s|, returning: %s\n", __func__, funcname, SBOOL(result));
+   DBGF(debug, "funcname=|%s|, returning: %s", __func__, funcname, SBOOL(result));
    return result;
 }
 

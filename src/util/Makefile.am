@@ -25,6 +25,7 @@ libutil_la_SOURCES = \
 data_structures.c          \
 ddcutil_config_file.c      \
 debug_util.c               \
+backtrace.c                \
 edid.c                     \
 error_info.c               \
 file_util.c                \
@@ -33,14 +34,17 @@ glib_util.c                \
 glib_string_util.c         \
 i2c_util.c                 \
 linux_util.c               \
+msg_util.c                 \
 multi_level_map.c          \
 pnp_ids.c                  \
+regex_util.c               \
 report_util.c              \
 simple_ini_file.c          \
 string_util.c              \
 sysfs_util.c               \
 subprocess_util.c          \
 timestamp.c                \
+traced_function_stack.c    \
 utilrpt.c                  \
 xdg_util.c
 

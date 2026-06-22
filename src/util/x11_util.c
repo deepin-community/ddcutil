@@ -104,13 +104,31 @@ void edid_recs_free_func(gpointer voidptr) {
 }
 
 
+/* XRRGetScreenResourcesCurrent vs XRRGetScreenResources.
+
+from: https://stackoverflow.com/questions/29625442/how-to-find-the-dpi-of-a-monitor-on-which-a-specific-window-is-placed-in-linux
+
+There are actually 2 functions to query resources about the screens:
+XRRGetScreenResourcesCurrent and XRRGetScreenResources.
+The first one returns some cached value, while the latter one asks the server
+which may introduce polling. The description (search for RRGetScreenResources):
+https://www.x.org/releases/X11R7.6/doc/randrproto/randrproto.txt
+
+Someone went through the trouble timing it: https://github.com/glfw/glfw/issues/347
+
+XRRGetScreenResourcesCurrent: Typically from 20 to 100 us.
+XRRGetScreenResources: Typically from 13600 to 13700 us.
+
+*/
+
+
 /** Obtains all the EDIDs known to X11.
  *
  * @return GPtrArray of X11_Edid_Rec
  *
  * It is the responsibility of the caller to free the returned data structure
  */
-GPtrArray * get_x11_edids() {
+GPtrArray * get_x11_edids(bool use_screen_resources_current) {
    bool debug = false;
 
    GPtrArray * edid_recs = g_ptr_array_new();
@@ -128,7 +146,6 @@ GPtrArray * get_x11_edids() {
      && XRRQueryVersion(disp, &maj, &min) )
     {
       int version = (maj << 8) | min;
-
       if( version >= 0x0102 )
       {
         size_t atom_avail = 0;
@@ -166,7 +183,8 @@ GPtrArray * get_x11_edids() {
             if( version >= 0x0103 )
             {
               /* get cached resources if they are available */
-              rsrc = XRRGetScreenResourcesCurrent(disp, root);
+               if (use_screen_resources_current)
+                  rsrc = XRRGetScreenResourcesCurrent(disp, root);
             }
 
             if( NULL == rsrc )
@@ -239,18 +257,19 @@ GPtrArray * get_x11_edids() {
     XCloseDisplay(disp);
   }
 
-if (debug) {
-  int ndx = 0;
-  printf("Returning %d X11_Edid_Recs\n", edid_recs->len);
-  for (; ndx < edid_recs->len; ndx++) {
-     X11_Edid_Rec * prec = g_ptr_array_index(edid_recs, ndx);
-     printf(" Output name: %s -> %p\n", prec->output_name, prec->edidbytes);
-     hex_dump(prec->edidbytes, 128);
+  if (debug) {
+     int ndx = 0;
+     printf("Returning %d X11_Edid_Recs\n", edid_recs->len);
+     for (; ndx < edid_recs->len; ndx++) {
+        X11_Edid_Rec * prec = g_ptr_array_index(edid_recs, ndx);
+        printf(" Output name: %s -> %p\n", prec->output_name, prec->edidbytes);
+        hex_dump(prec->edidbytes, 128);
+     }
   }
-}
 
   return edid_recs;
 }
+
 
 /** Frees the data structure returned by get_x11_edids()
  *
@@ -258,8 +277,8 @@ if (debug) {
  */
 void free_x11_edids(GPtrArray * edidrecs) {
    g_ptr_array_free(edidrecs, true);
-
 }
+
 
 bool get_x11_dpms_info(unsigned short * power_level, unsigned char * state) {
    Display *disp = XOpenDisplay(NULL);

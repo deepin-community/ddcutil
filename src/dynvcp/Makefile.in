@@ -104,7 +104,7 @@ CONFIG_CLEAN_FILES =
 CONFIG_CLEAN_VPATH_FILES =
 LTLIBRARIES = $(noinst_LTLIBRARIES)
 libdynvcp_la_LIBADD =
-am_libdynvcp_la_OBJECTS = dyn_feature_set.lo \
+am_libdynvcp_la_OBJECTS = vcp_feature_set.lo dyn_feature_set.lo \
 	dyn_parsed_capabilities.lo dyn_feature_codes.lo \
 	dyn_feature_files.lo
 libdynvcp_la_OBJECTS = $(am_libdynvcp_la_OBJECTS)
@@ -130,7 +130,8 @@ am__maybe_remake_depfiles = depfiles
 am__depfiles_remade = ./$(DEPDIR)/dyn_feature_codes.Plo \
 	./$(DEPDIR)/dyn_feature_files.Plo \
 	./$(DEPDIR)/dyn_feature_set.Plo \
-	./$(DEPDIR)/dyn_parsed_capabilities.Plo
+	./$(DEPDIR)/dyn_parsed_capabilities.Plo \
+	./$(DEPDIR)/vcp_feature_set.Plo
 am__mv = mv -f
 COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
 	$(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
@@ -227,6 +228,7 @@ ECHO_C = @ECHO_C@
 ECHO_N = @ECHO_N@
 ECHO_T = @ECHO_T@
 EGREP = @EGREP@
+ENABLE_BUILD_TIMESTAMP_FLAG = @ENABLE_BUILD_TIMESTAMP_FLAG@
 ENABLE_ENVCMDS_FLAG = @ENABLE_ENVCMDS_FLAG@
 ENABLE_SHARED_LIB_FLAG = @ENABLE_SHARED_LIB_FLAG@
 ENABLE_TARGETBSD_FLAG = @ENABLE_TARGETBSD_FLAG@
@@ -370,6 +372,7 @@ CLEANFILES = \
 # Intermediate Library
 noinst_LTLIBRARIES = libdynvcp.la
 libdynvcp_la_SOURCES = \
+vcp_feature_set.c           \
 dyn_feature_set.c           \
 dyn_parsed_capabilities.c   \
 dyn_feature_codes.c         \
@@ -433,6 +436,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/dyn_feature_files.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/dyn_feature_set.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/dyn_parsed_capabilities.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vcp_feature_set.Plo@am__quote@ # am--include-marker
 
 $(am__depfiles_remade):
 	@$(MKDIR_P) $(@D)
@@ -599,6 +603,7 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/dyn_feature_files.Plo
 	-rm -f ./$(DEPDIR)/dyn_feature_set.Plo
 	-rm -f ./$(DEPDIR)/dyn_parsed_capabilities.Plo
+	-rm -f ./$(DEPDIR)/vcp_feature_set.Plo
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
 	distclean-tags
@@ -648,6 +653,7 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/dyn_feature_files.Plo
 	-rm -f ./$(DEPDIR)/dyn_feature_set.Plo
 	-rm -f ./$(DEPDIR)/dyn_parsed_capabilities.Plo
+	-rm -f ./$(DEPDIR)/vcp_feature_set.Plo
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic
 

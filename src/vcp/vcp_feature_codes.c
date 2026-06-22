@@ -51,8 +51,6 @@ static bool vcp_feature_codes_initialized = false;
 //
 
 
-
-
 /* Appends a string to an existing string in a buffer.
  * If the length of the existing string is greater than 0,
  * append ", " first.
@@ -67,7 +65,7 @@ static bool vcp_feature_codes_initialized = false;
  * Note: No check is made that buf contains a valid string.
  */
 static char * str_comma_cat_r(char * val, char * buf, int bufsz) {
-   int cursz = strlen(buf);
+   size_t cursz = strlen(buf);
    assert(cursz + 2 + strlen(val) + 1 <= bufsz);
    if (cursz > 0)
       strcat(buf, ", ");
@@ -98,7 +96,6 @@ char * spec_group_names_r(VCP_Feature_Table_Entry * pentry, char * buf, int bufs
       str_comma_cat_r("Window", buf, bufsz);
    return buf;
 }
-
 
 
 char *
@@ -611,7 +608,7 @@ extract_version_feature_info_from_feature_table_entry(
       bool                       version_sensitive)
 {
    bool debug = false;
-   DBGMSF(debug, "vspec=%d.%d, version_sensitive=%s",
+   DBGTRC_STARTING(debug, DDCA_TRC_NONE, "vspec=%d.%d, version_sensitive=%s",
                  vspec.major, vspec.minor, sbool(version_sensitive));
    assert(vfte);
    // DDCA_MCCS_Version_Id version_id = mccs_version_spec_to_id(vspec);
@@ -620,11 +617,14 @@ extract_version_feature_info_from_feature_table_entry(
 
    Display_Feature_Metadata * dfm = dfm_new(vfte->code);
 
+   dfm->vcp_subsets = vfte->vcp_subsets;
+   dfm->vcp_spec_groups = vfte->vcp_spec_groups;
+
    // redundant, for now
    // info->version_id   = mccs_version_spec_to_id(vspec);
    dfm->vcp_version        = vspec;
 
-   dfm->feature_flags = (version_sensitive)
+   dfm->version_feature_flags = (version_sensitive)
          ? get_version_sensitive_feature_flags(vfte, vspec)
          : get_version_specific_feature_flags(vfte, vspec);
 
@@ -635,7 +635,7 @@ extract_version_feature_info_from_feature_table_entry(
            : get_version_specific_feature_name(vfte, vspec);
    dfm->feature_name = g_strdup(feature_name);
 
-   dfm->feature_flags |= vfte->vcp_global_flags;
+   dfm->global_feature_flags |= vfte->vcp_global_flags;
    DDCA_Feature_Value_Entry * sl_values = (version_sensitive)
          ? get_version_sensitive_sl_values(vfte, vspec)
          // ? get_highest_version_sl_values(vfte)
@@ -643,7 +643,7 @@ extract_version_feature_info_from_feature_table_entry(
    dfm->sl_values = copy_sl_value_table(sl_values);
    // dfm->latest_sl_values = copy_sl_value_table(get_highest_version_sl_values(vfte));
 
-   DBGMSF_RET_STRUCT(debug, Display_Feature_Metadata, dbgrpt_display_feature_metadata, dfm);
+   DBGTRC_RET_STRUCT(debug, DDCA_TRC_NONE, Display_Feature_Metadata, dbgrpt_display_feature_metadata, dfm);
    return dfm;
 }
 
@@ -753,7 +753,7 @@ get_nontable_feature_detail_function(
          get_version_sensitive_feature_flags(vfte, vcp_version);
    DBGMSF(debug, "version_specific_flags = 0x%04x = %s",
          version_specific_flags,
-         interpret_feature_flags_t(version_specific_flags));
+         interpret_ddca_version_feature_flags_symbolic_t(version_specific_flags));
    assert(version_specific_flags);
    assert(version_specific_flags & DDCA_NON_TABLE);
    Format_Normal_Feature_Detail_Function func = NULL;
@@ -761,6 +761,8 @@ get_nontable_feature_detail_function(
       func = format_feature_detail_standard_continuous;
    else if (version_specific_flags & DDCA_SIMPLE_NC)
       func = format_feature_detail_sl_lookup;
+   else if (version_specific_flags & DDCA_EXTENDED_NC)
+      func = format_feature_detail_sl_lookup_with_sh;
    else if (version_specific_flags & DDCA_WO_NC)
       func = NULL;      // but should never be called for this case
    else {
@@ -1084,7 +1086,9 @@ vcp_create_table_dummy_feature_for_hexid(DDCA_Vcp_Feature_Code id) {
  */
 VCP_Feature_Table_Entry *
 vcp_find_feature_by_hexid(DDCA_Vcp_Feature_Code id) {
-   // DBGMSG("Starting. id=0x%02x ", id );
+   bool debug = false;
+   DBGTRC_STARTING(debug, TRACE_GROUP, "id=0x%02x", id);
+
    int ndx = 0;
    VCP_Feature_Table_Entry * result = NULL;
 
@@ -1094,7 +1098,9 @@ vcp_find_feature_by_hexid(DDCA_Vcp_Feature_Code id) {
          break;
       }
    }
-   // DBGMSG("Done.  ndx=%d. returning %p", ndx, result);
+   // DBGMSG("ndx= %d", ndx);
+   DBGTRC_NOPREFIX(debug, DDCA_TRC_NONE, "ndx=%d", ndx);
+   DBGTRC_RET_STRUCT(debug, TRACE_GROUP, "VCP_Feature_Table_Entry", dbgrpt_vcp_entry, result);
    return result;
 }
 
@@ -1112,11 +1118,18 @@ vcp_find_feature_by_hexid(DDCA_Vcp_Feature_Code id) {
  */
 VCP_Feature_Table_Entry *
 vcp_find_feature_by_hexid_w_default(DDCA_Vcp_Feature_Code id) {
-   // DBGMSG("Starting. id=0x%02x ", id );
+   bool debug = false;
+   DBGTRC_STARTING(debug, TRACE_GROUP, "id=0x%02x", id);
+
    VCP_Feature_Table_Entry * result = vcp_find_feature_by_hexid(id);
-   if (!result)
+   if (!result) {
+      DBGTRC_NOPREFIX(debug, DDCA_TRC_NONE, "Creating dummy feature");
       result = vcp_create_dummy_feature_for_hexid(id);
-   // DBGMSG("Done.  ndx=%d. returning %p", ndx, result);
+   }
+
+   DBGTRC_DONE(debug, TRACE_GROUP, "returning %p", result);
+   if (IS_DBGTRC(debug, TRACE_GROUP))
+      dbgrpt_vcp_entry(result, 1);
    return result;
 }
 
@@ -1233,7 +1246,7 @@ find_feature_value_table(
       // it uses the sl byte for one lookup table, and the sh byte for another
       // This hack lets capabilities interpretation look up the sl byte
       // Normal interpretation of function xca uses dedicated function
-      if ( (feature_flags & DDCA_SIMPLE_NC) || feature_code == 0xca) {
+      if ( (feature_flags & (DDCA_SIMPLE_NC|DDCA_EXTENDED_NC)) || feature_code == 0xca) {
          result = get_version_specific_sl_values(pentry, vcp_version);
       }
    }
@@ -1388,6 +1401,23 @@ bool format_feature_detail_sl_byte(
 }
 
 
+bool format_feature_detail_sh_sl_bytes(
+        Nontable_Vcp_Value *     code_info,
+        DDCA_MCCS_Version_Spec   vcp_version,
+        char *                   buffer,
+        int                      bufsz)
+{
+    bool debug = false;
+    DBGMSF(debug, "vcp_code=0x%02x, sh=0x%02x, sl=0x%02x",
+                  code_info->vcp_code, code_info->sh, code_info->sl);
+
+    g_snprintf(buffer, bufsz, "Value: sh=0x%02x sl=0x%02x", code_info->sh, code_info->sl);
+
+    DBGMSF(debug, "Returning true, buffer=%s", buffer);
+    return true;
+}
+
+
 /* Formats the value of a non-continuous feature whose value is returned in byte SL.
  * The names of possible values is stored in a value list in the feature table entry
  * for the feature.
@@ -1412,6 +1442,34 @@ bool format_feature_detail_sl_lookup(
    snprintf(buffer, bufsz,"%s (sl=0x%02x)", s, code_info->sl);
    return true;
 }
+
+
+/* Formats the value of a non-continuous feature whose value is returned in byte SL,
+ * and which also uses byte SH.
+ * The names of possible values is stored in a value list in the feature table entry
+ * for the feature.
+ *
+ * Arguments:
+ *    code_info   parsed feature data
+ *    vcp_version VCP version
+ *    buffer      buffer in which to store output
+ *    bufsz       buffer size
+ *
+ * Returns:
+ *    true if formatting successful, false if not
+ */
+bool format_feature_detail_sl_lookup_with_sh(
+        Nontable_Vcp_Value *     code_info,
+        DDCA_MCCS_Version_Spec   vcp_version,
+        char *                   buffer,
+        int                      bufsz)
+{
+   // TODO: lookup feature code in dynamic_sl_value_table
+   char * s = lookup_value_name(code_info->vcp_code, vcp_version, code_info->sl);
+   snprintf(buffer, bufsz,"sh=0x%02x, sl=0x%02x=%s", code_info->sh, code_info->sl, s);
+   return true;
+}
+
 
 // wrong, needs to be per-display
 void register_dynamic_sl_values(
@@ -1720,7 +1778,7 @@ format_feature_detail_x72_gamma(
       char   sgamma[10];
       char   sgamma2[10];
       g_snprintf (sgamma, 10, "%d", igamma);
-      int slen = strlen(sgamma);
+      uint slen = strlen(sgamma);
       char * a =  substr(sgamma, 0, slen-2);
       char * b = substr(sgamma, slen-2, 2);
       g_snprintf(sgamma2, 10, "%s.%s",a, b);
@@ -4337,25 +4395,25 @@ void dbgrpt_vcp_entry(VCP_Feature_Table_Entry * pfte, int depth) {
 //                   vcp_interpret_version_feature_flags(pfte->v20_flags, buf, bufsz));
    rpt_vstring(d1, "v20_flags:         0x%04x - %s",
                    pfte->v20_flags,
-                   interpret_feature_flags_t(pfte->v20_flags));
+                   interpret_ddca_version_feature_flags_symbolic_t(pfte->v20_flags));
 //   rpt_vstring(d1, "v21_flags:         0x%04x - %s",
 //                   pfte->v21_flags,
 //                   vcp_interpret_version_feature_flags(pfte->v21_flags, buf, bufsz));
    rpt_vstring(d1, "v21_flags:         0x%04x - %s",
                    pfte->v21_flags,
-                   interpret_feature_flags_t(pfte->v21_flags));
+                   interpret_ddca_version_feature_flags_symbolic_t(pfte->v21_flags));
 //   rpt_vstring(d1, "v30_flags:         0x%04x - %s",
 //                   pfte->v30_flags,
 //                   vcp_interpret_version_feature_flags(pfte->v30_flags, buf, bufsz));
    rpt_vstring(d1, "v30_flags:         0x%04x - %s",
                    pfte->v30_flags,
-                   interpret_feature_flags_t(pfte->v30_flags));
+                   interpret_ddca_version_feature_flags_symbolic_t(pfte->v30_flags));
 //   rpt_vstring(d1, "v22_flags:         0x%04x - %s",
 //                   pfte->v22_flags,
 //                   vcp_interpret_version_feature_flags(pfte->v22_flags, buf, bufsz));
    rpt_vstring(d1, "v22_flags:         0x%04x - %s",
                    pfte->v22_flags,
-                   interpret_feature_flags_t(pfte->v22_flags));
+                   interpret_ddca_version_feature_flags_symbolic_t(pfte->v22_flags));
    dbgrpt_sl_value_table(pfte->default_sl_values, "default_sl_values", d1);
    dbgrpt_sl_value_table(pfte->v21_sl_values, "v21_sl_values", d1);
    dbgrpt_sl_value_table(pfte->v30_sl_values, "v30_sl_values", d1);
@@ -4368,12 +4426,15 @@ static void init_func_name_table() {
    RTTI_ADD_FUNC(vcp_format_table_feature_detail);
    RTTI_ADD_FUNC(vcp_format_feature_detail);
    RTTI_ADD_FUNC(default_table_feature_detail_function);
+   RTTI_ADD_FUNC(extract_version_feature_info_from_feature_table_entry);
    RTTI_ADD_FUNC(format_feature_detail_x73_lut_size);
    RTTI_ADD_FUNC(format_feature_detail_debug_sl_sh);
    RTTI_ADD_FUNC(format_feature_detail_debug_continuous);
    RTTI_ADD_FUNC(format_feature_detail_debug_bytes );
    RTTI_ADD_FUNC(format_feature_detail_sl_byte);
+   RTTI_ADD_FUNC(format_feature_detail_sh_sl_bytes);
    RTTI_ADD_FUNC(format_feature_detail_sl_lookup);
+   RTTI_ADD_FUNC(format_feature_detail_sl_lookup_with_sh);
    RTTI_ADD_FUNC(format_feature_detail_standard_continuous);
    RTTI_ADD_FUNC(format_feature_detail_ushort);
    RTTI_ADD_FUNC(format_feature_detail_x02_new_control_value);
@@ -4393,6 +4454,8 @@ static void init_func_name_table() {
    RTTI_ADD_FUNC(format_feature_detail_x6c_application_enable_key);
    RTTI_ADD_FUNC(format_feature_detail_xc8_display_controller_type);
    RTTI_ADD_FUNC(format_feature_detail_xc9_xdf_version);
+   RTTI_ADD_FUNC(vcp_find_feature_by_hexid_w_default);
+   RTTI_ADD_FUNC(vcp_find_feature_by_hexid);
 }
 
 

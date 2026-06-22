@@ -1,6 +1,6 @@
 /** @file app_experimental.c */
 
-// Copyright (C) 2021-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2021-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <assert.h>
@@ -12,7 +12,6 @@
 #include "util/timestamp.h"
 
 #include "base/parms.h"
-
 #include "i2c/i2c_bus_core.h"
 #include "i2c/i2c_edid.h"
 #include "i2c/i2c_strategy_dispatcher.h"
@@ -20,20 +19,26 @@
 #include "ddc/ddc_display_ref_reports.h"
 #include "ddc/ddc_displays.h"
 #include "ddc/ddc_packet_io.h"
-#include "ddc/ddc_watch_displays.h"
+
+#include "dw/dw_common.h"
+#include "dw/dw_main.h"
 
 #include "app_experimental.h"
 
 
 #define REPORT_FLAG_OPTION(_flagno, _action) \
 rpt_vstring(depth+1, "Utility option --f"#_flagno" %s %s",   \
-     (parsed_cmd->flags & CMD_FLAG_F##_flagno ) ? "enabled: " : "disabled:", _action)
+     (parsed_cmd->flags2 & CMD_FLAG2_F##_flagno ) ? "enabled: " : "disabled:", _action)
 
 void
 report_experimental_options(Parsed_Cmd * parsed_cmd, int depth)
 {
+   bool saved_prefix_report_output = rpt_set_ornamentation_enabled(false);
+
+#ifdef UNUSED
    char buf0[80];
    g_snprintf(buf0, 80, "Use non-default watch mode (default = %s)", ddc_watch_mode_name(ddc_watch_mode));
+#endif
    char buf5[80];
    g_snprintf(buf5, 80, "Use non-default value for EDID read uses I2C layer (default=%s)", SBOOL(DEFAULT_EDID_READ_USES_I2C_LAYER));
 
@@ -43,24 +48,60 @@ report_experimental_options(Parsed_Cmd * parsed_cmd, int depth)
    REPORT_FLAG_OPTION(3,  "DDC Null Message never indicates invalid feature");
    REPORT_FLAG_OPTION(4,  "Read strategy tests");
    REPORT_FLAG_OPTION(5,  buf5);
-   REPORT_FLAG_OPTION(6,  "Unused");
+   REPORT_FLAG_OPTION(6,  "Use DRM connector states");
    REPORT_FLAG_OPTION(7,  "Disable phantom display detection");
-   REPORT_FLAG_OPTION(8,  "Slow down watch display polling");
-   REPORT_FLAG_OPTION(9,  buf0);
+   REPORT_FLAG_OPTION(8,  "Redirect report output to syslog");
+   // REPORT_FLAG_OPTION(9,  buf0);
+   REPORT_FLAG_OPTION(9,  "Message to syslog only");
    REPORT_FLAG_OPTION(10, "Extended sleep for DDC Null Msg");
    REPORT_FLAG_OPTION(11, "Explore monitor state tests");
    REPORT_FLAG_OPTION(12, "Disable DRM services");
-   REPORT_FLAG_OPTION(13, "Command C1 only report display connection changes");
-   REPORT_FLAG_OPTION(14, "Command C1 only report display DPMS state changes");
+   REPORT_FLAG_OPTION(13, "Use all_displays_drm_using_drm_api()");
+   REPORT_FLAG_OPTION(14, "Debug flock");
+#ifdef GET_EDID_USING_SYSFS
+   REPORT_FLAG_OPTION(15, "Verify sysfs EDID reads");
+#else
+   REPORT_FLAG_OPTION(15, "Unused");
+#endif
+   // REPORT_FLAG_OPTION(16, "Simple report /sys/class/drm");
+   REPORT_FLAG_OPTION(16, "Tag output messages");
+   REPORT_FLAG_OPTION(17, "Do not use sysfs connector_id");
+   REPORT_FLAG_OPTION(18, "Always report UDEV events");
+   REPORT_FLAG_OPTION(19, "Stabilize added buses with edid");
+   REPORT_FLAG_OPTION(20, "DO NOT use x37 detection state hash");
+   REPORT_FLAG_OPTION(21, "Force sysfs unreliable");
+   REPORT_FLAG_OPTION(22, "Force sysfs reliable");
+   REPORT_FLAG_OPTION(23, "Set global primitive_sysfs");
+   REPORT_FLAG_OPTION(24, "Write detect to status if nvidia driver");
+   REPORT_FLAG_OPTION(25, "Unused");
+   REPORT_FLAG_OPTION(26, "Traced function stack errors are fatal");
+   REPORT_FLAG_OPTION(27, "Unused");
+   REPORT_FLAG_OPTION(28, "Unused");
+   REPORT_FLAG_OPTION(29, "Unused");
+   REPORT_FLAG_OPTION(30, "Unused");
+   REPORT_FLAG_OPTION(31, "Unused");
+   REPORT_FLAG_OPTION(32, "Unused");
 
-   rpt_vstring(depth+1, "Utility option --i1:          Extra seconds to wait after apparent display disconnect (default = %d)", DEFAULT_EXTRA_STABILIZE_SECS);
+   rpt_vstring(depth+1, "Utility option --i1:          Extra millisec to wait after apparent display disconnect (default = %d)", DEFAULT_INITIAL_STABILIZATION_MILLISEC);
    rpt_vstring(depth+1, "Utility option --i2:          NULL Response Hack Millis");
    rpt_vstring(depth+1, "Utility option --i3:          flock_poll_millisec (default = %d)", DEFAULT_FLOCK_POLL_MILLISEC);
    rpt_vstring(depth+1, "Utility option --i4:          flock_max_wait_millisec (default = %d", DEFAULT_FLOCK_MAX_WAIT_MILLISEC);
-   rpt_vstring(depth+1, "Utility option --i5:          Unused");
+   rpt_vstring(depth+1, "Utility option --i5:          Max retries for setvcp verification failure");
    rpt_vstring(depth+1, "Utility option --i6:          Unused");
-   rpt_vstring(depth+1, "Utility option --i7:          Unused");
-   rpt_vstring(depth+1, "Utility option --i8:          Unused");
+   rpt_vstring(depth+1, "Utility option --i7           Stabilization poll millisec (default=%d)", DEFAULT_STABILIZATION_POLL_MILLISEC);
+   rpt_vstring(depth+1, "Utility option --i8:          Display watch udev loop millisec (default = %d)", DEFAULT_UDEV_WATCH_LOOP_MILLISEC);
+
+// rpt_vstring(depth+1, "Utility option --i9:          Display watch non-udev polling loop millisec (default=%d)", DEFAULT_POLL_WATCH_LOOP_MILLISEC);
+// rpt_vstring(depth+1, "Utility option --i10:         Display watch xevent polling loop millisec (default=%d)", DEFAULT_XEVENT_WATCH_LOOP_MILLISEC);
+
+   rpt_vstring(depth+1, "Utility option --i9:          Unused");
+   rpt_vstring(depth+1, "Utility option --i10:         Unused");
+   rpt_vstring(depth+1, "Utility option --i11:         Unused");
+   rpt_vstring(depth+1, "Utility option --i12:         Unused");
+   rpt_vstring(depth+1, "Utility option --i13:         Unused");
+   rpt_vstring(depth+1, "Utility option --i14:         Unused");
+   rpt_vstring(depth+1, "Utility option --i15:         Unused");
+   rpt_vstring(depth+1, "Utility option --i16:         Unused");
 
    rpt_vstring(depth+1, "Utility option --s1:          Unused");
    rpt_vstring(depth+1, "Utility option --s2:          Unused");
@@ -71,26 +112,11 @@ report_experimental_options(Parsed_Cmd * parsed_cmd, int depth)
    rpt_vstring(depth+1, "Utility option --fl2:         Unused");
 
    rpt_nl();
+
+   rpt_set_ornamentation_enabled(saved_prefix_report_output);
 }
 
 #undef REPORT_FLAG_OPTION
-
-
-bool init_experimental_options(Parsed_Cmd* parsed_cmd)
-{
-#ifdef CMD_FLAG_F6_FORCE_i2C_BUS
-   // HACK FOR TESTING
-   if (parsed_cmd->flags & CMD_FLAG_F6) {
-      fprintf(stdout, "Setting i2c_force_bus\n");
-      if ( !(parsed_cmd->pdid) || parsed_cmd->pdid->id_type != DISP_ID_BUSNO) {
-         fprintf(stdout, "bus number required, use --busno\n");
-         return false;
-      }
-      i2c_force_bus = true;
-   }
-#endif
-   return true;
-}
 
 
 //

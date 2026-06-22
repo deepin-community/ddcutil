@@ -3,7 +3,7 @@
  *  Get, set, and format feature values
  */
 
-// Copyright (C) 2015-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2015-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "config.h"
@@ -88,7 +88,7 @@ ddca_get_non_table_vcp_value(
 {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug, "ddca_dh=%p, feature_code=0x%02x, valrec=%p",
+   API_PROLOGX(debug, true, "ddca_dh=%p, feature_code=0x%02x, valrec=%p",
                                ddca_dh, feature_code, valrec );
    DDCA_Status psc = API_PRECOND_RVALUE(valrec);
    if (psc != 0)
@@ -110,19 +110,25 @@ ddca_get_non_table_vcp_value(
           // DBGMSG("valrec:  mh=0x%02x, ml=0x%02x, sh=0x%02x, sl=0x%02x",
           //        valrec->mh, valrec->ml, valrec->sh, valrec->sl);
           free(code_info);
-          DBGTRC_RET_DDCRC(debug, DDCA_TRC_API, psc,
-                "valrec:  mh=0x%02x, ml=0x%02x, sh=0x%02x, sl=0x%02x",
-                valrec->mh, valrec->ml, valrec->sh, valrec->sl);
+          // DBGTRC_RET_DDCRC(debug, DDCA_TRC_API, psc,
+          //       "valrec:  mh=0x%02x, ml=0x%02x, sh=0x%02x, sl=0x%02x",
+          //       valrec->mh, valrec->ml, valrec->sh, valrec->sl);
        }
        else {
           psc = ddc_excp->status_code;
           save_thread_error_detail(error_info_to_ddca_detail(ddc_excp));
           ERRINFO_FREE_WITH_REPORT(ddc_excp, IS_DBGTRC(debug, DDCA_TRC_API));
-          DBGTRC_RET_DDCRC(debug, DDCA_TRC_API, psc, "");
+          // DBGTRC_RET_DDCRC(debug, DDCA_TRC_API, psc, "");
        }
     } );
+
 bye:
-   API_EPILOG_WO_RETURN(debug, psc, "");
+   if (psc == 0)
+      API_EPILOG_BEFORE_RETURN(debug, true, psc,
+            "valrec:  mh=0x%02x, ml=0x%02x, sh=0x%02x, sl=0x%02x",
+             valrec->mh, valrec->ml, valrec->sh, valrec->sl);
+   else
+      API_EPILOG_BEFORE_RETURN(debug, true, psc, "");
    return psc;
 }
 
@@ -136,7 +142,7 @@ ddca_get_table_vcp_value(
 {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug,
+   API_PROLOGX(debug, true,
          "ddca_dh=%p, feature_code=0x%02x, table_value_loc=%p",
          ddca_dh, feature_code, table_value_loc);
    DDCA_Status psc = API_PRECOND_RVALUE(table_value_loc);
@@ -165,20 +171,22 @@ ddca_get_table_vcp_value(
             buffer_free(p_table_bytes, __func__);
          }
          TRACED_ASSERT_IFF(psc==0, *table_value_loc);
-         DBGTRC_RET_DDCRC(debug, DDCA_TRC_API, psc,
-                "ddca_dh=%p->%s, feature_code=0x%02x, *table_value_loc=%p",
-                ddca_dh, dh_repr(ddca_dh), feature_code, *table_value_loc);
+         // DBGTRC_RET_DDCRC(debug, DDCA_TRC_API, psc,
+         //        "ddca_dh=%p->%s, feature_code=0x%02x, *table_value_loc=%p",
+         //        ddca_dh, dh_repr(ddca_dh), feature_code, *table_value_loc);
       }
    );
 bye:
-   API_EPILOG_WO_RETURN(debug, psc, "");
+   API_EPILOG_BEFORE_RETURN(debug, true, psc,
+         "ddca_dh=%p->%s, feature_code=0x%02x, *table_value_loc=%p",
+         ddca_dh, dh_repr(ddca_dh), feature_code, *table_value_loc);
    return psc;
 }
 
 
 static
 DDCA_Status
-ddca_get_vcp_value(
+ddci_get_vcp_value(
       DDCA_Display_Handle    ddca_dh,
       DDCA_Vcp_Feature_Code  feature_code,
       DDCA_Vcp_Value_Type    call_type,   // why is this needed?   look it up from dh and feature_code
@@ -214,7 +222,7 @@ get_value_type(
       DDCA_Vcp_Value_Type *       p_value_type)
 {
    bool debug = false;
-   API_PROLOGX(debug, "ddca_dh=%p, feature_code=0x%02x", ddca_dh, feature_code);
+   DBGTRC_STARTING(debug, TRACE_GROUP, "ddca_dh=%p, feature_code=0x%02x", ddca_dh, feature_code);
 
    DDCA_Status ddcrc = DDCRC_NOT_FOUND;
    DDCA_MCCS_Version_Spec vspec     = get_vcp_version_by_dh(ddca_dh);
@@ -227,8 +235,34 @@ get_value_type(
       ddcrc = 0;
    }
 
-   API_EPILOG_WO_RETURN(debug, ddcrc, "");
+   DBGTRC_RET_DDCRC(debug, TRACE_GROUP, ddcrc, "");
    return ddcrc;
+}
+
+
+STATIC DDCA_Status
+ddci_get_any_vcp_value_using_explicit_type(
+       DDCA_Display_Handle         ddca_dh,
+       DDCA_Vcp_Feature_Code       feature_code,
+       DDCA_Vcp_Value_Type         call_type,
+       DDCA_Any_Vcp_Value **       valrec_loc)
+{
+   bool debug = false;
+   DBGTRC_STARTING(debug, TRACE_GROUP,
+          "ddca_dh=%p, feature_code=0x%02x, call_type=%d, valrec_loc=%p",
+          ddca_dh, feature_code, call_type, valrec_loc);
+   assert(valrec_loc);
+   *valrec_loc = NULL;
+
+   DDCA_Any_Vcp_Value * valrec2 = NULL;
+   DDCA_Status rc = ddci_get_vcp_value(ddca_dh, feature_code, call_type, &valrec2);
+   if (rc == 0) {
+      *valrec_loc = valrec2;
+   }
+
+   DBGTRC_RET_DDCRC(debug, TRACE_GROUP,  rc, "*valrec_loc=%p", *valrec_loc);
+   ASSERT_IFF(rc == 0, *valrec_loc);
+   return rc;
 }
 
 
@@ -241,21 +275,18 @@ ddca_get_any_vcp_value_using_explicit_type(
 {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug,
+
+   API_PROLOGX(debug, true,
           "Starting. ddca_dh=%p, feature_code=0x%02x, call_type=%d, valrec_loc=%p",
           ddca_dh, feature_code, call_type, valrec_loc);
    assert(valrec_loc);
    *valrec_loc = NULL;
+   DDCA_Status ddcrc = ddci_get_any_vcp_value_using_explicit_type(
+         ddca_dh, feature_code, call_type, valrec_loc);
 
-   DDCA_Any_Vcp_Value * valrec2 = NULL;
-   DDCA_Status rc = ddca_get_vcp_value(ddca_dh, feature_code, call_type, &valrec2);
-   if (rc == 0) {
-      *valrec_loc = valrec2;
-   }
-
-   API_EPILOG_WO_RETURN(debug, rc, "*valrec_loc=%p", *valrec_loc);
-   ASSERT_IFF(rc == 0, *valrec_loc);
-   return rc;
+   API_EPILOG_BEFORE_RETURN(debug, true, ddcrc, "*valrec_loc=%p", *valrec_loc);
+   ASSERT_IFF(ddcrc == 0, *valrec_loc);
+   return ddcrc;
 }
 
 
@@ -300,20 +331,20 @@ ddca_get_any_vcp_value_using_implicit_type(
 {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug, "feature_code = 0x%02x", feature_code);
+   API_PROLOGX(debug, true, "feature_code = 0x%02x", feature_code);
    assert(valrec_loc);
 
    DDCA_Vcp_Value_Type call_type;
    DDCA_Status ddcrc = get_value_type(ddca_dh, feature_code, &call_type);
    if (ddcrc == 0) {
-      ddcrc = ddca_get_any_vcp_value_using_explicit_type(
+      ddcrc = ddci_get_any_vcp_value_using_explicit_type(
                  ddca_dh,
                  feature_code,
                  call_type,
                  valrec_loc);
    }
    ASSERT_IFF(ddcrc==0, *valrec_loc);
-   API_EPILOG_WO_RETURN(debug, ddcrc, "");
+   API_EPILOG_BEFORE_RETURN(debug, true, ddcrc, "");
    return ddcrc;
 }
 
@@ -349,10 +380,6 @@ ddca_free_any_vcp_value(
  *  @param[in]  depth   logical indentation depth
  *  @since 0.9.0
  */
-void
-dbgrpt_any_vcp_value(
-      DDCA_Any_Vcp_Value * valrec,
-      int                  depth);
 void
 dbgrpt_any_vcp_value(
       DDCA_Any_Vcp_Value * valrec,
@@ -463,12 +490,12 @@ ddca_get_formatted_vcp_value(
                       }
                   }
                }
-               DBGTRC_RET_DDCRC(debug, DDCA_TRC_API, psc, "");
+               // DBGTRC_RET_DDCRC(debug, DDCA_TRC_API, psc, "");
          }
    )
 
 bye:
-   API_EPILOG_WO_RETURN(debug, psc, "");
+   API_EPILOG_BEFORE_RETURN(debug, psc, "");
    return psc;
 }
 #endif
@@ -499,7 +526,7 @@ ddci_format_any_vcp_value(
 {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug, "feature_code=0x%02x, vspec=%d.%d, mmid=%p -> %s",
+   DBGTRC_STARTING(debug, TRACE_GROUP, "feature_code=0x%02x, vspec=%d.%d, mmid=%p -> %s",
                  feature_code,
                  vspec.major, vspec.minor,
                  mmid,
@@ -518,16 +545,16 @@ ddci_format_any_vcp_value(
    }
 
    dfm = dyn_get_feature_metadata_by_mmk_and_vspec(
-            feature_code, *mmid, vspec, /*with_default=*/ true);
+            feature_code, *mmid, vspec, /* use_udf=*/ true, /*with_default=*/ true);
    if (!dfm) {
       ddcrc = DDCRC_ARG;
       *formatted_value_loc = g_strdup_printf("Unrecognized feature code 0x%02x", feature_code);
       goto bye;
    }
-   DDCA_Feature_Flags flags = dfm->feature_flags;
+   DDCA_Version_Feature_Flags version_flags = dfm->version_feature_flags;
 
-   if (!(flags & DDCA_READABLE)) {
-      if (flags & DDCA_DEPRECATED)
+   if (!(version_flags & DDCA_READABLE)) {
+      if (version_flags & DDCA_DEPRECATED)
          *formatted_value_loc = g_strdup_printf("Feature %02x is deprecated in MCCS %d.%d",
                                            feature_code, vspec.major, vspec.minor);
       else
@@ -539,7 +566,7 @@ ddci_format_any_vcp_value(
 
    // Version_Feature_Flags flags = feature_info->internal_feature_flags;
    // n. will default to NON_TABLE_VCP_VALUE if not a known code
-   DDCA_Vcp_Value_Type call_type = (flags & DDCA_TABLE)
+   DDCA_Vcp_Value_Type call_type = (version_flags & DDCA_TABLE)
                                         ? DDCA_TABLE_VCP_VALUE
                                         : DDCA_NON_TABLE_VCP_VALUE;
    if (call_type != anyval->value_type) {
@@ -558,11 +585,13 @@ ddci_format_any_vcp_value(
 bye:
    if (dfm)
       dfm_free(dfm);
-   API_EPILOG_WO_RETURN(debug, ddcrc, "formatted_value_loc -> %s", *formatted_value_loc);
+   // API_EPILOG_BEFORE_RETURN(debug, NORESPECT_QUIESCE, ddcrc, "formatted_value_loc -> %s", *formatted_value_loc);
+   DBGTRC_RET_DDCRC(debug, TRACE_GROUP, ddcrc, "formatted_value_loc -> %s", *formatted_value_loc);
    // 7/2019: wrong, *formatted_value_loc always set, why did this ever work?
    // assert( (ddcrc==0 && *formatted_value_loc) || (ddcrc!=0 &&!*formatted_value_loc) );
    return ddcrc;
 }
+
 
 DDCA_Status
 ddca_format_any_vcp_value_by_dref(
@@ -573,17 +602,17 @@ ddca_format_any_vcp_value_by_dref(
 {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug, "feature_code=0x%02x, ddca_dref=%p, valrec=%s",
+   API_PROLOGX(debug, NORESPECT_QUIESCE, "feature_code=0x%02x, ddca_dref=%p, valrec=%s",
              feature_code,
              ddca_dref,
              summarize_single_vcp_value(valrec) );
    assert(formatted_value_loc);
    DDCA_Status ddcrc = 0;
-   WITH_BASIC_VALIDATED_DR3(ddca_dref, ddcrc,
+   WITH_VALIDATED_DR4(ddca_dref, ddcrc, DREF_VALIDATE_BASIC_ONLY,
          {
                if (debug || IS_TRACING()) {
                   DBGTRC_NOPREFIX(debug, TRACE_GROUP, "dref = %s", dref_repr_t(dref));
-                  dbgrpt_display_ref(dref,1);
+                  dbgrpt_display_ref(dref,true, 1);
                }
                ddcrc = ddci_format_any_vcp_value(
                          feature_code,
@@ -596,7 +625,7 @@ ddca_format_any_vcp_value_by_dref(
                // assert( (psc==0 && *formatted_value_loc) || (psc!=0 &&!*formatted_value_loc) );
          }
    )
-   API_EPILOG_WO_RETURN(debug,ddcrc, "*formatted_value_loc = %p -> |%s|",
+   API_EPILOG_BEFORE_RETURN(debug, NORESPECT_QUIESCE, ddcrc, "*formatted_value_loc = %p -> |%s|",
                                          *formatted_value_loc, *formatted_value_loc);
    return ddcrc;
 }
@@ -620,14 +649,14 @@ ddci_format_non_table_vcp_value(
       char **                     formatted_value_loc)
 {
    bool debug = false;
-   API_PROLOG(debug, "feature_code=0x%02x, vspec=%d.%d, mmid=%s, formatted_value_loc=%p",
+   DBGTRC_STARTING(debug, TRACE_GROUP, "feature_code=0x%02x, vspec=%d.%d, mmid=%s, formatted_value_loc=%p",
              feature_code,
              vspec.major, vspec.minor,
              (mmid) ? mmk_repr(*mmid) : "NULL",
              formatted_value_loc);
    DDCA_Status ddcrc = API_PRECOND_RVALUE(formatted_value_loc);
    if (ddcrc != 0) {
-      DBGTRC_RET_DDCRC(debug, DDCA_TRC_API, ddcrc, "");
+      // DBGTRC_RET_DDCRC(debug, DDCA_TRC_API, ddcrc, "");
       goto bye;
    }
 
@@ -646,14 +675,24 @@ ddci_format_non_table_vcp_value(
                           feature_code, vspec, mmid, &anyval, formatted_value_loc);
    // assert( (ddcrc==0 &&*formatted_value_loc) || (ddcrc!=0 && !*formatted_value_loc) );
 
+#ifdef OUT
    if (ddcrc == 0)
-      DBGTRC_RET_DDCRC(debug, DDCA_TRC_API, ddcrc,
-             "*formatted_value_loc=%p->%s", *formatted_value_loc, *formatted_value_loc);
+      API_EPILOG_BEFORE_RETURN(debug, false, ddcrc,
+            "*formatted_value_loc=%p->%s", *formatted_value_loc, *formatted_value_loc);
    else
-      DBGTRC_RET_DDCRC(debug, DDCA_TRC_API, ddcrc,  "*formatted_value_loc=%p", *formatted_value_loc);
+      API_EPILOG_BEFORE_RETURN(debug, false, ddcrc,
+            "*formatted_value_loc=%p", *formatted_value_loc);
+#endif
+
+   // if (ddcrc == 0)
+   //    DBGTRC_RET_DDCRC(debug, DDCA_TRC_API, ddcrc,
+   //           "*formatted_value_loc=%p->%s", *formatted_value_loc, *formatted_value_loc);
+   // else
+   //    DBGTRC_RET_DDCRC(debug, DDCA_TRC_API, ddcrc,  "*formatted_value_loc=%p", *formatted_value_loc);
 
 bye:
-   DISABLE_API_CALL_TRACING();
+   // DISABLE_API_CALL_TRACING();
+   DBGTRC_RET_DDCRC(debug, TRACE_GROUP, ddcrc, "");
    return ddcrc;
 }
 
@@ -666,15 +705,15 @@ ddca_format_non_table_vcp_value_by_dref(
 {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug, "feature_code=0x%02x, ddca_dref=%p",
+   API_PROLOGX(debug, RESPECT_QUIESCE, "feature_code=0x%02x, ddca_dref=%p",
                           feature_code, ddca_dref);
    assert(formatted_value_loc);
    DDCA_Status ddcrc = 0;
-   WITH_BASIC_VALIDATED_DR3(ddca_dref, ddcrc,
+   WITH_VALIDATED_DR4(ddca_dref, ddcrc, DREF_VALIDATE_BASIC_ONLY,
          {
                if (debug || IS_TRACING()) {
                   DBGTRC_NOPREFIX(debug, TRACE_GROUP, "dref = %s", dref_repr_t(dref));
-                  dbgrpt_display_ref(dref,1);
+                  dbgrpt_display_ref(dref, true, 1);
                }
                ddcrc = ddci_format_non_table_vcp_value(
                          feature_code,
@@ -686,7 +725,8 @@ ddca_format_non_table_vcp_value_by_dref(
                // assert( (psc==0 &&*formatted_value_loc) || (psc!=0 && !*formatted_value_loc) );
          }
    )
-   API_EPILOG_WO_RETURN(debug, ddcrc, "*formatted_value_loc = %p -> |%s|",
+
+   API_EPILOG_BEFORE_RETURN(debug, RESPECT_QUIESCE, ddcrc, "*formatted_value_loc = %p -> |%s|",
                                                *formatted_value_loc, *formatted_value_loc);
    return ddcrc;
 }
@@ -712,7 +752,8 @@ ddci_format_table_vcp_value(
 {
    // free_thread_error_detail();   // unnecessary, done by ddca_format_any_vcp_value();
    bool debug = false;
-   API_PROLOG(debug, "");
+   DBGTRC_STARTING(debug, TRACE_GROUP, "");
+   // API_PROLOG(debug, "");
    DDCA_Any_Vcp_Value anyval;
    anyval.opcode = feature_code;
    anyval.value_type = DDCA_TABLE_VCP_VALUE;
@@ -721,7 +762,8 @@ ddci_format_table_vcp_value(
 
    DDCA_Status ddcrc = ddci_format_any_vcp_value(
              feature_code, vspec, mmid, &anyval, formatted_value_loc);
-   API_EPILOG_WO_RETURN(debug, ddcrc, "");
+   // API_EPILOG_BEFORE_RETURN(debug, false, ddcrc, "");
+   DBGTRC_RET_DDCRC(debug, TRACE_GROUP, ddcrc, "");
    return ddcrc;
 }
 
@@ -735,14 +777,15 @@ ddca_format_table_vcp_value_by_dref(
 {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug, "feature_code=0x%02x, ddca_dref=%p", feature_code, ddca_dref);
+   API_PROLOGX(debug, RESPECT_QUIESCE, "feature_code=0x%02x, ddca_dref=%p",
+                                           feature_code, ddca_dref);
    assert(formatted_value_loc);
    DDCA_Status ddcrc = 0;
-   WITH_BASIC_VALIDATED_DR3(ddca_dref, ddcrc,
+   WITH_VALIDATED_DR4(ddca_dref, ddcrc, DREF_VALIDATE_BASIC_ONLY,
          {
                if (debug || IS_TRACING()) {
                   DBGTRC_NOPREFIX(debug, TRACE_GROUP, "dref = %s", dref_repr_t(dref));
-                  dbgrpt_display_ref(dref,1);
+                  dbgrpt_display_ref(dref,true,1);
                }
               ddcrc = ddci_format_table_vcp_value(
                          feature_code,
@@ -753,8 +796,9 @@ ddca_format_table_vcp_value_by_dref(
                          formatted_value_loc);
          }
    )
-   API_EPILOG_WO_RETURN(debug, ddcrc, "*formatted_value_loc = %p -> |%s|",
-                             *formatted_value_loc, *formatted_value_loc);
+   API_EPILOG_BEFORE_RETURN(debug, RESPECT_QUIESCE, ddcrc,
+                               "*formatted_value_loc = %p -> |%s|",
+                               *formatted_value_loc, *formatted_value_loc);
    return ddcrc;
 }
 
@@ -772,7 +816,7 @@ ddci_set_single_vcp_value(
    DDCA_Status psc = 0;
    free_thread_error_detail();
    WITH_VALIDATED_DH3(ddca_dh, psc, {
-         Error_Info * ddc_excp = ddc_set_vcp_value(dh, valrec, verified_value_loc);
+         Error_Info * ddc_excp = ddc_set_verified_vcp_value_with_retry(dh, valrec, verified_value_loc);
          psc = (ddc_excp) ? ddc_excp->status_code : 0;
          save_thread_error_detail(error_info_to_ddca_detail(ddc_excp));
          ERRINFO_FREE_WITH_REPORT(ddc_excp, IS_DBGTRC(debug, DDCA_TRC_API));
@@ -852,7 +896,7 @@ ddca_set_continuous_vcp_value(
    bool debug = false;
    API_PROLOG(debug, "feature_code=0x%02x", feature_code);
    DDCA_Status ddcrc = ddci_set_continuous_vcp_value_verify(ddca_dh, feature_code, new_value, NULL);
-   API_EPILOG_WO_RETURN(debug, ddcrc, "");
+   API_EPILOG_BEFORE_RETURN(debug, ddcrc, "");
    return ddcrc;
 }
 #endif
@@ -868,7 +912,7 @@ ddca_set_simple_nc_vcp_value(
    bool debug = false;
    API_PROLOG(debug, "feature_code=0x%02x", feature_code);
    DDCA_Status ddcrc = ddci_set_continuous_vcp_value_verify(ddca_dh, feature_code, new_value, NULL);
-   API_EPILOG_WO_RETURN(debug, ddcrc, "");
+   API_EPILOG_BEFORE_RETURN(debug, ddcrc, "");
    return ddcrc;
 }
 #endif
@@ -950,9 +994,9 @@ ddca_set_non_table_vcp_value(
 {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug, "feature_code=0x%02x", feature_code);
+   API_PROLOGX(debug, RESPECT_QUIESCE, "feature_code=0x%02x", feature_code);
    DDCA_Status ddcrc = ddci_set_non_table_vcp_value_verify(ddca_dh, feature_code, hi_byte, lo_byte, NULL, NULL);
-   API_EPILOG_WO_RETURN(debug, ddcrc, "");
+   API_EPILOG_BEFORE_RETURN(debug, RESPECT_QUIESCE, ddcrc, "");
    return ddcrc;
 }
 
@@ -1019,9 +1063,9 @@ ddca_set_table_vcp_value(
 {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug, "feature_code=0x%02x", feature_code);
+   API_PROLOGX(debug, RESPECT_QUIESCE, "feature_code=0x%02x", feature_code);
    DDCA_Status ddcrc = ddci_set_table_vcp_value_verify(ddca_dh, feature_code, table_value, NULL);
-   API_EPILOG_WO_RETURN(debug, ddcrc, "");
+   API_EPILOG_BEFORE_RETURN(debug, RESPECT_QUIESCE, ddcrc, "");
    return ddcrc;
 }
 
@@ -1076,9 +1120,9 @@ ddca_set_any_vcp_value(
 {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug, "feature_code=0x%02x", feature_code);
+   API_PROLOGX(debug, RESPECT_QUIESCE, "feature_code=0x%02x", feature_code);
    DDCA_Status ddcrc = ddci_set_any_vcp_value_verify(ddca_dh, feature_code, new_value, NULL);
-   API_EPILOG_WO_RETURN(debug, ddcrc, "");
+   API_EPILOG_BEFORE_RETURN(debug, RESPECT_QUIESCE, ddcrc, "");
    return ddcrc;
 }
 
@@ -1090,7 +1134,7 @@ ddca_get_profile_related_values(
 {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug,
+   API_PROLOGX(debug, RESPECT_QUIESCE,
           "ddca_dh=%p, profile_values_string_loc=%p",
           ddca_dh, profile_values_string_loc);
    DDCA_Status psc = API_PRECOND_RVALUE(profile_values_string_loc);
@@ -1108,7 +1152,7 @@ ddca_get_profile_related_values(
       }
    );
 bye:
-   API_EPILOG_WO_RETURN(debug, psc, "");
+   API_EPILOG_BEFORE_RETURN(debug, RESPECT_QUIESCE, psc, "");
    return psc;
 }
 
@@ -1120,7 +1164,7 @@ ddca_set_profile_related_values(
 {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug, "ddca_h=%p, profile_values_string = %s",
+   API_PROLOGX(debug, RESPECT_QUIESCE, "ddca_h=%p, profile_values_string = %s",
                      ddca_dh, profile_values_string);
    DDCA_Status psc = 0;
    WITH_VALIDATED_DH3(ddca_dh, psc,
@@ -1134,7 +1178,7 @@ ddca_set_profile_related_values(
          DBGTRC_RET_DDCRC(debug, DDCA_TRC_API, psc, "");
       }
    );
-   API_EPILOG_WO_RETURN(debug, psc, "");
+   API_EPILOG_BEFORE_RETURN(debug, RESPECT_QUIESCE, psc, "");
    return psc;
 }
 

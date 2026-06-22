@@ -4,7 +4,7 @@
  *  ddc_display_ref_reports.c and ddc_displays.c cross-reference each other.
  */
 
-// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "config.h"
@@ -29,12 +29,18 @@
 #include "base/per_display_data.h"
 #include "base/rtti.h"
 
+#include "sysfs/sysfs_base.h"
+#include "sysfs/sysfs_conflicting_drivers.h"
+#include "sysfs/sysfs_sys_drm_connector.h"
+#include "sysfs/sysfs_top.h"
+
 #include "i2c/i2c_bus_core.h"
-#include "i2c/i2c_sysfs.h"
 
 #ifdef ENABLE_USB
 #include "usb/usb_displays.h"
 #endif
+
+#include "dynvcp/dyn_feature_files.h"
 
 #include "ddc/ddc_packet_io.h"
 #include "ddc/ddc_vcp_version.h"
@@ -159,6 +165,7 @@ get_controller_mfg_string_t(Display_Handle * dh) {
 
 static void report_drm_dpms_status(int depth, const char * connector_name) {
    char * drm_dpms = NULL;
+   possibly_write_detect_to_status_by_connector_name(connector_name);
    RPT_ATTR_TEXT(-1, &drm_dpms, "/sys/class/drm", connector_name, "dpms");
    if (drm_dpms && !streq(drm_dpms,"On")) {
       rpt_vstring(1, "DRM reports the monitor is in a DPMS sleep state (%s).", drm_dpms);
@@ -208,6 +215,9 @@ ddc_report_display_by_dref(Display_Ref * dref, int depth) {
    TRACED_ASSERT(businfo && memcmp(businfo, I2C_BUS_INFO_MARKER, 4) == 0);
 
    switch(dref->dispno) {
+   case DISPNO_DDC_DISABLED:
+      rpt_vstring(depth, "DDC_disabled");
+      break;
    case DISPNO_BUSY:       // -4
       rpt_vstring(depth, "Busy display");
       break;
@@ -247,14 +257,17 @@ ddc_report_display_by_dref(Display_Ref * dref, int depth) {
    TRACED_ASSERT(dref->flags & (DREF_DDC_COMMUNICATION_CHECKED|DREF_DPMS_SUSPEND_STANDBY_OFF));
 
    DDCA_Output_Level output_level = get_output_level();
+   Monitor_Model_Key mmk = mmk_value_from_edid(dref->pedid);
+   // DBGMSG("mmk = %s", mmk_repr(mmk) );
 
    if (output_level >= DDCA_OL_NORMAL) {
-
       if (!(dref->flags & DREF_DDC_COMMUNICATION_WORKING) ) {
          char * drm_status  = NULL;
          char * drm_dpms    = NULL;
          char * drm_enabled = NULL;
-         char * drm_connector_name = i2c_get_drm_connector_name(businfo);
+         // char * drm_connector_name = i2c_get_drm_connector_name(businfo);
+         char * drm_connector_name = businfo->drm_connector_name;
+         possibly_write_detect_to_status_by_businfo(businfo);
          if (drm_connector_name) { // would be null for a non drm driver
             RPT_ATTR_TEXT(-1, &drm_dpms,    "/sys/class/drm", drm_connector_name, "dpms");
             RPT_ATTR_TEXT(-1, &drm_status,  "/sys/class/drm", drm_connector_name, "status");  // connected, disconnected
@@ -262,18 +275,16 @@ ddc_report_display_by_dref(Display_Ref * dref, int depth) {
          }
 
          I2C_Bus_Info * bus_info = dref->detail;
-         if (!(bus_info->flags & I2C_BUS_LVDS_OR_EDP)) {
-            char * s = NULL;
-            if (dref->communication_error_summary) {
-               s = g_strdup_printf("(getvcp of feature x10 returned %s)", dref->communication_error_summary);
-               rpt_vstring(d1, "DDC communication failed. %s", s);
+         if (!(bus_info->flags & I2C_BUS_LVDS_OR_EDP) && bus_info->flags & I2C_BUS_ADDR_X37) {
+            rpt_vstring(d1, "DDC communication failed");
+            if (output_level >= DDCA_OL_VERBOSE && dref->communication_error_summary) {
+               rpt_vstring(d1, "Failure detail: getvcp of feature x10 returned %s",
+                               dref->communication_error_summary);
             }
-            else
-               rpt_vstring(d1, "DDC communication failed");
-            free(s);
          }
          char msgbuf[100] = {0};
          char * msg = NULL;
+         char * vmsg = NULL;
          if (dref->dispno == DISPNO_PHANTOM) {
             if (dref->actual_display) {
                snprintf(msgbuf, 100, "Use non-phantom device %s",
@@ -285,6 +296,8 @@ ddc_report_display_by_dref(Display_Ref * dref, int depth) {
                msg = "Use non-phantom device";
             }
          }
+         else if (businfo->flags & I2C_BUS_DDC_DISABLED)
+            msg = "DDC communication disabled";
          else { // non-phantom
             if (dref->io_path.io_mode == DDCA_IO_I2C)
             {
@@ -296,10 +309,15 @@ ddc_report_display_by_dref(Display_Ref * dref, int depth) {
                 else if ( is_laptop_parsed_edid(dref->pedid) )
                     msg = "This appears to be a laptop display. Laptop displays do not support DDC/CI.";
 #endif
+
                 if (businfo->flags & I2C_BUS_LVDS_OR_EDP)
-                   msg = "This is a laptop display.  Laptop displays do not support DDC/CI";
+                   msg = "This is a laptop display.  Laptop displays do not support DDC/CI.";
                 else if (businfo->flags & I2C_BUS_APPARENT_LAPTOP)
-                   msg = "This appears to be a laptop display.  Laptop displays do not support DDC/CI";
+                   msg = "This appears to be a laptop display.  Laptop displays do not support DDC/CI.";
+                else if (!(businfo->flags & I2C_BUS_ADDR_X37)) {
+                   msg = "This monitor does not support DDC/CI. (I2C slave address x37 is unresponsive.)";
+                   vmsg = "If the monitor's on screen display has a DDC/CI setting, check it is enabled.";
+                }
                 else if (drm_dpms || drm_status || drm_enabled) {
                    if (drm_dpms && !streq(drm_dpms,"On")) {
                       rpt_vstring(d1, "DRM reports the monitor is in a DPMS sleep state (%s).", drm_dpms);
@@ -340,11 +358,17 @@ ddc_report_display_by_dref(Display_Ref * dref, int depth) {
          }
          if (msg) {
             rpt_vstring(d1, msg);
+            if (vmsg && output_level >= DDCA_OL_VERBOSE)
+               rpt_vstring(d1, vmsg);
             if (dref->dispno > 0 && (dref->flags & DREF_DPMS_SUSPEND_STANDBY_OFF)) {
                report_drm_dpms_status(d1, businfo->drm_connector_name);
             }
          }
-      }         // communication not working
+         free(drm_dpms);
+         free(drm_status);
+         free(drm_enabled);
+      }  // communication not working
+
 
       else {    // communication working
          // if (dref->dispno == DISPNO_PHANTOM)
@@ -411,8 +435,6 @@ ddc_report_display_by_dref(Display_Ref * dref, int depth) {
             // }
          }
 
-         Monitor_Model_Key mmk = monitor_model_key_value_from_edid(dref->pedid);
-         // DBGMSG("mmk = %s", mmk_repr(mmk) );
          Monitor_Quirk_Data * quirk = get_monitor_quirks(&mmk);
          if (quirk) {
             char * msg = NULL;
@@ -431,6 +453,19 @@ ddc_report_display_by_dref(Display_Ref * dref, int depth) {
             if (msg)
                rpt_vstring(d1, msg);
          }
+      }
+      if (output_level >= DDCA_OL_VERBOSE) {
+         char * smmk = mmk_model_id_string(mmk.mfg_id, mmk.model_name, mmk.product_code);
+         rpt_vstring(d1, "Monitor Model Id:  %s", smmk);
+         char * fqfn = dfr_find_feature_def_file(smmk);
+         if (fqfn) {
+            rpt_vstring(d1, "Uses feature definition file: %s", fqfn);
+            free(fqfn);
+         }
+         else {
+            rpt_vstring(d1, "Feature definition file %s.mccs not found.", smmk);
+         }
+         free(smmk);
       }
    }
 
@@ -467,6 +502,23 @@ typedef struct {
 } EDID_Use_Record;
 
 
+void free_edid_use_record0(EDID_Use_Record * rec, bool free_edid) {
+   if (rec) {
+      if (free_edid)
+         free(rec->edid);
+      free(rec);
+   }
+}
+
+/** Free an EDID_Use_Record but not the underlying edid byte array
+ *
+ * @param rec  EDID_Use_Record
+ */
+void free_edid_use_record(EDID_Use_Record * rec) {
+   free_edid_use_record0(rec, false);
+}
+
+
 /** Create array of #Edid_Use_Record
  */
 static GPtrArray *
@@ -480,9 +532,10 @@ create_edid_use_table() {
  */
 static void
 free_edid_use_table(GPtrArray* table) {
-      // free's each Edid_Use_Record, but not the edid the records point to
-      g_ptr_array_free(table, true);
-   }
+   // free's each Edid_Use_Record, but not the edid the records point to
+   g_ptr_array_set_free_func(table, (void*)free_edid_use_record);
+   g_ptr_array_free(table, true);
+}
 
 
 /** Returns the EDID_Use_Record for a particular EDID.
@@ -539,11 +592,12 @@ record_i2c_edid_use(GPtrArray * edid_use_records, Display_Ref * dref) {
       if (binfo -> drm_connector_found_by == DRM_CONNECTOR_FOUND_BY_EDID) {
          EDID_Use_Record * cur = get_edid_use_record(edid_use_records, binfo->edid->bytes);
          cur->bus_numbers = bs256_insert(cur->bus_numbers, binfo->busno);
-         DBGTRC_DONE(debug, DDCA_TRC_NONE, "Updated bus list %s for edid %s",
+         DBGTRC_NOPREFIX(debug, DDCA_TRC_NONE, "Updated bus list %s for edid %s",
                          bs256_to_string_decimal_t(cur->bus_numbers, NULL, ", "),
                          hexstring_t(binfo->edid->bytes+122,6));
       }
    }
+   DBGTRC_DONE(debug, DDCA_TRC_NONE, "");
 }
 
 
@@ -635,7 +689,7 @@ ddc_dbgrpt_display_ref(Display_Ref * dref, int depth) {
    rpt_structure_loc("Display_Ref", dref, depth);
    rpt_int("dispno", NULL, dref->dispno, d1);
 
-   dbgrpt_display_ref(dref, d1);
+   dbgrpt_display_ref(dref, true, d1);
 
    rpt_vstring(d1, "io_mode: %s", io_mode_name(dref->io_path.io_mode));
    switch(dref->io_path.io_mode) {
@@ -643,7 +697,7 @@ ddc_dbgrpt_display_ref(Display_Ref * dref, int depth) {
          rpt_vstring(d1, "I2C bus information: ");
          I2C_Bus_Info * businfo = dref->detail;
          TRACED_ASSERT( memcmp(businfo->marker, I2C_BUS_INFO_MARKER, 4) == 0);
-         i2c_dbgrpt_bus_info(businfo, d2);
+         i2c_dbgrpt_bus_info(businfo, true, d2);
          break;
    case(DDCA_IO_USB):
 #ifdef ENABLE_USB
@@ -678,7 +732,7 @@ ddc_dbgrpt_drefs(char * msg, GPtrArray * ptrarray, int depth) {
       for (int ndx = 0; ndx < ptrarray->len; ndx++) {
          Display_Ref * dref = g_ptr_array_index(ptrarray, ndx);
          TRACED_ASSERT(dref);
-         dbgrpt_display_ref(dref, d1);
+         dbgrpt_display_ref(dref, true, d1);
       }
    }
 }

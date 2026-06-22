@@ -3,7 +3,7 @@
  * Feature set identifiers
  */
 
-// Copyright (C) 2014-2021 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 /** \cond */
@@ -44,6 +44,7 @@ Value_Name_Table vcp_subset_table = {
       VNT(VCP_SUBSET_CCONT,           "CCONT"),
       VNT(VCP_SUBSET_CONT,            "CONT"),
       VNT(VCP_SUBSET_SNC,             "SNC"),
+      VNT(VCP_SUBSET_XNC,             "XNC"),
       VNT(VCP_SUBSET_CNC,             "CNC"),
       VNT(VCP_SUBSET_NC,              "NC"),
       VNT(VCP_SUBSET_NC_WO,           "NC_WO"),
@@ -148,6 +149,7 @@ Value_Name_Title_Table feature_set_flag_table = {
       VNT(FSF_RW_ONLY,          "include only RW features"),
       VNT(FSF_RO_ONLY,          "include only RO features"),
       VNT(FSF_WO_ONLY,          "include only WO features"),
+      VNT(FSF_CHECK_UDF,        "use user-defined feature definitions"),
       VNT_END
 };
 const int feature_set_flag_ct = ARRAY_SIZE(feature_set_flag_table)-1;

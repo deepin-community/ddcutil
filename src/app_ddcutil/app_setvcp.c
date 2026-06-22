@@ -100,20 +100,20 @@ app_set_vcp_value(
    bool                       good_value = false;
    DDCA_Any_Vcp_Value         vrec;
 
-   dfm = dyn_get_feature_metadata_by_dh(feature_code,dh, (force || feature_code >= 0xe0) );
+   dfm = dyn_get_feature_metadata_by_dh(feature_code,dh, /*check_udf=*/ true, (force || feature_code >= 0xe0) );
    if (!dfm) {
       ddc_excp = ERRINFO_NEW(DDCRC_UNKNOWN_FEATURE,
                               "Unrecognized VCP feature code: 0x%02x", feature_code);
       goto bye;
    }
 
-   if (!(dfm->feature_flags & DDCA_WRITABLE)) {
+   if (!(dfm->version_feature_flags & DDCA_WRITABLE)) {
       ddc_excp = ERRINFO_NEW(DDCRC_INVALID_OPERATION,
                  "Feature 0x%02x (%s) is not writable", feature_code, dfm->feature_name);
       goto bye;
    }
 
-   if (dfm->feature_flags & DDCA_TABLE) {
+   if (dfm->version_feature_flags & DDCA_TABLE) {
       if (value_type != VALUE_TYPE_ABSOLUTE) {
          ddc_excp = ERRINFO_NEW(DDCRC_INVALID_OPERATION,
                                  "Relative VCP values valid only for Continuous VCP features");
@@ -142,7 +142,7 @@ app_set_vcp_value(
       }
 
       if (value_type != VALUE_TYPE_ABSOLUTE) {
-         if ( !(dfm->feature_flags & DDCA_CONT) ) {
+         if ( !(dfm->version_feature_flags & DDCA_CONT) ) {
             ddc_excp = ERRINFO_NEW(DDCRC_INVALID_OPERATION,
                            "Relative VCP values valid only for Continuous VCP features");
             goto bye;
@@ -183,7 +183,7 @@ app_set_vcp_value(
       vrec.val.c_nc.sl = itemp & 0xff;
    }
 
-   ddc_excp = ddc_set_vcp_value(dh, &vrec, NULL);
+   ddc_excp = ddc_set_verified_vcp_value_with_retry(dh, &vrec, NULL);
 
    if (ddc_excp) {
       ddcrc = ERRINFO_STATUS(ddc_excp);

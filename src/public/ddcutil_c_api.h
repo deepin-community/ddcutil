@@ -7,7 +7,7 @@
  *  Typedefs, other constants, etc. begin with "DDCA_".
  */
 
-// Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DDCUTIL_C_API_H_
@@ -597,7 +597,7 @@ ddca_report_displays(
 /** Reinitializes detected displays
  *
  *  - closes all open displays, releasing any display locks
- *  - n. all existing display handles become invalid (TODO: validate dh similarly to dref)
+ *  - n. all existing display handles become invalid
  *  - releases display refs (all existing display refs become invalid)
  *  - releases i2c bus info
  *  - rescans i2c buses
@@ -1766,15 +1766,18 @@ const char *
 const char *
    ddca_display_event_type_name(DDCA_Display_Event_Type event_type);
 
+
 /** Start the thread watching for display status changes.
  *
  *  @param  enabled_clases  event classes to watch
  *  @retval DDCRC_OK
- *  #retval DDCRC_ARG     no event classes specified
+ *  #retval DDCRC_ARG     no event classes or invalid event classes specified
  *  @retval DDCRC_INVALID_OPERATION watch thread already running
  *  @retval DDCRC_INVALID_OPERATION not all video drivers support DRM
+ *  @retval DDCRC_UNIMPLEMENTED watching for DPMS changes unimplemented
  *
- *  @since 2.1.0
+ *  The only valid event_type value is DDCA_EVENT_CLASS_DISPLAY_CONNECTION.
+ *  DDCA_EVENT_CLASS_ALL is equivalent to DDCA_EVENT_CLSS_DISPLAY_CONNECTION.
  */
 DDCA_Status
 ddca_start_watch_displays(DDCA_Display_Event_Class enabled_classes);
@@ -1807,6 +1810,29 @@ ddca_stop_watch_displays(bool wait);
 DDCA_Status
 ddca_get_active_watch_classes(DDCA_Display_Event_Class * classes_loc);
 
+/** Retrieve current display watch settings into a buffer provided
+ *  by the caller.
+ *
+ *  @param settings_buffer pointer to caller buffer
+ *  @retval DDCRC_OK
+ *  @retval DDCRC_UNINITIALIZED
+ *
+ *  @since 2.2.0
+ */
+DDCA_Status
+ddca_get_display_watch_settings(DDCA_DW_Settings * settings_buffer);
+
+/** Modify the current display watch settings.
+ *
+ *  @param settings_buffer pointer to settings buffer
+ *  @retval DDCRC_OK
+ *  @retval DDCRC_ARG
+ *  @retval DDCRC_UNINITIALIZED
+ *
+ *  @since 2.2.0
+ */
+DDCA_Status
+ddca_set_display_watch_settings(DDCA_DW_Settings * settings_buffer);
 
 
 #ifdef __cplusplus

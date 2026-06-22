@@ -1,7 +1,7 @@
 /** @file ddc_output.c
  */
 
-// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 
@@ -166,7 +166,7 @@ get_raw_value_for_feature_metadata(
    Error_Info * ddc_excp = NULL;
    char * feature_name = frec->feature_name;
    Byte feature_code = frec->feature_code;
-   bool is_table_feature = frec->feature_flags & DDCA_TABLE;
+   bool is_table_feature = frec->version_feature_flags & DDCA_TABLE;
    DDCA_Vcp_Value_Type feature_type = (is_table_feature) ? DDCA_TABLE_VCP_VALUE : DDCA_NON_TABLE_VCP_VALUE;
    DDCA_Output_Level output_level = get_output_level();
    DDCA_Any_Vcp_Value * valrec = NULL;
@@ -576,6 +576,10 @@ ddc_get_formatted_value_for_dfm(
 {
    bool debug = false;
    DBGTRC_STARTING(debug, TRACE_GROUP, "suppress_unsupported=%s", sbool(suppress_unsupported));
+   DBGTRC_NOPREFIX(debug, TRACE_GROUP, "dfm->global_feature_flags = %s",
+         interpret_ddca_global_feature_flags_symbolic_t(dfm->global_feature_flags));
+   DBGTRC_NOPREFIX(debug, TRACE_GROUP, "dfm->version_feature_flags = %s",
+         interpret_ddca_version_feature_flags_symbolic_t(dfm->version_feature_flags));
 
    Public_Status_Code psc = 0;
    Error_Info * ddc_excp;
@@ -586,7 +590,7 @@ ddc_get_formatted_value_for_dfm(
    // DDCA_Feature_Metadata* extmeta = dfm_to_ddca_feature_metadata(dfm);
    Byte feature_code = dfm->feature_code;
    char * feature_name = dfm->feature_name;
-   bool is_table_feature = dfm->feature_flags & DDCA_TABLE;
+   bool is_table_feature = dfm->version_feature_flags & DDCA_TABLE;
 #ifndef NDEBUG
    DDCA_Vcp_Value_Type feature_type = (is_table_feature) ? DDCA_TABLE_VCP_VALUE : DDCA_NON_TABLE_VCP_VALUE;
 #endif
@@ -610,8 +614,9 @@ ddc_get_formatted_value_for_dfm(
             &pvalrec,
             (output_level == DDCA_OL_TERSE) ? NULL : msg_fh);
             // msg_fh);
+
    psc = ERRINFO_STATUS(ddc_excp);
-   assert( (psc==0 && (feature_type == pvalrec->value_type)) || (psc!=0 && !pvalrec) );
+   assert( (!ddc_excp && (feature_type == pvalrec->value_type)) || (psc!=0 && !pvalrec) );
    if (!ddc_excp) {      // changed from (psc == 0) to avoid avoid coverity complaint re resource leak
       // if (!is_table_feature && output_level >= OL_VERBOSE) {
       // if (!is_table_feature && debug) {
@@ -636,11 +641,11 @@ ddc_get_formatted_value_for_dfm(
             *formatted_value_loc = formatted;
             free(hexbuf);
          }
-         else {                                // OL_PROGRAM, not table featdyn_create_feature_set2ure
-            DDCA_Version_Feature_Flags vflags = dfm->feature_flags;
+         else {                                // OL_TERSE, not table feature
+            DDCA_Version_Feature_Flags vflags = dfm->version_feature_flags;
             // =   get_version_sensitive_feature_flags(vcp_entry, vspec);
             char buf[200];
-            assert(vflags & (DDCA_CONT | DDCA_SIMPLE_NC | DDCA_COMPLEX_NC | DDCA_NC_CONT));
+            assert(vflags & (DDCA_CONT | DDCA_SIMPLE_NC | DDCA_EXTENDED_NC | DDCA_COMPLEX_NC | DDCA_NC_CONT));
             if (vflags & DDCA_CONT) {
                snprintf(buf, 200, "VCP %02X C %d %d",
                                   feature_code,
@@ -649,6 +654,10 @@ ddc_get_formatted_value_for_dfm(
             else if (vflags & DDCA_SIMPLE_NC) {
                snprintf(buf, 200, "VCP %02X SNC x%02x",
                feature_code, pvalrec->val.c_nc.sl);
+            }
+            else if (vflags & DDCA_EXTENDED_NC) {
+               snprintf(buf, 200, "VCP %02X SNC x%02x x%02x",
+               feature_code, pvalrec->val.c_nc.sh, pvalrec->val.c_nc.sl);
             }
             else {
                assert(vflags & (DDCA_COMPLEX_NC|DDCA_NC_CONT));
@@ -767,11 +776,11 @@ show_feature_set_values2_dfm(
       Display_Feature_Metadata * dfm = dyn_get_feature_set_entry(feature_set, ndx);
       // DDCA_Feature_Metadata * extmeta = ifm->external_metadata;
       DBGMSF(debug,"ndx=%d, feature = 0x%02x", ndx, dfm->feature_code);
-      if ( !(dfm->feature_flags & DDCA_READABLE) ) {
+      if ( !(dfm->version_feature_flags & DDCA_READABLE) ) {
          // confuses the output if suppressing unsupported
          if (show_unsupported) {
             char * feature_name =  dfm->feature_name;
-            char * msg = (dfm->feature_flags & DDCA_DEPRECATED) ? "Deprecated" : "Write-only feature";
+            char * msg = (dfm->version_feature_flags & DDCA_DEPRECATED) ? "Deprecated" : "Write-only feature";
             f0printf(outf, FMT_CODE_NAME_DETAIL_W_NL,
                           dfm->feature_code, feature_name, msg);
          }
@@ -867,8 +876,8 @@ ddc_show_vcp_values(
         Bit_Set_256 *       features_seen)
 {
    bool debug = false;
-   DBGTRC_STARTING(debug, TRACE_GROUP, "subset=%d, flags=%s,  dh=%s",
-                   subset, feature_set_flag_names_t(flags), dh_repr(dh) );
+   DBGTRC_STARTING(debug, TRACE_GROUP, "subset=%s, flags=%s,  dh=%s",
+         feature_subset_name(subset), feature_set_flag_names_t(flags), dh_repr(dh) );
 
    Public_Status_Code psc = 0;
 

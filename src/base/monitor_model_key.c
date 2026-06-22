@@ -4,7 +4,7 @@
  *  model name, and product code, as listed in the EDID.
  */
 
-// Copyright (C) 2018-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2018-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <assert.h>
@@ -12,17 +12,20 @@
 #include <glib-2.0/glib.h>
 #include <string.h>
 
+#include "util/debug_util.h"
 #include "util/edid.h"
 #include "util/glib_util.h"
+#include "util/regex_util.h"
 
 #include "core.h"
+#include "rtti.h"
 
 #include "monitor_model_key.h"
 
 
 /** Returns a Monitor_Model_Key on the stack. */
 Monitor_Model_Key
-monitor_model_key_value(
+mmk_value(
       const char *   mfg_id,
       const char *   model_name,
       uint16_t       product_code)
@@ -38,6 +41,7 @@ monitor_model_key_value(
    // memcpy(result.marker, MONITOR_MODEL_KEY_MARKER, 4);
    (void) g_strlcpy(result.mfg_id,     mfg_id,     EDID_MFG_ID_FIELD_SIZE);
    STRLCPY(result.model_name, model_name, EDID_MODEL_NAME_FIELD_SIZE);
+   FIXUP_MODEL_NAME(result.model_name);
    result.product_code = product_code;
    result.defined = true;
    return result;
@@ -46,7 +50,7 @@ monitor_model_key_value(
 
 /** Returns an "undefined" Monitor_Model_Key on the stack. */
 Monitor_Model_Key
-monitor_model_key_undefined_value() {
+mmk_undefined_value() {
    Monitor_Model_Key result;
    memset(&result, 0, sizeof(result));
    // memcpy(result.marker, MONITOR_MODEL_KEY_MARKER, 4);
@@ -57,7 +61,7 @@ monitor_model_key_undefined_value() {
 /** Returns a Monitor Model Key on the stack with values obtained
  *  from an EDID */
 Monitor_Model_Key
-monitor_model_key_value_from_edid(Parsed_Edid * edid) {
+mmk_value_from_edid(Parsed_Edid * edid) {
    Monitor_Model_Key result;
    // memcpy(result.marker, MONITOR_MODEL_KEY_MARKER, 4);
    /* coverity[OVERRUN] */             (void) g_strlcpy(result.mfg_id, edid->mfg_id, EDID_MFG_ID_FIELD_SIZE);
@@ -67,6 +71,7 @@ monitor_model_key_value_from_edid(Parsed_Edid * edid) {
    // STRLCPY(result.mfg_id, edid->mfg_id, EDID_MFG_ID_FIELD_SIZE);
    memcpy(result.mfg_id, edid->mfg_id, EDID_MFG_ID_FIELD_SIZE);
    /* coverity[OVERRUN] */ (void) g_strlcpy(result.model_name, edid->model_name, EDID_MODEL_NAME_FIELD_SIZE);
+   FIXUP_MODEL_NAME(result.model_name);
    result.product_code = edid->product_code;
 
    result.defined = true;
@@ -76,7 +81,7 @@ monitor_model_key_value_from_edid(Parsed_Edid * edid) {
 
 /** Allocates and initializes a new Monitor_Model_Key on the heap. */
 Monitor_Model_Key *
-monitor_model_key_new(
+mmk_new(
       const char *   mfg_id,
       const char *   model_name,
       uint16_t       product_code)
@@ -88,14 +93,115 @@ monitor_model_key_new(
    // memcpy(result->marker, MONITOR_MODEL_KEY_MARKER, 4);
    STRLCPY(result->mfg_id,     mfg_id,     EDID_MFG_ID_FIELD_SIZE);
    STRLCPY(result->model_name, model_name, EDID_MODEL_NAME_FIELD_SIZE);
+   FIXUP_MODEL_NAME(result->model_name);
    result->product_code = product_code;
    result->defined = true;
    return result;
 }
 
 
+Monitor_Model_Key
+mmk_value_from_string(const char * sval) {
+   bool debug = false;
+   DBGTRC_STARTING(debug, DDCA_TRC_NONE, "sval = |%s|", sval);
+
+   static const char * mmk_pattern = "^([A-Z]{3})-(.{0,13})-([0-9]*)$";
+
+   regmatch_t  matches[4];
+
+   bool ok =  compile_and_eval_regex_with_matches(
+         mmk_pattern,
+         sval,
+         4,   //       max_matches,
+         matches);
+
+   Monitor_Model_Key result = mmk_undefined_value();
+
+   if (ok) {
+      // for (int kk = 0; kk < 4; kk++) {
+      //    rpt_vstring(1, "match %d, substring start=%d, end=%d", kk, matches[kk].rm_so, matches[kk].rm_eo);
+      // }
+      char * mfg_id         = substr(sval, matches[1].rm_so, matches[1].rm_eo - matches[1].rm_so);
+      char * model_name     = substr(sval, matches[2].rm_so, matches[2].rm_eo - matches[2].rm_so);
+      char * product_code_s = substr(sval, matches[3].rm_so, matches[3].rm_eo - matches[3].rm_so);
+      FIXUP_MODEL_NAME(model_name);
+      // DBGF(debug, "mfg_id=|%s|", mfg_id);
+      // DBGF(debug, "model_name=|%s|", model_name);
+      // DBGF(debug, "product_code_s=|%s|", product_code_s);
+
+      uint16_t product_code;
+      int ival;
+      ok = str_to_int(product_code_s, &ival, 10);
+      product_code = (uint16_t) ival;
+      assert(ok);
+      // DBGF(debug, "product_code: %d", product_code);
+
+      result = mmk_value(mfg_id, model_name, product_code);
+
+      free(mfg_id);
+      free(model_name);
+      free(product_code_s);
+   }
+
+   DBGTRC_DONE(debug, DDCA_TRC_NONE, "Returning: %s", mmk_repr(result));
+   return result;
+}
+
+
 Monitor_Model_Key *
-monitor_model_key_new_from_edid(
+mmk_new_from_value(Monitor_Model_Key mmk) {
+   bool debug = false;
+   DBGTRC_STARTING(debug, DDCA_TRC_NONE, "mmk=%s", mmk_repr(mmk));
+
+   Monitor_Model_Key * result = NULL;
+   if (mmk.defined) {
+      result = calloc(1, sizeof(Monitor_Model_Key));
+      memcpy(result, &mmk, sizeof(Monitor_Model_Key));
+#ifdef ALTERNATIVE
+      Monitor_Model_Key * result2 = mmk_new(
+            mmk.mfg_id,
+            mmk.model_name,
+            mmk.product_code);
+      assert(monitor_model_key_eq(*result, *result2));
+      mmk_free(result2);
+#endif
+
+      assert(monitor_model_key_eq(mmk, *result));
+   }
+
+   if (result)
+      DBGTRC_DONE(debug, DDCA_TRC_NONE, "Returning: %p -> %s", result, mmk_repr(*result));
+   else
+      DBGTRC_DONE(debug, DDCA_TRC_NONE, "Returning: NULL");
+   return result;
+}
+
+
+Monitor_Model_Key *
+mmk_new_from_string(const char * s) {
+   bool debug = false;
+   DBGTRC_STARTING(debug, DDCA_TRC_NONE, "s=|s|", s);
+
+   Monitor_Model_Key * result = NULL;
+   Monitor_Model_Key mmk = mmk_value_from_string(s);
+   if (mmk.defined) {
+      result = mmk_new_from_value(mmk);
+   }
+
+   DBGTRC_DONE(debug, DDCA_TRC_NONE, "Returning: %p", result);
+   return result;
+}
+
+
+bool is_valid_mmk(const char * sval) {
+   Monitor_Model_Key mmk = mmk_value_from_string(sval);
+   return mmk.defined;
+}
+
+
+
+Monitor_Model_Key *
+mmk_new_from_edid(
       Parsed_Edid * edid)
 {
    Monitor_Model_Key * result = NULL;
@@ -103,6 +209,7 @@ monitor_model_key_new_from_edid(
       result = calloc(1, sizeof(Monitor_Model_Key));
       memcpy(result->mfg_id, edid->mfg_id, EDID_MFG_ID_FIELD_SIZE);
       memcpy(result->model_name, edid->model_name, EDID_MODEL_NAME_FIELD_SIZE);
+      FIXUP_MODEL_NAME(result->model_name);
       result->product_code = edid->product_code;
       result->defined = true;
    }
@@ -112,14 +219,19 @@ monitor_model_key_new_from_edid(
 
 /** Frees a Monitor_Model_Key */
 void
-monitor_model_key_free(
-      Monitor_Model_Key * model_id)
+mmk_free(
+      Monitor_Model_Key * mmk)
 {
-   free(model_id);
+   free(mmk);
 }
 
 
-/** Compares 2 Monitor_Model_Key values for equality */
+/** Compares 2 Monitor_Model_Key values for equality
+ *
+ * \param  mmk1
+ * \param  mmk2
+ * \return true/false
+ */
 bool
 monitor_model_key_eq(
       Monitor_Model_Key mmk1,
@@ -174,7 +286,7 @@ bool monitor_model_key_is_defined(Monitor_Model_Key mmk) {
  *  \return  key string (caller must free or save in persistent data structure)
  */
 char *
-model_id_string(
+mmk_model_id_string(
       const char *  mfg,
       const char *  model_name,
       uint16_t      product_code)
@@ -186,10 +298,7 @@ model_id_string(
    assert(mfg);
    assert(model_name);
    char * model_name2 = g_strdup(model_name);
-   for (int ndx = 0; ndx < strlen(model_name2); ndx++) {
-      if ( !isalnum(model_name2[ndx]) )
-         model_name2[ndx] = '_';
-   }
+   FIXUP_MODEL_NAME(model_name2);
 
    char * result = g_strdup_printf("%s-%s-%u", mfg, model_name2, product_code);
    free(model_name2);
@@ -210,7 +319,7 @@ model_id_string(
  *  the current thread.  Caller should not free.
  */
 char *
-monitor_model_string(Monitor_Model_Key * model_id) {
+mmk_string(Monitor_Model_Key * model_id) {
    static GPrivate  dh_buf_key = G_PRIVATE_INIT(g_free);
    const int bufsz = 100;
    char * buf = get_thread_fixed_buffer(&dh_buf_key, bufsz);
@@ -218,7 +327,7 @@ monitor_model_string(Monitor_Model_Key * model_id) {
    char * result = NULL;
    // perhaps use thread safe buffer so caller doesn't have to free
    if (model_id) {
-      char * s  = model_id_string(
+      char * s  = mmk_model_id_string(
                          model_id->mfg_id,
                          model_id->model_name,
                          model_id->product_code);
@@ -233,10 +342,18 @@ monitor_model_string(Monitor_Model_Key * model_id) {
 
 /** Returns a string representation of a Monitor_Model_Key in a format
  *  suitable for debug messages.
+ *
+ *  \param  mmk  Monitor_Model_Key value
+ *  \return string representation
+ *
+ *  The value returned will be valid until the next call to this function in
+ *  the current thread.  Caller should not free.
  */
 char * mmk_repr(Monitor_Model_Key mmk) {
-   // TODO: make thread safe
-   static char buf[100];
+   static GPrivate  dh_buf_key = G_PRIVATE_INIT(g_free);
+   const int bufsz = 100;
+   char * buf = get_thread_fixed_buffer(&dh_buf_key, bufsz);
+
    if (!mmk.defined)
       strcpy(buf, "[Undefined]");
    else
@@ -244,3 +361,11 @@ char * mmk_repr(Monitor_Model_Key mmk) {
    return buf;
 }
 
+
+void init_monitor_model_key() {
+   RTTI_ADD_FUNC(mmk_value_from_string);
+   RTTI_ADD_FUNC(mmk_new_from_value);
+}
+
+
+#undef FIXUP_MODEL_NAME

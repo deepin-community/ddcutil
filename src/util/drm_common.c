@@ -1,6 +1,6 @@
 /** @file drm_common.c
  *
- *  Consolidates DRM functions variants the have proliferated in the code base.
+ *  Consolidates DRM function variants the have proliferated in the code base.
  */
 
 // Copyright (C) 2024 Sanford Rockowitz <rockowitz@minsoft.com>
@@ -18,6 +18,7 @@
 #include <unistd.h>  // for close() used by probe_dri_device_using_drm_api
 #include <xf86drm.h>
 #include <xf86drmMode.h>
+#include <libdrm/drm_mode.h>
 /** \endcond */
 
 #include "coredefs_base.h"
@@ -25,10 +26,13 @@
 #include "debug_util.h"
 #include "file_util.h"
 #include "subprocess_util.h"
+#include "regex_util.h"
 #include "report_util.h"
 #include "string_util.h"
 #include "sysfs_filter_functions.h"
+#include "sysfs_i2c_util.h"
 #include "sysfs_util.h"
+#include "timestamp.h"
 
 #include "drm_common.h"
 
@@ -84,6 +88,7 @@
  bool adapter_supports_drm_using_drm_api(const char * adapter_path) {
     bool debug = false;
     DBGF(debug, "Starting. adapter_path=%s", adapter_path);
+    assert(adapter_path);
     bool result = false;
  #ifdef USE_LIBDRM
        char * adapter_basename = g_path_get_basename(adapter_path);
@@ -118,14 +123,17 @@
  }
 
 
- // from util/libdrm_util.c
-
- static char * drm_bus_type_name(uint8_t bus) {
+const char * drm_bus_type_name(uint8_t bus) {
     char * result = NULL;
-    if (bus == DRM_BUS_PCI)
-       result = "pci";
-    else
-       result = "unk";
+
+    switch(bus) {
+           case DRM_BUS_PCI:      result = "pci";      break; // 0
+           case DRM_BUS_USB:      result = "usb";      break; // 1
+           case DRM_BUS_PLATFORM: result = "platform"; break; // 2
+           case DRM_BUS_HOST1X:   result = "host1x";   break; // 3
+           default:               result = "unrecognized";
+    }
+
     return result;
  }
 
@@ -138,7 +146,7 @@
 
  /* Scans /dev/dri to obtain list of device names
   *
-  * Returns:   GPtrArray of device names.
+  * Returns:   GPtrArray of device names, caller must free
   */
  GPtrArray * get_dri_device_names_using_filesys() {
     const char *dri_paths[] = { "/dev/dri/", NULL };
@@ -167,7 +175,7 @@
        // returns 0 on success, negative error code otherwise
        int get_device_rc = drmGetDevice(fd, &ddev);
        if (get_device_rc < 0) {
-          DBGF(debug,  "drmGetDevice() returned %d", get_device_rc);
+          DBGF(debug,  "drmGetDevice() returned %d = %s", get_device_rc, strerror(-get_device_rc));
        }
        else {
           snprintf(busid2, sizeof(busid2), "%s:%04x:%02x:%02x.%d",
@@ -182,11 +190,12 @@
                  ddev->businfo.pci->dev,
                  ddev->businfo.pci->func);
 
+          DBGF(debug, "busid2 = |%s|", busid2);
           supports_drm = check_drm_supported_using_drm_api(busid2);
 
           drmFreeDevice(&ddev);
        }
-       close(fd);  // because O_CLOEXEC not recognized
+       close(fd);
     }
     DBGF(debug, "Done. Returning: %s", sbool(supports_drm));
     return supports_drm;
@@ -199,14 +208,17 @@
  *  DRM is supported by using the drm api.
  *
  *  @return true if all adapters support DRM
+ *
+ *  @remark: unreliable on Wayland!?
  */
  bool all_displays_drm_using_drm_api() {
     bool debug = false;
     DBGF(debug,  "Starting");
 
     bool result = false;
+    // returns false on banner under Wayland!!!!
     int drm_available = drmAvailable();
-    // DBGF(debug, "drmAvailable() returned:  %d", drm_available);
+    DBGF(debug, "drmAvailable() returned:  %d", drm_available);
     if (drm_available) {
        GPtrArray * dev_names = get_dri_device_names_using_filesys();
        if (dev_names->len > 0)
@@ -270,123 +282,6 @@ get_sysfs_drm_card_numbers() {
 #endif
 
 
-// Beginning of get_video_devices2() segment
-// Use C code instead of bash command to find all subdirectories
-// of /sys/devices having class x03
-
-#ifdef UNUSED
-bool not_ata(const char * simple_fn) {
-   return !str_starts_with(simple_fn, "ata");
-}
-#endif
-
-bool is_pci_dir(const char * simple_fn) {
-   bool debug = false;
-   bool result = str_starts_with(simple_fn, "pci0");
-   DBGF(debug, "simple_fn = %s, returning %s", simple_fn, sbool(result));
-   return result;
-}
-
-
-bool predicate_starts_with_0(const char * simple_fn) {
-   bool debug = false;
-   bool result = str_starts_with(simple_fn, "0");
-   DBGF(debug, "simple_fn = %s, returning %s", simple_fn, sbool(result));
-   return result;
-}
-
-
-void find_class_dirs(const char * dirname,
-                     const char * simple_fn,
-                     void *       accumulator,
-                     int          depth)
-{
-    bool debug = false;
-    DBGF(debug, "Starting. dirname=%s, simple_fn=%s, accumulator=%p, depth=%d",
-          dirname, simple_fn, accumulator, depth);
-    char * subdir = g_strdup_printf("%s/%s", dirname, simple_fn);
-    GPtrArray* accum = accumulator;
-    char * result = NULL;
-    bool found = RPT_ATTR_TEXT(-1, &result, dirname, simple_fn, "class");
-    if (found) {
-       DBGF(debug, "subdir=%s has attribute class = %s. Adding.", subdir, result);
-       g_ptr_array_add(accum, (char*) subdir);
-    }
-    else {
-       DBGF(debug, "subdir=%s does not have attribute class", subdir);
-    }
-    DBGF(debug, "Examining subdirs of %s", subdir);
-    dir_foreach(subdir, predicate_starts_with_0, find_class_dirs, accumulator, depth+1);
-}
-
-
-/** Returns the paths to all video devices in /sys/devices, i.e. those
- *  subdirectories (direct or indirect) having class = 0x03
- *
- *  @return array of directory names, caller must free
- */
-GPtrArray *  get_video_adapter_devices2() {
-   bool debug = false;
-   DBGF(debug, "Starting.");
-   GPtrArray * class03_dirs = g_ptr_array_new_with_free_func(g_free);
-   dir_foreach("/sys/devices", is_pci_dir, find_class_dirs, class03_dirs, 0);
-   if (debug) {
-      DBG("Before filtering: class03_dirs->len =%d", class03_dirs->len);
-      for (int ndx = 0; ndx < class03_dirs->len; ndx++) {
-         rpt_vstring(2, "%s", g_ptr_array_index(class03_dirs, ndx));
-      }
-   }
-   for (int ndx = class03_dirs->len -1; ndx>= 0; ndx--) {
-      char * dirname =  g_ptr_array_index(class03_dirs, ndx);
-      DBGF(debug, "dirname=%s", dirname);
-      char * class = NULL;
-      int d = (debug) ? 1 : -1;
-      RPT_ATTR_TEXT(d, &class, dirname, "class");
-      assert(class);
-      if ( !str_starts_with(class, "0x03") ) {
-         g_ptr_array_remove_index(class03_dirs, ndx);
-      }
-   }
-
-   if (debug) {
-      DBG("Returning %d directories:", class03_dirs->len);
-      for (int ndx = 0; ndx < class03_dirs->len; ndx++)
-         rpt_vstring(2, "%s", (char*) g_ptr_array_index(class03_dirs, ndx));
-   }
-
-   return class03_dirs;
-}
-
-
-/** Returns the paths to all video devices in /sys/devices, i.e. those
- *  subdirectories (direct or indirect) having class = 0x03
- *
- *  @return array of directory names, caller must free
- */
-GPtrArray * get_video_adapter_devices() {
-   bool debug = false;
-   char * cmd = "find /sys/devices -name class | xargs grep x03 -l | sed 's|class||'";
-   GPtrArray * result = execute_shell_cmd_collect(cmd);
-   g_ptr_array_set_free_func(result, g_free);
-
-   if (debug) {
-      DBG("Returning %d directories:", result->len);
-      for (int ndx = 0; ndx < result->len; ndx++)
-         rpt_vstring(2, "%s", (char*) g_ptr_array_index(result, ndx));
-   }
-
-   if (debug) {
-      // For testing:
-      GPtrArray* devices2 = get_video_adapter_devices2();
-      DBG("get_video_adapter_devices2 returned %d directories:", devices2->len);
-      for (int ndx = 0; ndx < devices2->len; ndx++)
-         rpt_vstring(2, "%s", (char*) g_ptr_array_index(devices2, ndx));
-      g_ptr_array_free(devices2, true);
-   }
-
-   return result;
-}
-
 
 typedef struct {
    bool has_card_connector_dir;
@@ -449,7 +344,10 @@ bool card_connector_subdirs_exist(const char * adapter_dir) {
 bool check_video_adapters_list_implements_drm(GPtrArray * adapter_devices) {
    bool debug = false;
    assert(adapter_devices);
-   // DBGF(debug, "adapter_devices->len=%d at %p", adapter_devices->len, adapter_devices);
+   uint64_t t0, t1;
+   if (debug)
+      t0 = cur_realtime_nanosec();
+   DBGF(debug, "adapter_devices->len=%d at %p", adapter_devices->len, adapter_devices);
    bool result = true;
    for (int ndx = 0; ndx < adapter_devices->len; ndx++) {
       // char * subdir_name = NULL;
@@ -461,6 +359,10 @@ bool check_video_adapters_list_implements_drm(GPtrArray * adapter_devices) {
          break;
       }
    }
+   if (debug) {
+     t1 = cur_realtime_nanosec();
+     DBG("elapsed: %jd microsec",  NANOS2MICROS(t1-t0));
+   }
    DBGF(debug, "Done.     Returning %s", sbool(result));
    return result;
 }
@@ -470,25 +372,31 @@ bool check_video_adapters_list_implements_drm(GPtrArray * adapter_devices) {
  *  by checking that card connector directories drm/cardN/cardN-xxx exist.
  *
  *  @return true if all video adapters have drivers implementing drm, false if not
+ *
+ *  The degenerate case of no video adapters returns false.
+ *
  */
 bool check_all_video_adapters_implement_drm() {
    bool debug = false;
    DBGF(debug, "Starting");
 
-   GPtrArray * devices = NULL;
-   devices = get_video_adapter_devices();
-
-   // g_ptr_array_free(devices, true);
-   //   devices = get_video_adapter_devices2();   // FAILS
-
-    // DBGF(debug, "%d devices at %p:", devices->len, devices);
-    // for (int ndx = 0; ndx < devices->len; ndx++)
-    //    rpt_vstring(2, "%s", g_ptr_array_index(devices, ndx));
+   uint64_t t0 = cur_realtime_nanosec();
+   // DBGF(debug, "t0=%"PRIu64, t0);
+   GPtrArray * devices = get_video_adapter_devices();
+   uint64_t t1 = cur_realtime_nanosec();
+   // DBGF(debug, "t1=%"PRIu64, t1);
+   // DBGF(debug, "t1-t0=%"PRIu64, t1-t0);
+   DBGF(debug, "get_video_adapter_devices() took %jd microseconds", NANOS2MICROS(t1-t0));
 
    bool all_drm = check_video_adapters_list_implements_drm(devices);
+   uint64_t t2 = cur_realtime_nanosec();
+   // DBGF(debug, "t2=%"PRIu64, t2);
+   // DBGF(debug, "t2-t1=%"PRIu64, t2-t1);
+   DBGF(debug, "check_video_adapters_list_implements_drm() took %jd microseconds", NANOS2MICROS(t2-t1));
    g_ptr_array_free(devices, true);
 
-   DBGF(debug, "Done.  Returning %s", sbool(all_drm));
+   // DBGF(debug, "t2-t0=%"PRIu64, t2-t0);
+   DBGF(debug, "Done.  Returning %s.  elapsed=%jd microsec", sbool(all_drm), NANOS2MICROS(t2-t0));
    return all_drm;
 }
 
@@ -520,6 +428,252 @@ bool check_all_video_adapters_implement_drm() {
    return result;
 }
 #endif
+
+
+#ifndef DRM_MODE_CONNECTOR_USB
+// not defined in debian 11 (bullseye)
+#define DRM_MODE_CONNECTOR_USB      20
+#endif
+
+
+ Value_Name_Title drm_connector_type_table[] = {
+    VNT(DRM_MODE_CONNECTOR_Unknown     , "unknown"    ), //  0
+    VNT(DRM_MODE_CONNECTOR_VGA         , "VGA"        ), //  1
+    VNT(DRM_MODE_CONNECTOR_DVII        , "DVI-I"      ), //  2
+    VNT(DRM_MODE_CONNECTOR_DVID        , "DVI-D"      ), //  3
+    VNT(DRM_MODE_CONNECTOR_DVIA        , "DVI-A"      ), //  4
+    VNT(DRM_MODE_CONNECTOR_Composite   , "Composite"  ), //  5
+    VNT(DRM_MODE_CONNECTOR_SVIDEO      , "S-video"    ), //  6
+    VNT(DRM_MODE_CONNECTOR_LVDS        , "LVDS"       ), //  7
+    VNT(DRM_MODE_CONNECTOR_Component   , "Component"  ), //  8
+    VNT(DRM_MODE_CONNECTOR_9PinDIN     , "DIN"        ), //  9
+    VNT(DRM_MODE_CONNECTOR_DisplayPort , "DP"         ), // 10
+    VNT(DRM_MODE_CONNECTOR_HDMIA       , "HDMI"       ), // 11
+    VNT(DRM_MODE_CONNECTOR_HDMIB       , "HDMI-B"     ), // 12
+    VNT(DRM_MODE_CONNECTOR_TV          , "TV"         ), // 13
+    VNT(DRM_MODE_CONNECTOR_eDP         , "eDP"        ), // 14
+    VNT(DRM_MODE_CONNECTOR_VIRTUAL     , "Virtual"    ), // 15
+    VNT(DRM_MODE_CONNECTOR_DSI         , "DSI"        ), // 16  Display Signal Interface, used on Raspberry Pi
+    VNT(DRM_MODE_CONNECTOR_DPI         , "DPI"        ), // 17
+    VNT(DRM_MODE_CONNECTOR_WRITEBACK   , "WRITEBACK"  ), // 18
+    VNT(DRM_MODE_CONNECTOR_SPI         , "SPI"        ), // 19
+    VNT(DRM_MODE_CONNECTOR_USB         , "USB"        ), // 20
+    VNT_END
+ };
+
+
+ /** Returns the symbolic name of a connector type.
+  * @param val connector type
+  * @return symbolic name
+  */
+ char * drm_connector_type_name(Byte val) {
+    return vnt_name(drm_connector_type_table, val);
+ }
+
+
+ /** Returns the description string for a connector type.
+  * @param val connector type
+  * @return descriptive string
+  */
+ char * drm_connector_type_title(Byte val) {
+    return vnt_title(drm_connector_type_table, val);
+ }
+
+
+// For getting the DRM connector type from the DRM connector name
+
+   Value_Name_Title connector_type_lookup_table[] = {
+       VNT(DRM_MODE_CONNECTOR_Unknown     , "unknown"    ), //  0
+       VNT(DRM_MODE_CONNECTOR_VGA         , "VGA"        ), //  1
+       VNT(DRM_MODE_CONNECTOR_DVII        , "DVII"      ), //  2
+       VNT(DRM_MODE_CONNECTOR_DVID        , "DVID"      ), //  3
+       VNT(DRM_MODE_CONNECTOR_DVIA        , "DVIA"      ), //  4
+       VNT(DRM_MODE_CONNECTOR_Composite   , "Composite"  ), //  5
+       VNT(DRM_MODE_CONNECTOR_SVIDEO      , "Svideo"    ), //  6
+       VNT(DRM_MODE_CONNECTOR_LVDS        , "LVDS"       ), //  7
+       VNT(DRM_MODE_CONNECTOR_Component   , "Component"  ), //  8
+       VNT(DRM_MODE_CONNECTOR_9PinDIN     , "DIN"        ), //  9
+       VNT(DRM_MODE_CONNECTOR_DisplayPort , "DP"         ), // 10
+       VNT(DRM_MODE_CONNECTOR_HDMIA       , "HDMI"       ), // 11  alternate common name for HDMIA
+       VNT(DRM_MODE_CONNECTOR_HDMIA       , "HDMIA"       ), // 11
+       VNT(DRM_MODE_CONNECTOR_HDMIB       , "HDMIB"     ), // 12
+       VNT(DRM_MODE_CONNECTOR_TV          , "TV"         ), // 13
+       VNT(DRM_MODE_CONNECTOR_eDP         , "eDP"        ), // 14
+       VNT(DRM_MODE_CONNECTOR_VIRTUAL     , "Virtual"    ), // 15
+       VNT(DRM_MODE_CONNECTOR_DSI         , "DSI"        ), // 16  Display Signal Interface, used on Raspberry Pi
+       VNT(DRM_MODE_CONNECTOR_DPI         , "DPI"        ), // 17
+       VNT(DRM_MODE_CONNECTOR_WRITEBACK   , "WRITEBACK"  ), // 18
+       VNT(DRM_MODE_CONNECTOR_SPI         , "SPI"        ), // 19
+       VNT(DRM_MODE_CONNECTOR_USB         , "USB"        ), // 20
+       VNT_END
+    };
+
+
+int lookup_connector_type(const char * name) {
+   int val = vnt_find_id(
+         connector_type_lookup_table,
+         name,
+         true,     // search by title
+         true,     // ignore_case,
+         -1);      // default_id
+   return val;
+}
+
+
+char * dci_repr(Drm_Connector_Identifier dci) {
+   char * buf = g_strdup_printf("[dci:cardno=%d,connector_id=%d,connector_type=%d=%s,connector_type_id=%d]",
+         dci.cardno, dci.connector_id,
+         dci.connector_type, drm_connector_type_name(dci.connector_type),
+         dci.connector_type_id);
+   return buf;
+}
+
+
+/** Thread safe function that returns a brief string representation of a #Drm_Connector_Identifier.
+ *  The returned value is valid until the next call to this function on the current thread.
+ *
+ *
+ *  \param  dpath  pointer to ##DDCA_IO_Path
+ *  \return string representation of #DDCA_IO_Path
+ */
+char * dci_repr_t(Drm_Connector_Identifier dci) {
+   static GPrivate  dci_repr_key = G_PRIVATE_INIT(g_free);
+
+   char * repr = dci_repr(dci);
+   char * buf = get_thread_fixed_buffer(&dci_repr_key, 100);
+   g_snprintf(buf, 100, "%s", repr);
+   free(repr);
+
+   return buf;
+}
+
+
+bool dci_eq(Drm_Connector_Identifier dci1, Drm_Connector_Identifier dci2) {
+   bool result = false;
+   if (dci1.connector_id > 0 && dci1.connector_id == dci2.connector_id) {
+      result = true;
+   }
+   else
+      result = dci1.cardno            == dci2.cardno &&
+               dci1.connector_type    == dci2.connector_type &&
+               dci1.connector_type_id == dci2.connector_type_id;
+   return result;
+}
+
+
+/** Compares 2 Drm_Connector_Identifier values. */
+
+int dci_cmp(Drm_Connector_Identifier dci1, Drm_Connector_Identifier dci2) {
+   int result = 0;
+   if (dci1.cardno < dci2.cardno)
+      result = -1;
+   else if (dci1.cardno > dci2.cardno)
+      result = 1;
+   else {
+      if (dci1.connector_type < dci2.connector_type)
+         result = -1;
+      else if (dci1.connector_type > dci2.connector_type)
+         result = 1;
+      else {
+         if (dci1.connector_type_id < dci2.connector_type_id)
+            result = -1;
+         else if (dci1.connector_type_id > dci2.connector_type_id)
+            result = 1;
+         else
+            result = 0;
+      }
+   }
+   return result;
+}
+
+
+/** Compare drm connector names so that e.g. card1-DP-10 comes
+ *  after card1-DP-2, not before.
+ */
+int sys_drm_connector_name_cmp0(const char * s1, const char * s2) {
+   int result = 0;
+
+   // do something "reasonable" for pathological cases
+   if (!s1 && s2)
+      result = -1;
+   else if (!s1 && !s2)
+      result = 0;
+   else if (s1 && !s2)
+      result = 1;
+
+   else {      // normal case
+      Drm_Connector_Identifier dci1 = parse_sys_drm_connector_name(s1);
+      Drm_Connector_Identifier dci2 = parse_sys_drm_connector_name(s2);
+      result = dci_cmp(dci1, dci2);
+   }
+
+   return result;
+}
+
+
+/** QSort style comparison function for sorting drm connector names.
+ */
+int sys_drm_connector_name_cmp(gconstpointer connector_name1, gconstpointer connector_name2) {
+   bool debug = false;
+
+   int result = 0;
+   char * s1 = (connector_name1) ? *(char**)connector_name1 : NULL;
+   char * s2 = (connector_name2) ? *(char**)connector_name2 : NULL;
+   DBGF(debug, "s1=%p->%s, s2=%p->%s", s1, s1, s2, s2);
+
+   result = sys_drm_connector_name_cmp0(s1, s2);
+
+   DBGF(debug, "Returning: %d", result);
+   return result;
+}
+
+
+Drm_Connector_Identifier parse_sys_drm_connector_name(const char * drm_connector) {
+   bool debug = false;
+   DBGF(debug, "Starting. drm_connector = |%s|", drm_connector);
+   Drm_Connector_Identifier result = {-1,-1,-1,-1};
+   static const char * drm_connector_pattern = "^card([0-9])[-](.*)[-]([0-9]+)";
+
+   regmatch_t  matches[4];
+
+   bool ok =  compile_and_eval_regex_with_matches(
+         drm_connector_pattern,
+         drm_connector,
+         4,   //       max_matches,
+         matches);
+
+   if (ok) {
+      // for (int kk = 0; kk < 4; kk++) {
+      //    rpt_vstring(1, "match %d, substring start=%d, end=%d", kk, matches[kk].rm_so, matches[kk].rm_eo);
+      // }
+      char * cardno_s = substr(drm_connector, matches[1].rm_so, matches[1].rm_eo - matches[1].rm_so);
+      char * connector_type = substr(drm_connector, matches[2].rm_so, matches[2].rm_eo - matches[2].rm_so);
+      char * connector_type_id_s = substr(drm_connector, matches[3].rm_so, matches[3].rm_eo - matches[3].rm_so);
+      // DBGF(debug, "cardno_s=|%s|", cardno_s);
+      // DBGF(debug, "connector_type=|%s|", connector_type);
+      // DBGF(debug, "connector_type_id_s=|%s|", connector_type_id_s);
+
+      ok = str_to_int(cardno_s, &result.cardno, 10);
+      assert(ok);
+      ok = str_to_int(connector_type_id_s, &result.connector_type_id, 10);
+      assert(ok);
+      // DBGF(debug, "result.cardno: %d", result.cardno);
+      // DBGF(debug, "connector_type_id: %d", result.connector_type_id);
+
+      result.connector_type = lookup_connector_type(connector_type);
+
+      free(connector_type);
+      free(cardno_s);
+      free(connector_type_id_s);
+   }
+
+   if (debug) {
+      char * s = dci_repr(result);
+      DBG("Done.     Returning: %s", s);
+      free(s);
+   }
+   return result;
+}
 
 
 

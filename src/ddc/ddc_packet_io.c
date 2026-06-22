@@ -4,7 +4,7 @@
  *  or the ADL API, as appropriate.  Handles I2C bus retry.
  */
 
-// Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 // N. ddc_open_display() and ddc_close_display() handle case USB, but the
@@ -14,6 +14,7 @@
 #include <config.h>
 
 #include <assert.h>
+#include <base/display_lock.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
@@ -38,15 +39,18 @@
 #include "base/displays.h"
 #include "base/dsa2.h"
 #include "base/execution_stats.h"
+#include "base/i2c_bus_base.h"
 #include "base/parms.h"
 #include "base/rtti.h"
+#include "base/sleep.h"
 #include "base/status_code_mgt.h"
 #include "base/tuned_sleep.h"
 #include "base/per_display_data.h"
 
+#include "sysfs/sysfs_base.h"
+#include "sysfs/sysfs_dpms.h"
+
 #include "i2c/i2c_bus_core.h"
-#include "i2c/i2c_display_lock.h"
-#include "i2c/i2c_dpms.h"
 #include "i2c/i2c_strategy_dispatcher.h"
 
 #ifdef ENABLE_USB
@@ -109,14 +113,15 @@ ddc_is_valid_display_handle(Display_Handle * dh) {
 }
 #endif
 
-
+#ifdef OLD
 DDCA_Status
 ddc_validate_display_handle(Display_Handle * dh) {
    bool debug = false;
    DBGTRC_STARTING(debug, TRACE_GROUP, "dh=%p", dh);
    assert(open_displays);
 
-   DDCA_Status result = ddc_validate_display_ref(dh->dref, /*basic_only*/ false, /*test_asleep*/ true);
+   // DDCA_Status result = ddc_validate_display_ref(dh->dref, /*basic_only*/ false, /*test_asleep*/ true);
+   DDCA_Status result = ddc_validate_display_ref2(dh->dref, DREF_VALIDATE_EDID|DREF_VALIDATE_AWAKE);
    if (result == DDCRC_OK) {
       g_mutex_lock (&open_displays_mutex);
       if (!g_hash_table_contains(open_displays, dh) )
@@ -127,7 +132,31 @@ ddc_validate_display_handle(Display_Handle * dh) {
    DBGTRC_RET_DDCRC(debug, TRACE_GROUP, result, "dh=%s", dh_repr(dh));
    return result;
 }
+#endif
 
+DDCA_Status
+ddc_validate_display_handle2(Display_Handle * dh) {
+   bool debug = false;
+   DBGTRC_STARTING(debug, TRACE_GROUP, "dh=%p", dh);
+   assert(open_displays);
+
+   DDCA_Status result = DDCRC_OK;
+   // DDCA_Status result = ddc_validate_display_ref2(dh->dref,  DREF_VALIDATE_EDID|DREF_VALIDATE_AWAKE);
+   // DDCA_Status result = ddc_validate_display_ref2(dh->dref,  DREF_VALIDATE_BASIC_ONLY);
+   if (dh->dref->flags & DREF_REMOVED) {
+      result = DDCRC_DISCONNECTED;
+   }
+
+   if (result == DDCRC_OK) {
+      g_mutex_lock (&open_displays_mutex);
+      if (!g_hash_table_contains(open_displays, dh) )
+         result = DDCRC_ARG;
+      g_mutex_unlock(&open_displays_mutex);
+   }
+
+   DBGTRC_RET_DDCRC(debug, TRACE_GROUP, result, "dh=%s", dh_repr(dh));
+   return result;
+}
 
 
 void ddc_dbgrpt_valid_display_handles(int depth) {
@@ -146,6 +175,12 @@ void ddc_dbgrpt_valid_display_handles(int depth) {
    }
    g_list_free(display_handles);
    g_mutex_unlock(&open_displays_mutex);
+}
+
+
+// TODO: generalize, move to more appropriate location
+static bool is_drm_conformant_driver(const char * driver_name) {
+   return streq(driver_name, "amdgpu") || streq(driver_name, "i915");
 }
 
 
@@ -174,21 +209,40 @@ ddc_open_display(
       Display_Handle** dh_loc)
 {
    bool debug = false;
-   DBGTRC_STARTING(debug, TRACE_GROUP, "Opening display %s, callopts=%s, dh_loc=%p",
-                      dref_repr_t(dref), interpret_call_options_t(callopts), dh_loc );
+   DBGTRC_STARTING(debug, TRACE_GROUP, "dref=%s, callopts=%s, dh_loc=%p",
+                      dref_reprx_t(dref), interpret_call_options_t(callopts), dh_loc );
    TRACED_ASSERT(dh_loc);
    // TRACED_ASSERT(1==5);    // for testing
 
    Display_Handle * dh = NULL;
    Error_Info * err = NULL;
    int fd = -1;
-  
-   // DBGTRC_NOPREFIX(false, DDCA_TRC_NONE, "driver_name: %s", dref->driver_name);
-   if (dref->drm_connector && strlen(dref->drm_connector) > 0) {
+
+   const char * driver_name = dref_get_i2c_driver(dref);
+   DBGTRC_NOPREFIX(false, DDCA_TRC_NONE, "driver_name: %s", driver_name);
+   if (driver_name && is_drm_conformant_driver(driver_name) &&
+       dref->drm_connector &&
+       strlen(dref->drm_connector) > 0)
+   {
+      possibly_write_detect_to_status_by_dref(dref);
       char * status;
+      int tryct = 0;
+   retry_status:
       RPT_ATTR_TEXT(-1, &status, "/sys/class/drm", dref->drm_connector, "status");
-      if (streq(status, "disconnected"))
+      if (streq(status, "disconnected")) {
+         if (tryct == 0) {
+            free(status);
+            // DBGTRC_NOPREFIX(debug, TRACE_GROUP, "status == disconnected, sleeping 1 sec and retrying");
+            DW_SLEEP_MILLIS(1000, "Delay before rechecking attribute status");
+            tryct++;
+            goto retry_status;
+         }
+         DBGTRC_NOPREFIX(debug, TRACE_GROUP,
+               "%s still disconnected after 1 second delay and retry", dref_reprx_t(dref));
+         SYSLOG2(DDCA_SYSLOG_WARNING,
+               "%s still disconnected after 1 second delay and retry", dref_reprx_t(dref));
          err = ERRINFO_NEW(DDCRC_DISCONNECTED, "Display disconnected");
+      }
       free(status);
       if (err)
          goto bye;
@@ -273,9 +327,11 @@ ddc_open_display(
    if (!err) {
       assert(dh->dref->pedid);
       dref->flags |= DREF_OPEN;
-      // protect with lock?
       TRACED_ASSERT(open_displays);
+      DBGTRC_NOPREFIX(debug, DDCA_TRC_NONE, "Adding dh=%s to open_displays hash table", dh_repr_p(dh));
+      g_mutex_lock (&open_displays_mutex);
       g_hash_table_add(open_displays, dh);
+      g_mutex_unlock(&open_displays_mutex);
    }
    else {
 #ifdef NO
@@ -294,7 +350,7 @@ bye:
    *dh_loc = dh;
    TRACED_ASSERT_IFF( !err, *dh_loc );
    // dbgrpt_distinct_display_descriptors(0);
-   DBGTRC_RET_ERRINFO(debug, TRACE_GROUP, err, "*dh_loc=%s", dh_repr(*dh_loc));
+   DBGTRC_RET_ERRINFO(debug, TRACE_GROUP, err, "*dh_loc=%s", dh_repr_p(*dh_loc));
    return err;
 }
 
@@ -311,7 +367,7 @@ Error_Info *
 ddc_close_display(Display_Handle * dh) {
    bool debug = false;
    DBGTRC_STARTING(debug, TRACE_GROUP, "dh=%s, dref=%s, fd=%d, dpath=%s",
-              dh_repr(dh), dref_repr_t(dh->dref), dh->fd, dpath_short_name_t(&dh->dref->io_path));
+              dh_repr_p(dh), dref_repr_t(dh->dref), dh->fd, dpath_short_name_t(&dh->dref->io_path));
    Display_Ref * dref = dh->dref;
    Error_Info * err = NULL;
    Status_Errno rc = 0;
@@ -346,7 +402,7 @@ ddc_close_display(Display_Handle * dh) {
                char * msg = g_strdup_printf("usb_close_bus returned %d, errno=%s",
                                             rc, psc_desc(errno) );
                MSG_W_SYSLOG(DDCA_SYSLOG_ERROR, "%s", msg);
-               err = ERRINFO_NEW(rc, msg);
+               err = ERRINFO_NEW(rc, "%s", msg);
                free(msg);
                COUNT_STATUS_CODE(rc);
             }
@@ -371,7 +427,11 @@ ddc_close_display(Display_Handle * dh) {
    }
 #endif
    assert(open_displays);
+   g_mutex_lock (&open_displays_mutex);
+   DBGTRC_NOPREFIX(debug, DDCA_TRC_NONE, "Removing dh=%s from open_displays hash table of size %d",
+         dh_repr_p(dh), g_hash_table_size(open_displays) );
    g_hash_table_remove(open_displays, dh);
+   g_mutex_unlock (&open_displays_mutex);
 
    free_display_handle(dh);
    DBGTRC_RET_ERRINFO(debug, TRACE_GROUP, err, "dref=%s", dref_repr_t(dref));
@@ -379,7 +439,7 @@ ddc_close_display(Display_Handle * dh) {
 }
 
 
-// Handles common case where ddc_close_display()'s return value is ignored
+// Handles common case where the return value of ddc_close_display is ignored
 void ddc_close_display_wo_return(Display_Handle * dh) {
    Error_Info * err = ddc_close_display(dh);
    if (err) {
@@ -650,6 +710,7 @@ ddc_write_read_with_retry(
    int  ddcrc_null_response_ct = 0;
    int  max_tries = try_data_get_maxtries2(WRITE_READ_TRIES_OP);
    int  ddcrc_null_response_max = 3;
+   Error_Info * master_error = NULL;
    DBGTRC_NOPREFIX(debug, DDCA_TRC_NONE,"ddcrc_null_response_max=%d, read_bytewise=%s",
                                         ddcrc_null_response_max, sbool(read_bytewise));
    Error_Info * try_errors[MAX_MAX_TRIES] = {NULL};
@@ -665,7 +726,6 @@ ddc_write_read_with_retry(
          tryctr, max_tries, psc_name_code(psc), sbool(retryable),
          sbool(read_bytewise), pdd_get_adjusted_sleep_multiplier(pdd) );
 
-
       Error_Info * cur_excp = ddc_write_read(
                 dh,
                 request_packet_ptr,
@@ -675,6 +735,7 @@ ddc_write_read_with_retry(
                 expected_subtype,
                 response_packet_ptr_loc);
 
+      ASSERT_IFF(!cur_excp, *response_packet_ptr_loc);
       // TESTCASES:
       // if (tryctr < 2)
       //    cur_excp = ERRINFO_NEW(DDCRC_NULL_RESPONSE, "dummy");
@@ -723,7 +784,7 @@ ddc_write_read_with_retry(
                   if (!dh->testing_unsupported_feature_active) {
                      bool may_mean_unsupported_feature =
                            (expected_response_type == DDC_PACKET_TYPE_QUERY_VCP_RESPONSE &&
-                            dh->dref->flags & DREF_DDC_USES_NULL_RESPONSE_FOR_UNSUPPORTED) ||
+                            (dh->dref->flags & DREF_DDC_USES_NULL_RESPONSE_FOR_UNSUPPORTED)) ||
                            expected_response_type == DDC_PACKET_TYPE_TABLE_READ_RESPONSE;
                      if (may_mean_unsupported_feature) {
                         adjust_remaining_tries_for_null = true;
@@ -775,9 +836,11 @@ ddc_write_read_with_retry(
          if (psc == -EIO || psc == -ENXIO) {
             Error_Info * err = i2c_check_open_bus_alive(dh) ;
             if (err) {
-               psc = err->status_code;
-               retryable = false;
-               errinfo_free(err);
+               // psc = err->status_code;
+               // retryable = false;
+               // errinfo_free(err);
+               master_error = err;
+               goto bye;
             }
          }
 
@@ -840,8 +903,6 @@ ddc_write_read_with_retry(
                    errct, s);
    free(s);
 
-   Error_Info * ddc_excp = NULL;
-
    if (psc < 0) {
       // int last_try_index = tryctr-1;
       DBGTRC_NOPREFIX(debug, TRACE_GROUP,
@@ -860,7 +921,7 @@ ddc_write_read_with_retry(
          psc = DDCRC_ALL_RESPONSES_NULL;
       }
 
-      ddc_excp = errinfo_new_with_causes(psc, errors_found, errct, __func__, NULL);
+      master_error = errinfo_new_with_causes(psc, errors_found, errct, __func__, NULL);
 
       if (psc != try_errors[tryctr-1]->status_code)
          COUNT_STATUS_CODE(psc);     // new status code, count it
@@ -873,10 +934,11 @@ ddc_write_read_with_retry(
 
    try_data_record_tries2(dh, WRITE_READ_TRIES_OP, psc, tryctr);
 
-
-   DBGTRC_DONE(debug, TRACE_GROUP, "Total Tries (tryctr): %d. Returning: %s",
-                                   tryctr, errinfo_summary(ddc_excp));
-   return ddc_excp;
+bye:
+   DBGTRC_DONE(debug, TRACE_GROUP, "Total Tries (tryctr): %d. *response_packet_pointer_loc=%p,  Returning: %s",
+                                   tryctr, *response_packet_ptr_loc, errinfo_summary(master_error));
+   ASSERT_IFF(!master_error, *response_packet_ptr_loc);
+   return master_error;
 }
 
 
@@ -1047,7 +1109,7 @@ init_ddc_packet_io_func_name_table() {
    RTTI_ADD_FUNC(ddc_write_read_with_retry);
    RTTI_ADD_FUNC(ddc_write_only);
    RTTI_ADD_FUNC(ddc_write_only_with_retry);
-   RTTI_ADD_FUNC(ddc_validate_display_handle);
+   RTTI_ADD_FUNC(ddc_validate_display_handle2);
 }
 
 

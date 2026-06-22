@@ -106,15 +106,16 @@ CONFIG_CLEAN_FILES =
 CONFIG_CLEAN_VPATH_FILES =
 LTLIBRARIES = $(noinst_LTLIBRARIES)
 libbase_la_LIBADD =
-am_libbase_la_OBJECTS = base_services.lo build_info.lo core.lo \
-	core_per_thread_settings.lo ddc_command_codes.lo ddc_errno.lo \
-	ddc_packets.lo dynamic_features.lo displays.lo dsa2.lo \
-	execution_stats.lo feature_lists.lo feature_metadata.lo \
-	feature_set_ref.lo i2c_bus_base.lo linux_errno.lo \
-	monitor_model_key.lo monitor_quirks.lo per_thread_data.lo \
-	rtti.lo sleep.lo stats.lo trace_control.lo tuned_sleep.lo \
-	status_code_mgt.lo vcp_version.lo per_display_data.lo \
-	display_retry_data.lo
+am_libbase_la_OBJECTS = base_services.lo build_info.lo \
+	build_timestamp.lo core.lo core_per_thread_settings.lo \
+	ddc_command_codes.lo ddc_errno.lo ddc_packets.lo \
+	display_lock.lo displays.lo drm_connector_state.lo dsa2.lo \
+	dynamic_features.lo execution_stats.lo feature_lists.lo \
+	feature_metadata.lo feature_set_ref.lo flock.lo \
+	i2c_bus_base.lo linux_errno.lo monitor_model_key.lo \
+	monitor_quirks.lo per_thread_data.lo rtti.lo sleep.lo stats.lo \
+	trace_control.lo tuned_sleep.lo status_code_mgt.lo \
+	vcp_version.lo per_display_data.lo display_retry_data.lo
 nodist_libbase_la_OBJECTS =
 libbase_la_OBJECTS = $(am_libbase_la_OBJECTS) \
 	$(nodist_libbase_la_OBJECTS)
@@ -138,16 +139,18 @@ DEFAULT_INCLUDES = -I.@am__isrc@ -I$(top_builddir)
 depcomp = $(SHELL) $(top_srcdir)/config/depcomp
 am__maybe_remake_depfiles = depfiles
 am__depfiles_remade = ./$(DEPDIR)/base_services.Plo \
-	./$(DEPDIR)/build_info.Plo ./$(DEPDIR)/core.Plo \
-	./$(DEPDIR)/core_per_thread_settings.Plo \
+	./$(DEPDIR)/build_info.Plo ./$(DEPDIR)/build_timestamp.Plo \
+	./$(DEPDIR)/core.Plo ./$(DEPDIR)/core_per_thread_settings.Plo \
 	./$(DEPDIR)/ddc_command_codes.Plo ./$(DEPDIR)/ddc_errno.Plo \
-	./$(DEPDIR)/ddc_packets.Plo ./$(DEPDIR)/display_retry_data.Plo \
-	./$(DEPDIR)/displays.Plo ./$(DEPDIR)/dsa2.Plo \
+	./$(DEPDIR)/ddc_packets.Plo ./$(DEPDIR)/display_lock.Plo \
+	./$(DEPDIR)/display_retry_data.Plo ./$(DEPDIR)/displays.Plo \
+	./$(DEPDIR)/drm_connector_state.Plo ./$(DEPDIR)/dsa2.Plo \
 	./$(DEPDIR)/dynamic_features.Plo \
 	./$(DEPDIR)/execution_stats.Plo ./$(DEPDIR)/feature_lists.Plo \
 	./$(DEPDIR)/feature_metadata.Plo \
-	./$(DEPDIR)/feature_set_ref.Plo ./$(DEPDIR)/i2c_bus_base.Plo \
-	./$(DEPDIR)/linux_errno.Plo ./$(DEPDIR)/monitor_model_key.Plo \
+	./$(DEPDIR)/feature_set_ref.Plo ./$(DEPDIR)/flock.Plo \
+	./$(DEPDIR)/i2c_bus_base.Plo ./$(DEPDIR)/linux_errno.Plo \
+	./$(DEPDIR)/monitor_model_key.Plo \
 	./$(DEPDIR)/monitor_quirks.Plo \
 	./$(DEPDIR)/per_display_data.Plo \
 	./$(DEPDIR)/per_thread_data.Plo ./$(DEPDIR)/rtti.Plo \
@@ -250,6 +253,7 @@ ECHO_C = @ECHO_C@
 ECHO_N = @ECHO_N@
 ECHO_T = @ECHO_T@
 EGREP = @EGREP@
+ENABLE_BUILD_TIMESTAMP_FLAG = @ENABLE_BUILD_TIMESTAMP_FLAG@
 ENABLE_ENVCMDS_FLAG = @ENABLE_ENVCMDS_FLAG@
 ENABLE_SHARED_LIB_FLAG = @ENABLE_SHARED_LIB_FLAG@
 ENABLE_TARGETBSD_FLAG = @ENABLE_TARGETBSD_FLAG@
@@ -381,32 +385,46 @@ top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
 AM_CPPFLAGS = \
-  $(GLIB_CFLAGS)     \
+  $(LIBDRM_CFLAGS)    \
+  $(GLIB_CFLAGS)      \
   -I$(top_srcdir)/src \
   -I$(top_srcdir)/src/public
 
-AM_CFLAGS = $(AM_CFLAGS_STD) 
-CLEANFILES = \
-*expand
+AM_CFLAGS = $(AM_CFLAGS_STD)
 
+# Does not work to force recompilation
+# AM_MAKEFLAGS = -Wbuild_timestamp.c 
+CLEANFILES = \
+   *expand \
+   build_details.h
+
+
+# Use empty header file that is rebuilt on every execution to force recompilation of build_timestamp.h. 
+# See: https://stackoverflow.com/questions/54303270/how-to-execute-shell-commands-in-automake-makefile-am
+BUILT_SOURCES = build_details.h
 
 # Intermediate Library
 noinst_LTLIBRARIES = libbase.la
 libbase_la_SOURCES = \
 base_services.c           \
 build_info.c              \
+build_details.h           \
+build_timestamp.c         \
 core.c                    \
 core_per_thread_settings.c \
 ddc_command_codes.c       \
 ddc_errno.c               \
 ddc_packets.c             \
-dynamic_features.c        \
+display_lock.c            \
 displays.c                \
+drm_connector_state.c     \
 dsa2.c                    \
+dynamic_features.c        \
 execution_stats.c         \
 feature_lists.c           \
 feature_metadata.c        \
 feature_set_ref.c         \
+flock.c                   \
 i2c_bus_base.c            \
 linux_errno.c             \
 monitor_model_key.c       \
@@ -423,7 +441,8 @@ per_display_data.c        \
 display_retry_data.c
 
 nodist_libbase_la_SOURCES = adl_errors.h
-all: all-am
+all: $(BUILT_SOURCES)
+	$(MAKE) $(AM_MAKEFLAGS) all-am
 
 .SUFFIXES:
 .SUFFIXES: .c .lo .o .obj
@@ -479,19 +498,23 @@ distclean-compile:
 
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/base_services.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/build_info.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/build_timestamp.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/core.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/core_per_thread_settings.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ddc_command_codes.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ddc_errno.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ddc_packets.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/display_lock.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/display_retry_data.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/displays.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/drm_connector_state.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/dsa2.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/dynamic_features.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/execution_stats.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/feature_lists.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/feature_metadata.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/feature_set_ref.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/flock.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/i2c_bus_base.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/linux_errno.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/monitor_model_key.Plo@am__quote@ # am--include-marker
@@ -630,11 +653,14 @@ distdir-am: $(DISTFILES)
 	  top_distdir="$(top_distdir)" distdir="$(distdir)" \
 	  dist-hook
 check-am: all-am
-check: check-am
+check: $(BUILT_SOURCES)
+	$(MAKE) $(AM_MAKEFLAGS) check-am
 all-am: Makefile $(LTLIBRARIES)
 installdirs:
-install: install-am
-install-exec: install-exec-am
+install: $(BUILT_SOURCES)
+	$(MAKE) $(AM_MAKEFLAGS) install-am
+install-exec: $(BUILT_SOURCES)
+	$(MAKE) $(AM_MAKEFLAGS) install-exec-am
 install-data: install-data-am
 uninstall: uninstall-am
 
@@ -664,6 +690,7 @@ distclean-generic:
 maintainer-clean-generic:
 	@echo "This command is intended for maintainers to use"
 	@echo "it deletes files that may require special tools to rebuild."
+	-test -z "$(BUILT_SOURCES)" || rm -f $(BUILT_SOURCES)
 clean: clean-am
 
 clean-am: clean-generic clean-libtool clean-local \
@@ -672,19 +699,23 @@ clean-am: clean-generic clean-libtool clean-local \
 distclean: distclean-am
 		-rm -f ./$(DEPDIR)/base_services.Plo
 	-rm -f ./$(DEPDIR)/build_info.Plo
+	-rm -f ./$(DEPDIR)/build_timestamp.Plo
 	-rm -f ./$(DEPDIR)/core.Plo
 	-rm -f ./$(DEPDIR)/core_per_thread_settings.Plo
 	-rm -f ./$(DEPDIR)/ddc_command_codes.Plo
 	-rm -f ./$(DEPDIR)/ddc_errno.Plo
 	-rm -f ./$(DEPDIR)/ddc_packets.Plo
+	-rm -f ./$(DEPDIR)/display_lock.Plo
 	-rm -f ./$(DEPDIR)/display_retry_data.Plo
 	-rm -f ./$(DEPDIR)/displays.Plo
+	-rm -f ./$(DEPDIR)/drm_connector_state.Plo
 	-rm -f ./$(DEPDIR)/dsa2.Plo
 	-rm -f ./$(DEPDIR)/dynamic_features.Plo
 	-rm -f ./$(DEPDIR)/execution_stats.Plo
 	-rm -f ./$(DEPDIR)/feature_lists.Plo
 	-rm -f ./$(DEPDIR)/feature_metadata.Plo
 	-rm -f ./$(DEPDIR)/feature_set_ref.Plo
+	-rm -f ./$(DEPDIR)/flock.Plo
 	-rm -f ./$(DEPDIR)/i2c_bus_base.Plo
 	-rm -f ./$(DEPDIR)/linux_errno.Plo
 	-rm -f ./$(DEPDIR)/monitor_model_key.Plo
@@ -745,19 +776,23 @@ installcheck-am:
 maintainer-clean: maintainer-clean-am
 		-rm -f ./$(DEPDIR)/base_services.Plo
 	-rm -f ./$(DEPDIR)/build_info.Plo
+	-rm -f ./$(DEPDIR)/build_timestamp.Plo
 	-rm -f ./$(DEPDIR)/core.Plo
 	-rm -f ./$(DEPDIR)/core_per_thread_settings.Plo
 	-rm -f ./$(DEPDIR)/ddc_command_codes.Plo
 	-rm -f ./$(DEPDIR)/ddc_errno.Plo
 	-rm -f ./$(DEPDIR)/ddc_packets.Plo
+	-rm -f ./$(DEPDIR)/display_lock.Plo
 	-rm -f ./$(DEPDIR)/display_retry_data.Plo
 	-rm -f ./$(DEPDIR)/displays.Plo
+	-rm -f ./$(DEPDIR)/drm_connector_state.Plo
 	-rm -f ./$(DEPDIR)/dsa2.Plo
 	-rm -f ./$(DEPDIR)/dynamic_features.Plo
 	-rm -f ./$(DEPDIR)/execution_stats.Plo
 	-rm -f ./$(DEPDIR)/feature_lists.Plo
 	-rm -f ./$(DEPDIR)/feature_metadata.Plo
 	-rm -f ./$(DEPDIR)/feature_set_ref.Plo
+	-rm -f ./$(DEPDIR)/flock.Plo
 	-rm -f ./$(DEPDIR)/i2c_bus_base.Plo
 	-rm -f ./$(DEPDIR)/linux_errno.Plo
 	-rm -f ./$(DEPDIR)/monitor_model_key.Plo
@@ -789,7 +824,7 @@ ps-am:
 
 uninstall-am:
 
-.MAKE: install-am install-strip
+.MAKE: all check install install-am install-exec install-strip
 
 .PHONY: CTAGS GTAGS TAGS all all-am am--depfiles check check-am clean \
 	clean-generic clean-libtool clean-local \
@@ -809,6 +844,17 @@ uninstall-am:
 .PRECIOUS: Makefile
 
 
+# Fails. Under some circumstances $0 is null, so explicitly redirect to build_details.h instead
+# build_details.h:
+#	echo "// Dummy include file to force rebuilding built_timestamp.c" >$0
+
+build_details.h:
+	echo "// Dummy include file to force rebuilding built_timestamp.c" > build_details.h
+
+# all-local:
+#	@echo "(src/base/Makefile) all-local"
+#	rm -fv build_details.h
+
 clean-local:
 	@echo "(src/base/Makefile) clean-local"
 
@@ -821,7 +867,7 @@ distclean-local:
 dist-hook:
 	@echo "(src/base/Makefile) dist-hook"
 
-# Rename to "all=local" for development 
+# Rename all-local-disabled to "all-local" for development 
 all-local-disabled:
 	@echo ""
 	@echo "(src/base/Makefile:all-local) Variable values:"

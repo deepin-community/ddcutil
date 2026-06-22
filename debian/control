@@ -1,19 +1,21 @@
 Source: ddcutil
 Priority: optional
 Section: utils
-Maintainer: Sanford Rockowitz <rockowitz@minsoft.com>
-Build-Depends: debhelper (>= 13),
+Maintainer: Phil Wyett <philip.wyett@kathenas.org>
+Build-Depends: debhelper-compat (= 13),
                libdrm-dev,
-               libglib2.0-dev (>= 2.64),
-               libi2c-dev (>= 4.0),
+               libglib2.0-dev,
+               libi2c-dev,
                libjansson-dev,
                libudev-dev,
                libusb-1.0-0-dev,
                libxrandr-dev,
-               pkg-config
-Standards-Version: 4.6.2
+               pkgconf
+Standards-Version: 4.7.2
 Rules-Requires-Root: no
 Homepage: https://www.ddcutil.com
+Vcs-Git: https://salsa.debian.org/debian/ddcutil.git
+Vcs-Browser: https://salsa.debian.org/debian/ddcutil
 
 Package: ddcutil
 Architecture: any
@@ -22,7 +24,7 @@ Depends: ${shlibs:Depends},
          pci.ids,
          usb.ids,
          usbutils,
-         i2c-tools (>= 4.0)
+         i2c-tools
 Description: Control monitor settings - Standalone command line application
  ddcutil is used to query and change monitor settings.
  .
@@ -34,6 +36,7 @@ Description: Control monitor settings - Standalone command line application
 Package: libddcutil5
 Section: libs
 Architecture: any
+Multi-Arch: same
 Depends: ${shlibs:Depends},
          ${misc:Depends},
          pci.ids,
@@ -49,6 +52,7 @@ Description: Control monitor settings - shared library
 
 Package: libddcutil-dev
 Architecture: any
+Multi-Arch: same
 Section: libdevel
 Depends: ${misc:Depends},
          libddcutil5 (=${binary:Version})

@@ -1,7 +1,7 @@
 /** @file parsed_cmd.c
  */
 
-// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 /** \cond */
@@ -141,6 +141,10 @@ Parsed_Cmd *  new_parsed_cmd() {
 #endif
    if (DEFAULT_ENABLE_CACHED_CAPABILITIES)
       parsed_cmd->flags |= CMD_FLAG_ENABLE_CACHED_CAPABILITIES;
+
+   // parsed_cmd->watch_mode = Watch_Mode_Dynamic;
+   parsed_cmd->xevent_watch_loop_millisec = DEFAULT_XEVENT_WATCH_LOOP_MILLISEC;
+   parsed_cmd->poll_watch_loop_millisec   = DEFAULT_POLL_WATCH_LOOP_MILLISEC;
    return parsed_cmd;
 }
 
@@ -161,6 +165,7 @@ void free_parsed_cmd(Parsed_Cmd * parsed_cmd) {
       free(parsed_cmd->raw_command);
       free(parsed_cmd->failsim_control_fn);
       free(parsed_cmd->fref);
+      free(parsed_cmd->trace_destination);
       ntsa_free(parsed_cmd->traced_files, true);
       ntsa_free(parsed_cmd->traced_functions, true);
       ntsa_free(parsed_cmd->traced_calls, true);
@@ -190,7 +195,15 @@ dbgrpt_ntsa(int depth, char * title, gchar** values) {
 
 
 #define RPT_CMDFLAG(_desc, _flag, _depth) \
-   rpt_str(_desc, NULL, SBOOL(parsed_cmd->flags & _flag), _depth)
+     rpt_vstring(_depth, "%-50s       : %s", _desc,  SBOOL(parsed_cmd->flags & _flag));
+
+#ifdef OLD
+#define RPT_CMDFLAG(_desc, _flag, _depth) \
+  rpt_str(_desc, NULL, SBOOL(parsed_cmd->flags & _flag), _depth)
+#endif
+
+#define RPT_CMDFLAG2(_desc, _flag, _depth) \
+   rpt_str(_desc, NULL, SBOOL(parsed_cmd->flags2 & _flag), _depth)
 
 /** Dumps the #Parsed_Command data structure
  *  \param  parsed_cmd  pointer to instance
@@ -204,17 +217,17 @@ void dbgrpt_parsed_cmd(Parsed_Cmd * parsed_cmd, int depth) {
    if (parsed_cmd) {
       rpt_nl();
       rpt_label(depth, "General");
-      rpt_str("raw_command",       NULL, parsed_cmd->raw_command,        d1);
-      rpt_str("parser mode",       NULL, parser_mode_name(parsed_cmd->parser_mode), d1);
-      rpt_int_as_hex( "cmd_id",    NULL, parsed_cmd->cmd_id,             d1);
+      rpt_str("raw_command",       NULL, parsed_cmd->raw_command,                               d1);
+      rpt_str("parser mode",       NULL, parser_mode_name(parsed_cmd->parser_mode),             d1);
+      rpt_int_as_hex( "cmd_id",    NULL, parsed_cmd->cmd_id,                                    d1);
       rpt_int( "argct",       NULL,  parsed_cmd->argct, d1);
       int ndx = 0;
       for (ndx = 0; ndx < parsed_cmd->argct; ndx++) {
          printf("   argument %d:  %s\n", ndx, parsed_cmd->args[ndx]);
       }
-      rpt_str( "output_level",     NULL, output_level_name(parsed_cmd->output_level),   d1);
-      rpt_str ("MCCS version spec", NULL, format_vspec(parsed_cmd->mccs_vspec),                  d1);
-   // rpt_str ("MCCS version id",   NULL, vcp_version_id_name(parsed_cmd->mccs_version_id),      d1);
+      rpt_str( "output_level",     NULL, output_level_name(parsed_cmd->output_level),           d1);
+      rpt_str ("MCCS version spec", NULL, format_vspec(parsed_cmd->mccs_vspec),                 d1);
+   // rpt_str ("MCCS version id",   NULL, vcp_version_id_name(parsed_cmd->mccs_version_id),     d1);
 
       rpt_nl();
       rpt_label(depth, "Commands");
@@ -229,33 +242,42 @@ void dbgrpt_parsed_cmd(Parsed_Cmd * parsed_cmd, int depth) {
 
       rpt_nl();
       rpt_label(depth, "Behavior modification");
-      RPT_CMDFLAG("i2c source addr set", CMD_FLAG_EXPLICIT_I2C_SOURCE_ADDR, d1);
+      RPT_CMDFLAG("i2c source addr set", CMD_FLAG_EXPLICIT_I2C_SOURCE_ADDR,                     d1);
       if (parsed_cmd->flags & CMD_FLAG_EXPLICIT_I2C_SOURCE_ADDR)
          rpt_vstring(d2, "explicit_i2c_source_addr:    0x%02x", parsed_cmd->explicit_i2c_source_addr);
-      rpt_int( "edid_read_size",   NULL, parsed_cmd->edid_read_size,                d1);
+      rpt_int( "edid_read_size",   NULL, parsed_cmd->edid_read_size,                            d1);
 
-      rpt_bool("force_slave_addr", NULL, parsed_cmd->flags & CMD_FLAG_FORCE_SLAVE_ADDR, d1);
-      rpt_bool("verify_setvcp",    NULL, parsed_cmd->flags & CMD_FLAG_VERIFY,           d1);
-//    rpt_bool("async",             NULL, parsed_cmd->flags & CMD_FLAG_ASYNC,                    d1);
-      rpt_bool("force",             NULL, parsed_cmd->flags & CMD_FLAG_FORCE_UNRECOGNIZED_VCP_CODE,                    d1);
+      rpt_bool("force_slave_addr", NULL, parsed_cmd->flags & CMD_FLAG_FORCE_SLAVE_ADDR,         d1);
+      rpt_bool("verify_setvcp",    NULL, parsed_cmd->flags & CMD_FLAG_VERIFY,                   d1);
+//    rpt_bool("async",            NULL, parsed_cmd->flags & CMD_FLAG_ASYNC,                    d1);
+      rpt_bool("force",            NULL, parsed_cmd->flags & CMD_FLAG_FORCE_UNRECOGNIZED_VCP_CODE,                    d1);
 
-      rpt_bool("enable udf",        NULL, parsed_cmd->flags & CMD_FLAG_ENABLE_UDF,               d1);
-      rpt_bool("x52 not fifo:",     NULL, parsed_cmd->flags & CMD_FLAG_X52_NO_FIFO,             d1);
-        rpt_bool("i2c_io_fileio",    NULL, parsed_cmd->flags & CMD_FLAG_I2C_IO_FILEIO,d1);
-        rpt_bool("i2c_io_ioctl",     NULL, parsed_cmd->flags & CMD_FLAG_I2C_IO_IOCTL, d1);
-        RPT_CMDFLAG("heuristicly detect unsupported features", CMD_FLAG_HEURISTIC_UNSUPPORTED_FEATURES, d1);
-        rpt_bool("quick",             NULL, parsed_cmd->flags & CMD_FLAG_QUICK,                   d1);
+      rpt_bool("enable udf",       NULL, parsed_cmd->flags & CMD_FLAG_ENABLE_UDF,               d1);
+      rpt_bool("x52 not fifo:",    NULL, parsed_cmd->flags & CMD_FLAG_X52_NO_FIFO,              d1);
+      rpt_bool("i2c_io_fileio",    NULL, parsed_cmd->flags & CMD_FLAG_I2C_IO_FILEIO,d1);
+      rpt_bool("i2c_io_ioctl",     NULL, parsed_cmd->flags & CMD_FLAG_I2C_IO_IOCTL, d1);
+      rpt_bool("enable traced function stack",
+                                   NULL, parsed_cmd->flags & CMD_FLAG_ENABLE_TRACED_FUNCTION_STACK, d1);
+      //RPT_CMDFLAG("heuristically detect unsupported features", CMD_FLAG_HEURISTIC_UNSUPPORTED_FEATURES, d1);
+      rpt_vstring(d1, "%s: %s", "heuristically detect unsupported features                ",
+                                          SBOOL(parsed_cmd->flags& CMD_FLAG_HEURISTIC_UNSUPPORTED_FEATURES));
+      rpt_bool("quick",            NULL, parsed_cmd->flags & CMD_FLAG_QUICK,                    d1);
 
-        RPT_CMDFLAG("watch hotplug events", CMD_FLAG_WATCH_DISPLAY_HOTPLUG_EVENTS, d1);
+      RPT_CMDFLAG("watch hotplug events", CMD_FLAG_WATCH_DISPLAY_EVENTS,                d1);
+      rpt_vstring(d1, "watch_mode                                               : %s",
+            watch_mode_name(parsed_cmd->watch_mode));
+      rpt_int( "xevent_watch_loop_millisec",     NULL,  parsed_cmd->xevent_watch_loop_millisec, d1);
+      rpt_int( "poll_watch_loop_millisec",       NULL,  parsed_cmd->poll_watch_loop_millisec,   d1);
+      RPT_CMDFLAG("disable API",          CMD_FLAG_DISABLE_API,                                 d1);
 
       rpt_nl();
       rpt_label(depth, "Display Selection");
 #ifdef ENABLE_USB
-      rpt_bool("enable usb",        NULL, parsed_cmd->flags & CMD_FLAG_ENABLE_USB,               d1);
+      rpt_bool("enable usb",        NULL, parsed_cmd->flags & CMD_FLAG_ENABLE_USB,              d1);
 #endif
-      rpt_structure_loc("pdid", parsed_cmd->pdid,                        d1);
+      rpt_structure_loc("pdid", parsed_cmd->pdid,                                               d1);
       if (parsed_cmd->pdid)
-          dbgrpt_display_identifier(parsed_cmd->pdid,                    d2);
+          dbgrpt_display_identifier(parsed_cmd->pdid,                                           d2);
       char buf2[BIT_SET_32_MAX+1];
       bs32_to_bitstring(parsed_cmd->ignored_hiddevs, buf2, BIT_SET_32_MAX+1);
       rpt_vstring(d1, "ignored_hiddevs                                          : 0x%08x = |%s|",
@@ -270,14 +292,14 @@ void dbgrpt_parsed_cmd(Parsed_Cmd * parsed_cmd, int depth) {
 
       rpt_nl();
       rpt_label(depth, "Feature Selection");
-      rpt_structure_loc("fref", parsed_cmd->fref,                        d1);
+      rpt_structure_loc("fref", parsed_cmd->fref,                                               d1);
       if (parsed_cmd->fref)
-          dbgrpt_feature_set_ref(parsed_cmd->fref,                       d2);
-      rpt_bool("notable",           NULL, parsed_cmd->flags & CMD_FLAG_NOTABLE,                  d1);
-      rpt_bool("rw only",           NULL, parsed_cmd->flags & CMD_FLAG_RW_ONLY,                  d1);
-      rpt_bool("ro only",           NULL, parsed_cmd->flags & CMD_FLAG_RO_ONLY,                  d1);
-      rpt_bool("wo only",           NULL, parsed_cmd->flags & CMD_FLAG_WO_ONLY,                  d1);
-      rpt_bool("show unsupported",  NULL, parsed_cmd->flags & CMD_FLAG_SHOW_UNSUPPORTED,         d1);
+          dbgrpt_feature_set_ref(parsed_cmd->fref,                                              d2);
+      rpt_bool("notable",           NULL, parsed_cmd->flags & CMD_FLAG_NOTABLE,                 d1);
+      rpt_bool("rw only",           NULL, parsed_cmd->flags & CMD_FLAG_RW_ONLY,                 d1);
+      rpt_bool("ro only",           NULL, parsed_cmd->flags & CMD_FLAG_RO_ONLY,                 d1);
+      rpt_bool("wo only",           NULL, parsed_cmd->flags & CMD_FLAG_WO_ONLY,                 d1);
+      rpt_bool("show unsupported",  NULL, parsed_cmd->flags & CMD_FLAG_SHOW_UNSUPPORTED,        d1);
 
 #ifdef REF
 
@@ -318,59 +340,66 @@ void dbgrpt_parsed_cmd(Parsed_Cmd * parsed_cmd, int depth) {
       rpt_int("i2c_bus_check_async_min", NULL, parsed_cmd->i2c_bus_check_async_min,             d1);
       rpt_int("ddc_check_async_min", NULL, parsed_cmd->ddc_check_async_min,                     d1);
 
+      dbgrpt_ntsa(d1, "ddc_disabled", parsed_cmd->ddc_disabled);
 
-      rpt_bool("verbose stats:", NULL, parsed_cmd->flags & CMD_FLAG_VERBOSE_STATS,      d1);
+      rpt_bool("verbose stats:", NULL, parsed_cmd->flags & CMD_FLAG_VERBOSE_STATS,              d1);
       RPT_CMDFLAG("internal stats", CMD_FLAG_INTERNAL_STATS, d1);
 
       rpt_int_as_hex(
-               "stats",            NULL, parsed_cmd->stats_types,                       d1);
-      rpt_bool("stats to syslog only", NULL, parsed_cmd->flags & CMD_FLAG_STATS_TO_SYSLOG, d1);
+               "stats",            NULL, parsed_cmd->stats_types,                               d1);
+      rpt_bool("stats to syslog only", NULL, parsed_cmd->flags & CMD_FLAG_STATS_TO_SYSLOG,      d1);
       char buf[30];
       g_snprintf(buf,30, "%d,%d,%d", parsed_cmd->max_tries[0], parsed_cmd->max_tries[1],
                                         parsed_cmd->max_tries[2] );
-      rpt_str("max_retries",        NULL, buf,                                                   d1);
+      rpt_str("max_retries",        NULL, buf,                                                  d1);
       rpt_bool("profile API",       NULL, parsed_cmd->flags & CMD_FLAG_PROFILE_API,             d1);
 
       rpt_nl();
       rpt_label(depth, "Tracing and Logging");
-      rpt_bool("timestamp_trace",  NULL, parsed_cmd->flags & CMD_FLAG_TIMESTAMP_TRACE,  d1);
+      rpt_bool("timestamp_trace",  NULL, parsed_cmd->flags & CMD_FLAG_TIMESTAMP_TRACE,          d1);
       rpt_int_as_hex(
-               "traced_groups",    NULL,  parsed_cmd->traced_groups,                    d1);
+               "traced_groups",    NULL,  parsed_cmd->traced_groups,                            d1);
       dbgrpt_ntsa(d1, "traced_functions", parsed_cmd->traced_functions);
       dbgrpt_ntsa(d1, "traced_files", parsed_cmd->traced_files);
       dbgrpt_ntsa(d1, "traced_api_calls", parsed_cmd->traced_api_calls);
       dbgrpt_ntsa(d1, "traced_calls", parsed_cmd->traced_calls);
-      rpt_str ("library trace file", NULL, parsed_cmd->trace_destination,           d1);
+      rpt_str ("library trace file", NULL, parsed_cmd->trace_destination,                       d1);
       rpt_bool("trace to syslog only", NULL, parsed_cmd->flags & CMD_FLAG_TRACE_TO_SYSLOG_ONLY, d1);
 
-      rpt_str("syslog_level",      NULL, syslog_level_name(parsed_cmd->syslog_level), d1);
-      rpt_bool("timestamp prefix:", NULL, parsed_cmd->flags & CMD_FLAG_TIMESTAMP_TRACE,          d1);
-      rpt_bool("walltime prefix:",  NULL, parsed_cmd->flags & CMD_FLAG_WALLTIME_TRACE,           d1);
-      rpt_bool("thread id prefix:", NULL, parsed_cmd->flags & CMD_FLAG_THREAD_ID_TRACE,          d1);
-      rpt_bool("process id prefix:",NULL, parsed_cmd->flags & CMD_FLAG_PROCESS_ID_TRACE,         d1);
+      rpt_str("syslog_level",       NULL, syslog_level_name(parsed_cmd->syslog_level),          d1);
+      RPT_CMDFLAG("timestamp prefix",        CMD_FLAG_TIMESTAMP_TRACE,         d1);
+      RPT_CMDFLAG("walltime prefix",         CMD_FLAG_WALLTIME_TRACE,          d1);
+      RPT_CMDFLAG("thread id prefix",        CMD_FLAG_THREAD_ID_TRACE,         d1);
+      RPT_CMDFLAG("process id prefix",       CMD_FLAG_PROCESS_ID_TRACE,        d1);
+      RPT_CMDFLAG("process id prefix",       CMD_FLAG_PROCESS_ID_TRACE,        d1);
+      RPT_CMDFLAG("enable traced function stack", CMD_FLAG_ENABLE_TRACED_FUNCTION_STACK,        d1);
+      RPT_CMDFLAG("traced function stack errors fatal", CMD_FLAG_TRACED_FUNCTION_STACK_ERRORS_FATAL, d1);
 
       rpt_nl();
       rpt_label(depth, "Other Development");
       rpt_bool("enable_failure_simulation", NULL, parsed_cmd->flags & CMD_FLAG_ENABLE_FAILSIM,   d1);
       rpt_str("failsim_control_fn", NULL, parsed_cmd->failsim_control_fn,                        d1);
-      rpt_bool("mock data",         NULL, parsed_cmd->flags & CMD_FLAG_MOCK,                    d1);
+      rpt_bool("mock data",         NULL, parsed_cmd->flags & CMD_FLAG_MOCK,                     d1);
       RPT_CMDFLAG("simulate Null Msg indicates unsupported", CMD_FLAG_NULL_MSG_INDICATES_UNSUPPORTED_FEATURE, d1);
-      RPT_CMDFLAG("skip ddc checks",      CMD_FLAG_SKIP_DDC_CHECKS, d1);
-      RPT_CMDFLAG("async I2C bus checks", CMD_FLAG_ASYNC_I2C_CHECK, d1);
-      RPT_CMDFLAG("enable_flock",         CMD_FLAG_FLOCK, d1);
+   // rpt_vstring(d1, "%s: %s", "simulate Null Msg indicates unsupported                  ",
+   //                                   SBOOL(parsed_cmd->flags& CMD_FLAG_NULL_MSG_INDICATES_UNSUPPORTED_FEATURE));
+      RPT_CMDFLAG("skip ddc checks",         CMD_FLAG_SKIP_DDC_CHECKS,                          d1);
+      RPT_CMDFLAG("async I2C bus checks",    CMD_FLAG_ASYNC_I2C_CHECK,                          d1);
+      RPT_CMDFLAG("enable_flock",            CMD_FLAG_FLOCK,                                    d1);
+      RPT_CMDFLAG("try get edid from sysfs", CMD_FLAG_TRY_GET_EDID_FROM_SYSFS,                  d1);
 
       rpt_nl();
       rpt_label(depth, "Unsorted");
 
-      rpt_bool("ddcdata",          NULL, parsed_cmd->flags & CMD_FLAG_DDCDATA,          d1);
+      rpt_bool("ddcdata",          NULL, parsed_cmd->flags & CMD_FLAG_DDCDATA,                  d1);
 
 
 #ifdef OLD
-      rpt_bool("nodetect",          NULL, parsed_cmd->flags & CMD_FLAG_NODETECT,                 d1);
+      rpt_bool("nodetect",          NULL, parsed_cmd->flags & CMD_FLAG_NODETECT,                d1);
 #endif
 
-      rpt_bool("report_freed_exceptions", NULL, parsed_cmd->flags & CMD_FLAG_REPORT_FREED_EXCP,  d1);
-      rpt_bool("show settings",     NULL, parsed_cmd->flags & CMD_FLAG_SHOW_SETTINGS,            d1);
+      rpt_bool("report_freed_exceptions", NULL, parsed_cmd->flags & CMD_FLAG_REPORT_FREED_EXCP, d1);
+      rpt_bool("show settings",     NULL, parsed_cmd->flags & CMD_FLAG_SHOW_SETTINGS,           d1);
 
 #ifdef FUTURE
       char * interpreted_flags = vnt_interpret_flags(parsed_cmd->flags, cmd_flag_table, false, ", ");
@@ -378,7 +407,8 @@ void dbgrpt_parsed_cmd(Parsed_Cmd * parsed_cmd, int depth) {
       free(interpreted_flags);
 #endif
 
-
+      rpt_nl();
+      rpt_label(depth, "Temporary Utility Variables");
 
 
 #define RPT_IVAL(_n, _depth) \
@@ -423,29 +453,62 @@ void dbgrpt_parsed_cmd(Parsed_Cmd * parsed_cmd, int depth) {
       RPT_IVAL(6,d1);
       RPT_IVAL(7,d1);
       RPT_IVAL(8,d1);
+      RPT_IVAL(9,d1);
+      RPT_IVAL(11,d1);
+      RPT_IVAL(12,d1);
+      RPT_IVAL(13,d1);
+      RPT_IVAL(14,d1);
+      RPT_IVAL(15,d1);
+      RPT_IVAL(16,d1);
 
 #undef RPT_IVAL
 
-      rpt_bool("fl1 set",           NULL, parsed_cmd->flags & CMD_FLAG_FL1_SET,     d1);
-      if (parsed_cmd->flags & CMD_FLAG_FL1_SET)
+#define RPT_FVAL(_flagno, _depth) \
+   rpt_str("f"#_flagno, NULL, SBOOL(parsed_cmd->flags2 & CMD_FLAG2_F##_flagno), _depth)
+
+
+      rpt_bool("fl1 set",           NULL, parsed_cmd->flags2 & CMD_FLAG2_FL1_SET,      d1);
+      if (parsed_cmd->flags2 & CMD_FLAG2_FL1_SET)
          rpt_vstring(d1, "fl1                                                      : %.2f", parsed_cmd->fl1);
-      rpt_bool("fl2 set",           NULL, parsed_cmd->flags & CMD_FLAG_FL2_SET,     d1);
-      if (parsed_cmd->flags & CMD_FLAG_FL2_SET)
+      rpt_bool("fl2 set",           NULL, parsed_cmd->flags2 & CMD_FLAG2_FL2_SET,      d1);
+      if (parsed_cmd->flags & CMD_FLAG2_FL2_SET)
          rpt_vstring(d1, "fl2                                                      : %.2f", parsed_cmd->fl2);
-      rpt_bool("f1",                NULL, parsed_cmd->flags & CMD_FLAG_F1,           d1);
-      rpt_bool("f2",                NULL, parsed_cmd->flags & CMD_FLAG_F2,           d1);
-      rpt_bool("f3",                NULL, parsed_cmd->flags & CMD_FLAG_F3,           d1);
-      rpt_bool("f4",                NULL, parsed_cmd->flags & CMD_FLAG_F4,           d1);
-      rpt_bool("f5",                NULL, parsed_cmd->flags & CMD_FLAG_F5,           d1);
-      rpt_bool("f6",                NULL, parsed_cmd->flags & CMD_FLAG_F6,           d1);
-      rpt_bool("f7",                NULL, parsed_cmd->flags & CMD_FLAG_F7,           d1);
-      rpt_bool("f8",                NULL, parsed_cmd->flags & CMD_FLAG_F8,           d1);
-      rpt_bool("f9",                NULL, parsed_cmd->flags & CMD_FLAG_F9,           d1);
-      RPT_CMDFLAG("f10", CMD_FLAG_F10, d1);
-      RPT_CMDFLAG("f11", CMD_FLAG_F11, d1);
-      RPT_CMDFLAG("f12", CMD_FLAG_F12, d1);
-      RPT_CMDFLAG("f13", CMD_FLAG_F13, d1);
-      RPT_CMDFLAG("f14", CMD_FLAG_F14, d1);
+      rpt_bool("f1",                NULL, parsed_cmd->flags2 & CMD_FLAG2_F1,           d1);
+      rpt_bool("f2",                NULL, parsed_cmd->flags2 & CMD_FLAG2_F2,           d1);
+      rpt_bool("f3",                NULL, parsed_cmd->flags2 & CMD_FLAG2_F3,           d1);
+      rpt_bool("f4",                NULL, parsed_cmd->flags2 & CMD_FLAG2_F4,           d1);
+      rpt_bool("f5",                NULL, parsed_cmd->flags2 & CMD_FLAG2_F5,           d1);
+      rpt_bool("f6",                NULL, parsed_cmd->flags2 & CMD_FLAG2_F6,           d1);
+      rpt_bool("f7",                NULL, parsed_cmd->flags2 & CMD_FLAG2_F7,           d1);
+      rpt_bool("f8",                NULL, parsed_cmd->flags2 & CMD_FLAG2_F8,           d1);
+      rpt_bool("f9",                NULL, parsed_cmd->flags2 & CMD_FLAG2_F9,           d1);
+      RPT_CMDFLAG2("f9",  CMD_FLAG2_F9,  d1);
+      RPT_CMDFLAG2("f10", CMD_FLAG2_F10, d1);
+      RPT_CMDFLAG2("f11", CMD_FLAG2_F11, d1);
+      RPT_CMDFLAG2("f12", CMD_FLAG2_F12, d1);
+      RPT_CMDFLAG2("f13", CMD_FLAG2_F13, d1);
+      RPT_CMDFLAG2("f14", CMD_FLAG2_F14, d1);
+      RPT_CMDFLAG2("f15", CMD_FLAG2_F15, d1);
+      RPT_CMDFLAG2("f16", CMD_FLAG2_F16, d1);
+      RPT_FVAL(17, d1);
+      RPT_FVAL(18, d1);
+      RPT_FVAL(19, d1);
+      RPT_FVAL(20, d1);
+      RPT_FVAL(21, d1);
+      RPT_FVAL(22, d1);
+      RPT_FVAL(23, d1);
+      RPT_FVAL(24, d1);
+      RPT_FVAL(25, d1);
+      RPT_FVAL(26, d1);
+      RPT_FVAL(27, d1);
+      RPT_FVAL(28, d1);
+      RPT_FVAL(29, d1);
+      RPT_FVAL(30, d1);
+      RPT_FVAL(31, d1);
+      RPT_FVAL(32, d1);
+
+#undef RPT_FVAL
+
       rpt_str( "s1",                NULL, parsed_cmd->s1,                            d1);
       rpt_str( "s2",                NULL, parsed_cmd->s2,                            d1);
       rpt_str( "s3",                NULL, parsed_cmd->s3,                            d1);

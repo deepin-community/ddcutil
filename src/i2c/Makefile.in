@@ -107,9 +107,8 @@ CONFIG_CLEAN_FILES =
 CONFIG_CLEAN_VPATH_FILES =
 LTLIBRARIES = $(noinst_LTLIBRARIES)
 libi2c_la_LIBADD =
-am_libi2c_la_OBJECTS = i2c_bus_core.lo i2c_bus_selector.lo \
-	i2c_display_lock.lo i2c_dpms.lo i2c_edid.lo i2c_execute.lo \
-	i2c_services.lo i2c_strategy_dispatcher.lo i2c_sysfs.lo
+am_libi2c_la_OBJECTS = i2c_bus_core.lo i2c_bus_selector.lo i2c_edid.lo \
+	i2c_execute.lo i2c_services.lo i2c_strategy_dispatcher.lo
 libi2c_la_OBJECTS = $(am_libi2c_la_OBJECTS)
 AM_V_lt = $(am__v_lt_@AM_V@)
 am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
@@ -131,12 +130,9 @@ DEFAULT_INCLUDES = -I.@am__isrc@ -I$(top_builddir)
 depcomp = $(SHELL) $(top_srcdir)/config/depcomp
 am__maybe_remake_depfiles = depfiles
 am__depfiles_remade = ./$(DEPDIR)/i2c_bus_core.Plo \
-	./$(DEPDIR)/i2c_bus_selector.Plo \
-	./$(DEPDIR)/i2c_display_lock.Plo ./$(DEPDIR)/i2c_dpms.Plo \
-	./$(DEPDIR)/i2c_edid.Plo ./$(DEPDIR)/i2c_execute.Plo \
-	./$(DEPDIR)/i2c_services.Plo \
-	./$(DEPDIR)/i2c_strategy_dispatcher.Plo \
-	./$(DEPDIR)/i2c_sysfs.Plo
+	./$(DEPDIR)/i2c_bus_selector.Plo ./$(DEPDIR)/i2c_edid.Plo \
+	./$(DEPDIR)/i2c_execute.Plo ./$(DEPDIR)/i2c_services.Plo \
+	./$(DEPDIR)/i2c_strategy_dispatcher.Plo
 am__mv = mv -f
 COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
 	$(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
@@ -233,6 +229,7 @@ ECHO_C = @ECHO_C@
 ECHO_N = @ECHO_N@
 ECHO_T = @ECHO_T@
 EGREP = @EGREP@
+ENABLE_BUILD_TIMESTAMP_FLAG = @ENABLE_BUILD_TIMESTAMP_FLAG@
 ENABLE_ENVCMDS_FLAG = @ENABLE_ENVCMDS_FLAG@
 ENABLE_SHARED_LIB_FLAG = @ENABLE_SHARED_LIB_FLAG@
 ENABLE_TARGETBSD_FLAG = @ENABLE_TARGETBSD_FLAG@
@@ -379,13 +376,10 @@ noinst_LTLIBRARIES = libi2c.la
 libi2c_la_SOURCES = \
 i2c_bus_core.c            \
 i2c_bus_selector.c        \
-i2c_display_lock.c        \
-i2c_dpms.c                \
 i2c_edid.c                \
 i2c_execute.c             \
 i2c_services.c            \
-i2c_strategy_dispatcher.c \
-i2c_sysfs.c
+i2c_strategy_dispatcher.c
 
 all: all-am
 
@@ -443,13 +437,10 @@ distclean-compile:
 
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/i2c_bus_core.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/i2c_bus_selector.Plo@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/i2c_display_lock.Plo@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/i2c_dpms.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/i2c_edid.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/i2c_execute.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/i2c_services.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/i2c_strategy_dispatcher.Plo@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/i2c_sysfs.Plo@am__quote@ # am--include-marker
 
 $(am__depfiles_remade):
 	@$(MKDIR_P) $(@D)
@@ -614,13 +605,10 @@ clean-am: clean-generic clean-libtool clean-noinstLTLIBRARIES \
 distclean: distclean-am
 		-rm -f ./$(DEPDIR)/i2c_bus_core.Plo
 	-rm -f ./$(DEPDIR)/i2c_bus_selector.Plo
-	-rm -f ./$(DEPDIR)/i2c_display_lock.Plo
-	-rm -f ./$(DEPDIR)/i2c_dpms.Plo
 	-rm -f ./$(DEPDIR)/i2c_edid.Plo
 	-rm -f ./$(DEPDIR)/i2c_execute.Plo
 	-rm -f ./$(DEPDIR)/i2c_services.Plo
 	-rm -f ./$(DEPDIR)/i2c_strategy_dispatcher.Plo
-	-rm -f ./$(DEPDIR)/i2c_sysfs.Plo
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
 	distclean-tags
@@ -668,13 +656,10 @@ installcheck-am:
 maintainer-clean: maintainer-clean-am
 		-rm -f ./$(DEPDIR)/i2c_bus_core.Plo
 	-rm -f ./$(DEPDIR)/i2c_bus_selector.Plo
-	-rm -f ./$(DEPDIR)/i2c_display_lock.Plo
-	-rm -f ./$(DEPDIR)/i2c_dpms.Plo
 	-rm -f ./$(DEPDIR)/i2c_edid.Plo
 	-rm -f ./$(DEPDIR)/i2c_execute.Plo
 	-rm -f ./$(DEPDIR)/i2c_services.Plo
 	-rm -f ./$(DEPDIR)/i2c_strategy_dispatcher.Plo
-	-rm -f ./$(DEPDIR)/i2c_sysfs.Plo
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic
 

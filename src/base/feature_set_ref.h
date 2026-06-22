@@ -3,7 +3,7 @@
  * Feature set identifiers
  */
 
-// Copyright (C) 2014-2018 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef FEATURE_SET_REF_H_
@@ -44,6 +44,7 @@ typedef enum {
    VCP_SUBSET_NC_CONT         = 0x00004000,    // combines reserved values with a continuous subrange
    VCP_SUBSET_NC              = 0x00002000,    // Non-Continuous feature
    VCP_SUBSET_TABLE           = 0x00001000,    // is a table feature
+   VCP_SUBSET_XNC             = 0x00000800,    // extended NC feature (user defined only)
 
    // subsets used only on command processing, not in feature descriptor table
    VCP_SUBSET_SCAN            = 0x00000040,
@@ -77,11 +78,11 @@ typedef enum {
    FSF_RW_ONLY               = 0x04,
    FSF_RO_ONLY               = 0x08,
    FSF_WO_ONLY               = 0x10,
-
 #ifdef UNUSED
    // applies to single feature feature set
-   FSF_FORCE                 = 0x20
+   FSF_FORCE                 = 0x20,
 #endif
+   FSF_CHECK_UDF             = 0x40,
 } Feature_Set_Flags;
 #define FSF_READABLE_ONLY    (FSF_RW_ONLY | FSF_RO_ONLY)
 

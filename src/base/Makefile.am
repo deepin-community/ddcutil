@@ -1,15 +1,36 @@
 # src/base/Makefile.am
 
-AM_CPPFLAGS =        \
-  $(GLIB_CFLAGS)     \
+AM_CPPFLAGS =         \
+  $(LIBDRM_CFLAGS)    \
+  $(GLIB_CFLAGS)      \
   -I$(top_srcdir)/src \
   -I$(top_srcdir)/src/public
 
-AM_CFLAGS = $(AM_CFLAGS_STD) 
+AM_CFLAGS = $(AM_CFLAGS_STD)
+
+# Does not work to force recompilation
+# AM_MAKEFLAGS = -Wbuild_timestamp.c 
 
 CLEANFILES = \
-*expand
+   *expand \
+   build_details.h
 
+# Use empty header file that is rebuilt on every execution to force recompilation of build_timestamp.h. 
+# See: https://stackoverflow.com/questions/54303270/how-to-execute-shell-commands-in-automake-makefile-am
+
+BUILT_SOURCES = build_details.h
+
+# Fails. Under some circumstances $0 is null, so explicitly redirect to build_details.h instead
+# build_details.h:
+#	echo "// Dummy include file to force rebuilding built_timestamp.c" >$0
+
+build_details.h:
+	echo "// Dummy include file to force rebuilding built_timestamp.c" > build_details.h
+
+# all-local:
+#	@echo "(src/base/Makefile) all-local"
+#	rm -fv build_details.h
+	
 clean-local:
 	@echo "(src/base/Makefile) clean-local"
 
@@ -28,18 +49,23 @@ noinst_LTLIBRARIES = libbase.la
 libbase_la_SOURCES =      \
 base_services.c           \
 build_info.c              \
+build_details.h           \
+build_timestamp.c         \
 core.c                    \
 core_per_thread_settings.c \
 ddc_command_codes.c       \
 ddc_errno.c               \
 ddc_packets.c             \
-dynamic_features.c        \
+display_lock.c            \
 displays.c                \
+drm_connector_state.c     \
 dsa2.c                    \
+dynamic_features.c        \
 execution_stats.c         \
 feature_lists.c           \
 feature_metadata.c        \
 feature_set_ref.c         \
+flock.c                   \
 i2c_bus_base.c            \
 linux_errno.c             \
 monitor_model_key.c       \
@@ -57,7 +83,7 @@ display_retry_data.c
 
 nodist_libbase_la_SOURCES = adl_errors.h
 
-# Rename to "all=local" for development 
+# Rename all-local-disabled to "all-local" for development 
 all-local-disabled:
 	@echo ""
 	@echo "(src/base/Makefile:all-local) Variable values:"

@@ -3,7 +3,7 @@
  *  model name, and product code, as listed in the EDID.
  */
 
-// Copyright (C) 2018-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2018-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef MONITOR_MODEL_KEY_H_
@@ -15,6 +15,13 @@
 
 #include "util/edid.h"
 
+#define FIXUP_MODEL_NAME(_name) \
+   for (int i=0; _name[i] && i < EDID_MODEL_NAME_FIELD_SIZE; i++) { \
+      if (!isalnum(_name[i])) \
+         _name[i] = '_'; \
+   }
+
+
 /** Identifies a monitor model */
 typedef struct {
    char                mfg_id[DDCA_EDID_MFG_ID_FIELD_SIZE];
@@ -25,26 +32,35 @@ typedef struct {
 
 
 Monitor_Model_Key
-monitor_model_key_value(
+mmk_value(
       const char *   mfg_id,
       const char *   model_name,
       uint16_t       product_code);
 
 Monitor_Model_Key
-monitor_model_key_undefined_value();
+mmk_undefined_value();
 
 Monitor_Model_Key
-monitor_model_key_value_from_edid(Parsed_Edid * edid);
+mmk_value_from_edid(Parsed_Edid * edid);
 
 Monitor_Model_Key *
-monitor_model_key_new(
+mmk_new(
       const char *   mfg_id,
       const char *   model_name,
       uint16_t       product_code);
 
 Monitor_Model_Key *
-monitor_model_key_new_from_edid(
+mmk_new_from_edid(
       Parsed_Edid * edid);
+
+Monitor_Model_Key
+mmk_value_from_string(const char * sval);
+
+Monitor_Model_Key *
+mmk_new_from_value(Monitor_Model_Key mmk);
+
+Monitor_Model_Key *
+mmk_new_from_string(const char * s);
 
 #ifdef UNUSED
 Monitor_Model_Key *
@@ -52,18 +68,14 @@ monitor_model_key_undefined_new();
 #endif
 
 void
-monitor_model_key_free(
+mmk_free(
       Monitor_Model_Key * model_id);
 
 char *
-model_id_string(
+mmk_model_id_string(
       const char *  mfg,
       const char *  model_name,
       uint16_t      product_code);
-
-// needed at API level?
-Monitor_Model_Key
-monitor_model_key_assign(Monitor_Model_Key old);
 
 bool
 monitor_model_key_eq(
@@ -75,9 +87,13 @@ bool monitor_model_key_is_defined(Monitor_Model_Key mmk);
 #endif
 
 char *
-monitor_model_string(
+mmk_string(
       Monitor_Model_Key * model_id);
 
-char * mmk_repr(Monitor_Model_Key mmk);
+char *
+mmk_repr(Monitor_Model_Key mmk);
+
+void
+init_monitor_model_key();
 
 #endif /* MONITOR_MODEL_KEY_H_ */

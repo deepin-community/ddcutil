@@ -116,7 +116,7 @@ bin_PROGRAMS = ddcutil$(EXEEXT)
 @ASAN_COND_TRUE@@ENABLE_SHARED_LIB_COND_TRUE@am__append_12 = -fsanitize=address \
 @ASAN_COND_TRUE@@ENABLE_SHARED_LIB_COND_TRUE@	-fsanitize-address-use-after-scope \
 @ASAN_COND_TRUE@@ENABLE_SHARED_LIB_COND_TRUE@	-fno-omit-frame-pointer
-@ASAN_COND_TRUE@@ENABLE_SHARED_LIB_COND_TRUE@am__append_13 = -lasan
+@ASAN_COND_TRUE@@ENABLE_SHARED_LIB_COND_TRUE@am__append_13 = -lasan 
 subdir = src
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/m4/ax_prog_doxygen.m4 \
@@ -175,12 +175,13 @@ am__DEPENDENCIES_1 =
 @USE_X11_COND_TRUE@am__DEPENDENCIES_2 = $(am__DEPENDENCIES_1) \
 @USE_X11_COND_TRUE@	$(am__DEPENDENCIES_1) $(am__DEPENDENCIES_1)
 @USE_LIBDRM_COND_TRUE@am__DEPENDENCIES_3 = $(am__DEPENDENCIES_1)
-libcommon_la_DEPENDENCIES = ddc/libddc.la dynvcp/libdynvcp.la \
-	i2c/libi2c.la vcp/libvcp.la cmdline/libcmdline.la \
-	base/libbase.la util/libutil.la $(am__append_5) \
-	$(am__DEPENDENCIES_2) $(am__DEPENDENCIES_1) \
+libcommon_la_DEPENDENCIES = dw/libdw.la ddc/libddc.la \
+	dynvcp/libdynvcp.la i2c/libi2c.la sysfs/libsysfs.la \
+	vcp/libvcp.la cmdline/libcmdline.la base/libbase.la \
+	util/libutil.la $(am__append_5) $(am__DEPENDENCIES_2) \
 	$(am__DEPENDENCIES_1) $(am__DEPENDENCIES_1) \
-	$(am__DEPENDENCIES_1) $(am__DEPENDENCIES_3)
+	$(am__DEPENDENCIES_1) $(am__DEPENDENCIES_1) \
+	$(am__DEPENDENCIES_3)
 am_libcommon_la_OBJECTS =
 libcommon_la_OBJECTS = $(am_libcommon_la_OBJECTS)
 @ENABLE_SHARED_LIB_COND_TRUE@libddcutil_la_DEPENDENCIES =  \
@@ -355,6 +356,7 @@ ECHO_C = @ECHO_C@
 ECHO_N = @ECHO_N@
 ECHO_T = @ECHO_T@
 EGREP = @EGREP@
+ENABLE_BUILD_TIMESTAMP_FLAG = @ENABLE_BUILD_TIMESTAMP_FLAG@
 ENABLE_ENVCMDS_FLAG = @ENABLE_ENVCMDS_FLAG@
 ENABLE_SHARED_LIB_FLAG = @ENABLE_SHARED_LIB_FLAG@
 ENABLE_TARGETBSD_FLAG = @ENABLE_TARGETBSD_FLAG@
@@ -485,12 +487,12 @@ target_alias = @target_alias@
 top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
-DIST_SUBDIRS = app_ddcutil app_sysenv base cmdline ddc dynvcp i2c libmain  sample_clients test usb usb_util util vcp
+DIST_SUBDIRS = app_ddcutil app_sysenv base cmdline ddc dw dynvcp i2c libmain sysfs  sample_clients test usb usb_util util vcp
 # contain only header files:
 EXTRA_DIST = bsd private public
-SUBDIRS = util usb_util base vcp i2c usb dynvcp ddc $(am__append_1) \
-	$(am__append_2) app_sysenv app_ddcutil cmdline . \
-	sample_clients
+SUBDIRS = util usb_util base vcp sysfs i2c usb dynvcp ddc dw \
+	$(am__append_1) $(am__append_2) app_sysenv app_ddcutil cmdline \
+	. sample_clients
 MOSTLYCLEANFILES = 
 CLEANFILES = 
 DISTCLEANFILES = publc/ddcutil_macros.h
@@ -533,6 +535,7 @@ $(LIBUSB_CFLAGS) \
 #
 
 # unused-result defined since at least gcc 5
+# format-security defined since gcc 2.95.3, Clang 4.0.0
 
 # Distributing -Werror is bad programming practice.  It can result in build failure
 # on an external site having a different compiler, compiler version, or configuration. 
@@ -550,6 +553,8 @@ $(LIBUSB_CFLAGS) \
 # AM_CFLAGS += -H
 # Report header file dependencies
 
+# see https://community.ibm.com/community/user/ibmz-and-linuxone/blogs/colton-cox1/2020/03/12/ztpf-cc-performance-hints
+
 # Will flag glib's use of _Static_assert, which is not in the C99 standard, 
 # but which is in gcc as of 4.6, also other constructs
 # AM_CFLAGS += -Wc99-c11-compat
@@ -559,11 +564,18 @@ $(LIBUSB_CFLAGS) \
 # The "-Wno-" option form is ignored by gcc, but should be respected when compiling
 # in an environment, e.g. termux, where this option is enabled by default. 
 
+# https://github.com/ossf/wg-best-practices-os-developers/blob/main/docs/Compiler-Hardening-Guides/Compiler-Options-Hardening-Guide-for-C-and-C++
+# AM_CFLAGS += -Wformat -Wformat=2  
+# too many errors to be worth fixing
+# AM_CFLAGS += -Wconversion
+
 # AM_CFLAGS += $(PYTHON_CPPFLAGS)
-AM_CFLAGS = -Wall -std=c11 -Werror=unused-result \
-	-Wimplicit-function-declaration \
-	-Wno-compound-token-split-by-macro $(am__append_3) \
-	$(am__append_4) -fPIC
+AM_CFLAGS = -Wall -std=c11 -Werror=unused-result -Wformat-security \
+	-fno-common -Wimplicit-function-declaration \
+	-Wno-compound-token-split-by-macro -Wimplicit-fallthrough \
+	-D_GLIBCXX_ASSERTIONS -Werror=implicit \
+	-Werror=incompatible-pointer-types -Werror=int-conversion \
+	$(am__append_3) $(am__append_4) -fPIC -D_GNU_SOURCE
 @ASAN_COND_TRUE@ASAN_OPTIONS = strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1:strict_init_order=1 \
 @ASAN_COND_TRUE@	verbosity=1
 
@@ -586,11 +598,11 @@ AM_CFLAGS_STD = $(AM_CFLAGS)
 # if ENABLE_YAML_COND
 #   libcommon_la_LIBADD += $(YAML_LIBS)
 # endif 
-libcommon_la_LIBADD = ddc/libddc.la dynvcp/libdynvcp.la i2c/libi2c.la \
-	vcp/libvcp.la cmdline/libcmdline.la base/libbase.la \
-	util/libutil.la $(am__append_5) $(am__append_6) \
-	$(JANSSON_LIBS) $(GLIB_LIBS) $(UDEV_LIBS) $(LIBUSB_LIBS) \
-	$(am__append_9)
+libcommon_la_LIBADD = dw/libdw.la ddc/libddc.la dynvcp/libdynvcp.la \
+	i2c/libi2c.la sysfs/libsysfs.la vcp/libvcp.la \
+	cmdline/libcmdline.la base/libbase.la util/libutil.la \
+	$(am__append_5) $(am__append_6) $(JANSSON_LIBS) $(GLIB_LIBS) \
+	$(UDEV_LIBS) $(LIBUSB_LIBS) $(am__append_9)
 
 # for smbus functions:
 # libcommon_la_LIBADD += -li2c
@@ -969,7 +981,7 @@ distdir-am: $(DISTFILES)
 	  dist-hook
 check-am: all-am
 check: check-recursive
-all-am: Makefile $(PROGRAMS) $(LTLIBRARIES) $(HEADERS)
+all-am: Makefile $(PROGRAMS) $(LTLIBRARIES) $(HEADERS) all-local
 install-binPROGRAMS: install-libLTLIBRARIES
 
 installdirs: installdirs-recursive
@@ -1087,8 +1099,8 @@ uninstall-am: uninstall-binPROGRAMS uninstall-includeHEADERS \
 .MAKE: $(am__recursive_targets) install-am install-data-am \
 	install-exec-am install-strip
 
-.PHONY: $(am__recursive_targets) CTAGS GTAGS TAGS all all-am check \
-	check-am clean clean-binPROGRAMS clean-generic \
+.PHONY: $(am__recursive_targets) CTAGS GTAGS TAGS all all-am all-local \
+	check check-am clean clean-binPROGRAMS clean-generic \
 	clean-libLTLIBRARIES clean-libtool clean-local \
 	clean-noinstLTLIBRARIES cscopelist-am ctags ctags-am dist-hook \
 	distclean distclean-compile distclean-generic \
@@ -1173,6 +1185,12 @@ dist-hook:
 export AM_CFLAGS_STD
 @ASAN_COND_TRUE@   # needed? 
 @ASAN_COND_TRUE@@ENABLE_SHARED_LIB_COND_TRUE@   # needed? 
+@ASAN_COND_TRUE@@ENABLE_SHARED_LIB_COND_TRUE@   # doesn't work:
+@ASAN_COND_TRUE@@ENABLE_SHARED_LIB_COND_TRUE@   # libddcutil_la_LDFLAGS += -static-libasan 
+
+all-local:
+	@echo "(src/Makefile) all-local"
+	rm -fv base/build_details.h
 
 # debug-install-hook:
 #  	ls -ld $(DESTDIR)$(libdir)
@@ -1218,7 +1236,7 @@ uninstall-local:
 	@echo "(src/Makefile:uninstall-local) Executing..."
 	rm -f $(DESTDIR)$(libdir)/libddcutil*  
 
-# Rename to "all=local" for development 
+# Rename from all-local-disabled to  "all-local" for development 
 all-local-disabled:
 	@echo ""
 	@echo "(src/Makefile:all-local) Variable values:"

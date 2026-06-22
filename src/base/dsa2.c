@@ -1,11 +1,8 @@
 /** @file dsa2.c Dynamic sleep algorithm 2
  */
 
-// Copyright (C) 2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
-
-#define _GNU_SOURCE    // for localtime_r()
-#define __ISOC99_SOURCE
 
 #include <assert.h>
 #include <errno.h>
@@ -192,13 +189,13 @@ cirb_free(Circular_Invocation_Result_Buffer * cirb) {
 static void
 cirb_add(Circular_Invocation_Result_Buffer* cirb, Successful_Invocation value) {
    bool debug = false;
-   DBGTRC_STARTING(debug, TRACE_GROUP, "cirb=%p, cirb->nextpos=%2d, cirb->ct=%2d, value=%s",
+   DBGTRC_STARTING(debug, DDCA_TRC_NONE, "cirb=%p, cirb->nextpos=%2d, cirb->ct=%2d, value=%s",
          cirb, cirb->nextpos, cirb->ct, si_repr_t(value));
     cirb->values[cirb->nextpos] = value;
     cirb->nextpos = (cirb->nextpos+1) % cirb->size;
     if (cirb->ct < cirb->size)
        cirb->ct++;
-    DBGTRC_DONE(debug, TRACE_GROUP, "cirb=%p, cirb->nextpos=%2d, cirb->ct=%2d",
+    DBGTRC_DONE(debug, DDCA_TRC_NONE, "cirb=%p, cirb->nextpos=%2d, cirb->ct=%2d",
           cirb, cirb->nextpos, cirb->ct);
 }
 
@@ -220,7 +217,7 @@ cirb_logical_to_physical_index(Circular_Invocation_Result_Buffer *cirb, int logi
                        ? logical
                        : (cirb->nextpos +logical) % cirb->size;
    }
-   DBGTRC(debug, TRACE_GROUP,
+   DBGTRC(debug, DDCA_TRC_NONE,
          "Executing logical=%2d, cirb->ct=%2d, cirb->size=%2d, cirb->nextpos=%2d, Returning: physical=%2d",
          logical, cirb->ct, cirb->size, cirb->nextpos, physical);
    return physical;
@@ -308,10 +305,10 @@ dbgrpt_circular_invocation_results_buffer(Circular_Invocation_Result_Buffer * ci
 // Results Tables
 //
 
-static int steps[] = {0,5,10,20,30,50,70,100,130, 160, 200};    // multiplier * 100
-static int absolute_step_ct = ARRAY_SIZE(steps);   //  11
-static int step_last = ARRAY_SIZE(steps)-1;
-static int adjusted_step_ct = ARRAY_SIZE(steps)-1;   // 11
+static int steps[] = {0, 5, 10, 20, 30, 50, 70, 100, 130, 160, 200};  // multiplier * 100
+static int absolute_step_ct = ARRAY_SIZE(steps);    // 11
+static int step_last = ARRAY_SIZE(steps)-1;         // 10
+static int adjusted_step_ct = ARRAY_SIZE(steps)-1;  // will be reset to absolute_step_ct - dsa2_step_floor
 
 #define RTABLE_FROM_CACHE    0x01
 #define RTABLE_BUS_DETECTED  0x02
@@ -453,6 +450,7 @@ free_results_table(Results_Table * rtable) {
 void
 dsa2_reset_results_table(int busno, DDCA_Sleep_Multiplier sleep_multiplier)
 {
+   // bool debug = false;
    Results_Table * rtable = results_tables[busno];
    if (rtable) {
       free_results_table(rtable);
@@ -463,6 +461,7 @@ dsa2_reset_results_table(int busno, DDCA_Sleep_Multiplier sleep_multiplier)
    int initial_step = (sleep_multiplier >= 0)
                          ? dsa2_multiplier_to_step(sleep_multiplier)
                          : dsa2_multiplier_to_step(1.0f);
+   // DBGTRC_EXECUTED(debug, DDCA_TRC_NONE, "sleep_multiplier=%4.2f, initial_step=%d, step_last=%d");
    rtable->initial_step = initial_step;
    rtable->cur_step = initial_step;
    rtable->cur_retry_loop_step = initial_step;
@@ -541,7 +540,7 @@ dsa2_set_multiplier_by_path(DDCA_IO_Path dpath, Sleep_Multiplier multiplier) {
 
 
 /** Given a floating point multiplier value, return the index of the step
- *  found by rounding down the value specified.
+ *  with the greatest value less than the value specified.
  *
  *  @param  multiplier  floating point multiplier value
  *  @return step index
@@ -553,17 +552,18 @@ dsa2_set_multiplier_by_path(DDCA_IO_Path dpath, Sleep_Multiplier multiplier) {
 int
 dsa2_multiplier_to_step(DDCA_Sleep_Multiplier multiplier) {
    bool debug = false;
-   int imult = multiplier * 100;
 
+   int imult = multiplier * 100;
    int ndx = dsa2_step_floor;
    for (; ndx <= step_last ; ndx++) {
       if ( steps[ndx] >= imult )
                break;
    }
+   int step = (ndx > step_last) ? step_last : ndx;
 
-   int step = (ndx == step_last) ? step_last-1 : ndx;
-   DBGTRC_EXECUTED(debug, TRACE_GROUP, "multiplier = %7.5f, imult = %d, step=%d, steps[%d]=%d",
-                                         multiplier, imult, step, step, steps[step]);
+   DBGTRC_EXECUTED(debug, TRACE_GROUP,
+         "multiplier = %5.2f, imult = %d, step_last=%d,  ndx=%d, step=%d, steps[%d]=%d, returning step=%d",
+         multiplier,          imult,      step_last,     ndx,    step,    step,steps[step], step);
    return step;
 }
 
@@ -590,7 +590,7 @@ void test_float_to_step_conversion() {
 void
 dsa2_reset_multiplier(DDCA_Sleep_Multiplier multiplier) {
    bool debug = false;
-   DBGTRC_STARTING(debug, TRACE_GROUP, "multiplier=%7.3f", multiplier);
+   DBGTRC_STARTING(debug, TRACE_GROUP, "multiplier=%5.2f", multiplier);
    initial_step = dsa2_multiplier_to_step(multiplier);
    for (int ndx = 0; ndx < I2C_BUS_MAX; ndx++) {
       if (results_tables[ndx]) {
@@ -779,9 +779,9 @@ dsa2_adjust_for_rcnt_successes(Results_Table * rtable) {
    if ( IS_DBGTRC(debug, DDCA_TRC_NONE) ) {
       GPtrArray * svals = g_ptr_array_new_with_free_func(g_free);
       for (int ndx = 0; ndx < actual_lookback; ndx++) {
-         char * s = g_strdup_printf("{tryct:%d,reqd step:%d,%ld}",
+         char * s = g_strdup_printf("{tryct:%d,reqd step:%d,%jd}",
              latest_values[ndx].tryct, latest_values[ndx].required_step,
-             latest_values[ndx].epoch_seconds);
+             (intmax_t)latest_values[ndx].epoch_seconds);
          g_ptr_array_add(svals, s);
       }
       DBGTRC_NOPREFIX(true, DDCA_TRC_NONE, "busno=%d, actual_lookback = %d, latest_values:%s",
@@ -1190,7 +1190,7 @@ dsa2_save_persistent_stats() {
 #endif
          for (int k = 0; k < rtable->recent_values->ct; k++) {
             Successful_Invocation si = cirb_get_logical(rtable->recent_values, k);
-            fprintf(stats_file, " {%d,%d,%ld}", si.tryct, si.required_step, si.epoch_seconds);
+            fprintf(stats_file, " {%d,%d,%jd}", si.tryct, si.required_step, (intmax_t)si.epoch_seconds);
          }
 #ifdef OUT
          // wrong - should write it to the circular buffer
@@ -1268,7 +1268,9 @@ cirb_parse_and_add(Circular_Invocation_Result_Buffer * cirb, char * segment) {
             Successful_Invocation si;
             result  = str_to_int(s+1,             &si.tryct,         10);
             result &= str_to_int(comma_pos  + 1,  &si.required_step, 10);
-            result &= str_to_long(comma_pos2 + 1, &si.epoch_seconds, 10);
+            long esec;
+            result &= str_to_long(comma_pos2 + 1, &esec, 10);
+            si.epoch_seconds = (time_t) esec;
             if (result) {
                cirb_add(cirb, si);
             }
@@ -1484,11 +1486,11 @@ init_dsa2() {
    RTTI_ADD_FUNC(dsa2_too_few_errors);
    RTTI_ADD_FUNC(dsa2_too_many_errors);
    RTTI_ADD_FUNC(dsa2_next_retry_step);
+   RTTI_ADD_FUNC(dsa2_multiplier_to_step);
 
    results_tables = calloc(I2C_BUS_MAX+1, sizeof(Results_Table*));
 
    adjusted_step_ct = absolute_step_ct - dsa2_step_floor;   // 11;         //  initially 11
-
 
    // test_one_logistic(10);
    // test_dsa2_next_retry_step();

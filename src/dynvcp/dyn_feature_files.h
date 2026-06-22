@@ -18,12 +18,17 @@
 
 extern bool enable_dynamic_features;
 
+char *
+dfr_find_feature_def_file(
+      const char * simple_fn);
+
 Error_Info *
 dfr_load_by_mmk(
       Monitor_Model_Key       mmk,
       Dynamic_Features_Rec ** dfr_loc);
 
 Error_Info * dfr_check_by_dref(Display_Ref * dref);
+Error_Info * dfr_check_by_dh(Display_Handle * dh);
 #ifdef UNUSED
 Error_Info * dfr_check_by_mmk(Monitor_Model_Key mmk);
 #endif

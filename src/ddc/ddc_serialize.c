@@ -1,6 +1,6 @@
 /** @file ddc_serialize.c */
 
-// Copyright (C) 2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2023-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <assert.h>
@@ -55,7 +55,7 @@ Display_Ref * ddc_find_deserialized_display(int busno, Byte* edidbytes) {
       }
    }
    if (result)
-      DBGTRC_RET_STRUCT(debug, DDCA_TRC_DDCIO, Display_Ref, dbgrpt_display_ref, result);
+      DBGTRC_RET_STRUCT(debug, DDCA_TRC_DDCIO, Display_Ref, dbgrpt_display_ref0, result);
    else
       DBGTRC_DONE(debug, DDCA_TRC_DDCIO, "Not found. Returning NULL");
    return result;
@@ -135,7 +135,7 @@ json_t* serialize_one_display(Display_Ref * dref) {
    bool debug = false;
    DBGTRC_STARTING(debug, DDCA_TRC_DDCIO, "dref=%s", dref_repr_t(dref));
    if (debug)
-      dbgrpt_display_ref(dref, 2);
+      dbgrpt_display_ref(dref, true, 2);
 
    json_t * jtmp = NULL;
    json_t * jdisp = json_object();
@@ -172,9 +172,11 @@ json_t* serialize_one_display(Display_Ref * dref) {
       json_object_set_new(jdisp, "actual_display_path", jtmp);
    }
 
+#ifdef OLD
    if (dref->driver_name) {
       json_object_set_new(jdisp, "driver_name", json_string(dref->driver_name));
    }
+#endif
 
    // json_decref(jdisp);
 
@@ -249,7 +251,7 @@ Monitor_Model_Key * deserialize_mmid(json_t* jpath) {
    const char * mfg_id = json_string_value( json_object_get(jpath, "mfg_id"));
    const char * model_name = json_string_value( json_object_get(jpath, "model_name"));
    int          product_code = json_integer_value( json_object_get(jpath, "product_code"));
-   Monitor_Model_Key*  mmk = monitor_model_key_new(mfg_id, model_name, product_code);
+   Monitor_Model_Key*  mmk = mmk_new(mfg_id, model_name, product_code);
 
    DBGMSF(debug, "Executed. Returning: %s", mmk_repr(*mmk) );
    return mmk;
@@ -309,12 +311,14 @@ Display_Ref *  deserialize_one_display(json_t* disp_node) {
       memcpy(dref->actual_display_path, &actual_display_path, sizeof(DDCA_IO_Path));
    }
 
+#ifdef OLD
    jtmp = json_object_get(disp_node, "driver_name");
    if (jtmp) {
       dref->driver_name = g_strdup(json_string_value(jtmp));
    }
+#endif
 
-   DBGTRC_RET_STRUCT(debug, DDCA_TRC_NONE, Display_Ref, dbgrpt_display_ref, dref);
+   DBGTRC_RET_STRUCT(debug, DDCA_TRC_NONE, Display_Ref, dbgrpt_display_ref0, dref);
    return dref;
 }
 
@@ -437,7 +441,7 @@ char * ddc_serialize_displays_and_buses() {
 #endif
    char * result = json_dumps(root, JSON_INDENT(3));
 
-   DBGTRC_RETURNING(debug, TRACE_GROUP, result, "");
+   DBGTRC_RET_STRING(debug, TRACE_GROUP, result, "");
    json_decref(root);
    return result;
 }

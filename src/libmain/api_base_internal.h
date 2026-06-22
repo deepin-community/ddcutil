@@ -3,7 +3,7 @@
  *  For use only by other api_... files
  */
 
-// Copyright (C) 2015-2024 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2015-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef API_BASE_INTERNAL_H_
@@ -20,13 +20,16 @@
 #include "public/ddcutil_c_api.h"
 
 #include "base/per_thread_data.h"
+#include "libmain/api_error_info_internal.h"
 
 
 extern bool library_initialized;
 extern bool library_initialization_failed;
 
+
 #define DDCI_PRECOND_STDERR 0x01
 #define DDCI_PRECOND_RETURN 0x02
+
 
 typedef enum {
    DDCI_PRECOND_STDERR_ABORT  = DDCI_PRECOND_STDERR,
@@ -146,84 +149,165 @@ ddci_get_precondition_failure_mode();
       } while (0)
 #endif
 
+
+//
+// API Quiesce Management
+//
+
+bool increment_active_api_calls(const char * funcname);
+void decrement_active_api_calls(const char * funcname);
+void quiesce_api();
+void unquiesce_api();
+#define RESPECT_QUIESCE true
+#define NORESPECT_QUIESCE false
+
+
+//
+// Function prologs and epilogs
+//
+
+/** API function prolog for functions that don't return a status code.
+ *
+ *  Similar to API_PROLOGX(), except that there is no test if explicit
+ *  library initialization failed.
+ */
 #define API_PROLOG(debug_flag, format, ...) \
    do { \
       if (!library_initialized)  { \
          syslog(LOG_WARNING, "%s called before ddca_init2() or ddca_init()", __func__); \
          ddci_init(NULL, DEFAULT_LIBDDCUTIL_SYSLOG_LEVEL, DDCA_INIT_OPTIONS_DISABLE_CONFIG_FILE, NULL); \
       } \
+      reset_current_traced_function_stack(); \
+      push_traced_function(__func__); \
       if (trace_api_call_depth > 0 || is_traced_api_call(__func__) ) \
          trace_api_call_depth++; \
-      dbgtrc( (debug_flag) ? DDCA_TRC_ALL : DDCA_TRC_API, DBGTRC_OPTIONS_NONE, \
+      dbgtrc( (debug_flag) ? DDCA_TRC_ALL : DDCA_TRC_API, DBGTRC_OPTIONS_STARTING, \
             __func__, __LINE__, __FILE__, "Starting  "format, ##__VA_ARGS__); \
       if (ptd_api_profiling_enabled) ptd_profile_function_start(__func__); \
   } while(0)
 
 
-#define API_PROLOGX(debug_flag, format, ...) \
+/** Standard API function prolog
+ *
+ *  @param debug_flag  if true, always perform function tracing
+ *                     if false, only trace if API tracing is enabled
+ *  @param format      trace message format string
+ *  @param ...         trace message arguments
+ *
+ *  If explicit library initialization failed, write a message to the system log,
+ *  save an explanation in the thread error detail, and return from the function
+ *  immediately with status DDCRC_INITIALIZED.
+ *
+ *  If the library is uninitialized, but ddca_init2() or ddca_init() was not called,
+ *  write a message to the system log and perform implicit library initialization.
+ *
+ *  If this API function is being traced, or it was called by another API function
+ *  that is being traced, increment thread local variable trace_api_call_depth.
+ *
+ *  Call dbgtrc() to perform function tracing, if enabled for this function.
+ *
+ *  If profiling is enabled for this thread, start profiling for this function.
+ */
+#define API_PROLOGX(debug_flag, respect_quiesced, format, ...) \
    do { \
-      if (library_initialization_failed) \
+      if (library_initialization_failed) { \
+         syslog(LOG_CRIT, "%s called after ddca_init2() or ddca_init() failure", __func__); \
+         save_thread_error_detail( \
+               new_ddca_error_detail(DDCRC_UNINITIALIZED, \
+                                     "%s called after ddca_init2() or ddca_init() failure", __func__)); \
          return DDCRC_UNINITIALIZED; \
+      } \
       if (!library_initialized)  { \
-         syslog(LOG_WARNING, "%s called before ddca_init2() or ddca_init()", __func__); \
+         syslog(LOG_WARNING, "%s called before ddca_init2() or ddca_init(). Performing default initialization", __func__); \
          ddci_init(NULL, DEFAULT_LIBDDCUTIL_SYSLOG_LEVEL, DDCA_INIT_OPTIONS_DISABLE_CONFIG_FILE, NULL); \
       } \
+      if (respect_quiesced) { \
+         if (!increment_active_api_calls(__func__)) { \
+            syslog(LOG_ERR, "library quiesced, %s temporarily unavailable", __func__); \
+            save_thread_error_detail( \
+                  new_ddca_error_detail(DDCRC_QUIESCED, \
+                                     "library quiesced, %s temporarily unavailable", __func__)); \
+            return DDCRC_QUIESCED; \
+         } \
+      } \
+      reset_current_traced_function_stack(); \
+      push_traced_function(__func__); \
       if (trace_api_call_depth > 0 || is_traced_api_call(__func__) ) \
          trace_api_call_depth++; \
-      dbgtrc( (debug_flag) ? DDCA_TRC_ALL : DDCA_TRC_API, DBGTRC_OPTIONS_NONE, \
+      dbgtrc( (debug_flag) ? DDCA_TRC_ALL : DDCA_TRC_API, DBGTRC_OPTIONS_STARTING, \
             __func__, __LINE__, __FILE__, "Starting  "format, ##__VA_ARGS__); \
       if (ptd_api_profiling_enabled) ptd_profile_function_start(__func__); \
   } while(0)
 
-#ifdef UNUSED
-#define API_PROLOGX(debug_flag, _trace_groups, format, ...) \
+
+#define API_PROLOG_NO_DISPLAY_IO(debug_flag, format, ...) \
    do { \
-      if (!library_initialized)  { \
-         ddca_init(DDCA_INIT_OPTIONS_DISABLE_CONFIG_FILE); \
-      } \
-      trace_api_call_depth++; \
-      dbgtrc( (debug_flag) ? DDCA_TRC_ALL : (_trace_groups), DBGTRC_OPTIONS_NONE, \
+      reset_current_traced_function_stack(); \
+      push_traced_function(__func__); \
+      if (trace_api_call_depth > 0 || is_traced_api_call(__func__) ) \
+         trace_api_call_depth++; \
+      dbgtrc( (debug_flag) ? DDCA_TRC_ALL : DDCA_TRC_API, DBGTRC_OPTIONS_STARTING, \
             __func__, __LINE__, __FILE__, "Starting  "format, ##__VA_ARGS__); \
+      if (ptd_api_profiling_enabled) ptd_profile_function_start(__func__); \
   } while(0)
-#endif
 
 
-#define API_EPILOG(_debug_flag, _rc, _format, ...) \
+// Function epilog variants
+
+
+/** For functions that return a DDCA_Status.  Perform the function return in
+ *  the macro.
+ */
+#define API_EPILOG_RET_DDCRC(_debug_flag, _respect_quiesced, _rc, _format, ...) \
    do { \
         dbgtrc_ret_ddcrc( \
-          (_debug_flag) ? DDCA_TRC_ALL : DDCA_TRC_API, DBGTRC_OPTIONS_NONE, \
+          (_debug_flag) ? DDCA_TRC_ALL : DDCA_TRC_API, DBGTRC_OPTIONS_DONE, \
           __func__, __LINE__, __FILE__, _rc, _format, ##__VA_ARGS__); \
         if (trace_api_call_depth > 0) \
            trace_api_call_depth--; \
         if (ptd_api_profiling_enabled) ptd_profile_function_end(__func__); \
+        if (_respect_quiesced) decrement_active_api_calls(__func__); \
+        pop_traced_function(__func__); \
         return _rc; \
    } while(0)
 
 
-#define API_EPILOG_RET_BOOL(_debug_flag, _result, _format, ...) \
+/** For functions that return a boolean.  Perform the return in the macro.
+ */
+#define API_EPILOG_RET_BOOL(_debug_flag, _respect_quiesced,  _result, _format, ...) \
    do { \
       dbgtrc_returning_expression( \
-          (_debug_flag) ? DDCA_TRC_ALL : DDCA_TRC_API, DBGTRC_OPTIONS_NONE, \
+          (_debug_flag) ? DDCA_TRC_ALL : DDCA_TRC_API, DBGTRC_OPTIONS_DONE, \
           __func__, __LINE__, __FILE__, sbool(_result), _format, ##__VA_ARGS__); \
         if (trace_api_call_depth > 0) \
            trace_api_call_depth--; \
         if (ptd_api_profiling_enabled) ptd_profile_function_end(__func__); \
+        if (_respect_quiesced) decrement_active_api_calls(__func__); \
+        pop_traced_function(__func__); \
         return _result; \
    } while(0)
 
 
-#define API_EPILOG_WO_RETURN(_debug_flag, _rc, _format, ...) \
+/** For functions that return a DDCA_Status.  This variant reports the status code
+ *  being returned, but leaves it to the caller to actually execute the return;
+ */
+#define API_EPILOG_BEFORE_RETURN(_debug_flag, _respect_quiesced, _rc, _format, ...) \
    do { \
         dbgtrc_ret_ddcrc( \
-          (_debug_flag) ? DDCA_TRC_ALL : DDCA_TRC_API, DBGTRC_OPTIONS_NONE, \
+          (_debug_flag) ? DDCA_TRC_ALL : DDCA_TRC_API, DBGTRC_OPTIONS_DONE, \
           __func__, __LINE__, __FILE__, _rc, _format, ##__VA_ARGS__); \
         if (trace_api_call_depth > 0) \
            trace_api_call_depth--; \
         if (ptd_api_profiling_enabled) ptd_profile_function_end(__func__); \
+        if (_respect_quiesced) decrement_active_api_calls(__func__); \
+        pop_traced_function(__func__); \
    } while(0)
 
 
-#define API_EPILOG_NO_RETURN(_debug_flag, _format, ...) \
+/** Emits a trace message that contains no return status information, and leaves
+ *  it to the caller for execute the return.
+ */
+#define API_EPILOG_NO_RETURN(_debug_flag, _respect_quiesced, _format, ...) \
    do { \
         dbgtrc( \
           (_debug_flag) ? DDCA_TRC_ALL : DDCA_TRC_API, DBGTRC_OPTIONS_NONE, \
@@ -231,6 +315,8 @@ ddci_get_precondition_failure_mode();
         if (trace_api_call_depth > 0) \
            trace_api_call_depth--; \
         if (ptd_api_profiling_enabled) ptd_profile_function_end(__func__); \
+        if (_respect_quiesced) decrement_active_api_calls(__func__); \
+        pop_traced_function(__func__); \
    } while(0)
 
 #ifdef UNUSED

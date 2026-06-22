@@ -90,9 +90,6 @@ PRE_UNINSTALL = :
 POST_UNINSTALL = :
 build_triplet = @build@
 host_triplet = @host@
-@ENABLE_SHARED_LIB_COND_TRUE@am__append_1 = \
-@ENABLE_SHARED_LIB_COND_TRUE@  ddc_watch_displays.c
-
 subdir = src/ddc
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/m4/ax_prog_doxygen.m4 \
@@ -109,19 +106,13 @@ CONFIG_CLEAN_FILES =
 CONFIG_CLEAN_VPATH_FILES =
 LTLIBRARIES = $(noinst_LTLIBRARIES)
 libddc_la_LIBADD =
-am__libddc_la_SOURCES_DIST = ddc_common_init.c ddc_displays.c \
-	ddc_display_ref_reports.c ddc_display_selection.c \
-	ddc_dumpload.c ddc_multi_part_io.c ddc_output.c \
-	ddc_packet_io.c ddc_read_capabilities.c ddc_serialize.c \
-	ddc_services.c ddc_status_events.c ddc_strategy.c ddc_vcp.c \
-	ddc_vcp_version.c ddc_try_data.c ddc_watch_displays.c
-@ENABLE_SHARED_LIB_COND_TRUE@am__objects_1 = ddc_watch_displays.lo
 am_libddc_la_OBJECTS = ddc_common_init.lo ddc_displays.lo \
 	ddc_display_ref_reports.lo ddc_display_selection.lo \
-	ddc_dumpload.lo ddc_multi_part_io.lo ddc_output.lo \
-	ddc_packet_io.lo ddc_read_capabilities.lo ddc_serialize.lo \
-	ddc_services.lo ddc_status_events.lo ddc_strategy.lo \
-	ddc_vcp.lo ddc_vcp_version.lo ddc_try_data.lo $(am__objects_1)
+	ddc_dumpload.lo ddc_initial_checks.lo ddc_multi_part_io.lo \
+	ddc_output.lo ddc_packet_io.lo ddc_phantom_displays.lo \
+	ddc_read_capabilities.lo ddc_save_current_settings.lo \
+	ddc_serialize.lo ddc_services.lo ddc_strategy.lo ddc_vcp.lo \
+	ddc_vcp_version.lo ddc_try_data.lo
 libddc_la_OBJECTS = $(am_libddc_la_OBJECTS)
 AM_V_lt = $(am__v_lt_@AM_V@)
 am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
@@ -146,14 +137,15 @@ am__depfiles_remade = ./$(DEPDIR)/ddc_common_init.Plo \
 	./$(DEPDIR)/ddc_display_ref_reports.Plo \
 	./$(DEPDIR)/ddc_display_selection.Plo \
 	./$(DEPDIR)/ddc_displays.Plo ./$(DEPDIR)/ddc_dumpload.Plo \
+	./$(DEPDIR)/ddc_initial_checks.Plo \
 	./$(DEPDIR)/ddc_multi_part_io.Plo ./$(DEPDIR)/ddc_output.Plo \
 	./$(DEPDIR)/ddc_packet_io.Plo \
+	./$(DEPDIR)/ddc_phantom_displays.Plo \
 	./$(DEPDIR)/ddc_read_capabilities.Plo \
+	./$(DEPDIR)/ddc_save_current_settings.Plo \
 	./$(DEPDIR)/ddc_serialize.Plo ./$(DEPDIR)/ddc_services.Plo \
-	./$(DEPDIR)/ddc_status_events.Plo ./$(DEPDIR)/ddc_strategy.Plo \
-	./$(DEPDIR)/ddc_try_data.Plo ./$(DEPDIR)/ddc_vcp.Plo \
-	./$(DEPDIR)/ddc_vcp_version.Plo \
-	./$(DEPDIR)/ddc_watch_displays.Plo
+	./$(DEPDIR)/ddc_strategy.Plo ./$(DEPDIR)/ddc_try_data.Plo \
+	./$(DEPDIR)/ddc_vcp.Plo ./$(DEPDIR)/ddc_vcp_version.Plo
 am__mv = mv -f
 COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
 	$(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
@@ -174,7 +166,7 @@ am__v_CCLD_ = $(am__v_CCLD_@AM_DEFAULT_V@)
 am__v_CCLD_0 = @echo "  CCLD    " $@;
 am__v_CCLD_1 = 
 SOURCES = $(libddc_la_SOURCES)
-DIST_SOURCES = $(am__libddc_la_SOURCES_DIST)
+DIST_SOURCES = $(libddc_la_SOURCES)
 am__can_run_installinfo = \
   case $$AM_UPDATE_INFO_DIR in \
     n|no|NO) false;; \
@@ -250,6 +242,7 @@ ECHO_C = @ECHO_C@
 ECHO_N = @ECHO_N@
 ECHO_T = @ECHO_T@
 EGREP = @EGREP@
+ENABLE_BUILD_TIMESTAMP_FLAG = @ENABLE_BUILD_TIMESTAMP_FLAG@
 ENABLE_ENVCMDS_FLAG = @ENABLE_ENVCMDS_FLAG@
 ENABLE_SHARED_LIB_FLAG = @ENABLE_SHARED_LIB_FLAG@
 ENABLE_TARGETBSD_FLAG = @ENABLE_TARGETBSD_FLAG@
@@ -394,12 +387,26 @@ CLEANFILES = \
 
 # Intermediate Library
 noinst_LTLIBRARIES = libddc.la
-libddc_la_SOURCES = ddc_common_init.c ddc_displays.c \
-	ddc_display_ref_reports.c ddc_display_selection.c \
-	ddc_dumpload.c ddc_multi_part_io.c ddc_output.c \
-	ddc_packet_io.c ddc_read_capabilities.c ddc_serialize.c \
-	ddc_services.c ddc_status_events.c ddc_strategy.c ddc_vcp.c \
-	ddc_vcp_version.c ddc_try_data.c $(am__append_1)
+libddc_la_SOURCES = \
+ddc_common_init.c           \
+ddc_displays.c              \
+ddc_display_ref_reports.c   \
+ddc_display_selection.c     \
+ddc_dumpload.c              \
+ddc_initial_checks.c        \
+ddc_multi_part_io.c         \
+ddc_output.c                \
+ddc_packet_io.c             \
+ddc_phantom_displays.c      \
+ddc_read_capabilities.c     \
+ddc_save_current_settings.c \
+ddc_serialize.c             \
+ddc_services.c              \
+ddc_strategy.c              \
+ddc_vcp.c                   \
+ddc_vcp_version.c           \
+ddc_try_data.c 
+
 all: all-am
 
 .SUFFIXES:
@@ -459,18 +466,19 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ddc_display_selection.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ddc_displays.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ddc_dumpload.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ddc_initial_checks.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ddc_multi_part_io.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ddc_output.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ddc_packet_io.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ddc_phantom_displays.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ddc_read_capabilities.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ddc_save_current_settings.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ddc_serialize.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ddc_services.Plo@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ddc_status_events.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ddc_strategy.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ddc_try_data.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ddc_vcp.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ddc_vcp_version.Plo@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ddc_watch_displays.Plo@am__quote@ # am--include-marker
 
 $(am__depfiles_remade):
 	@$(MKDIR_P) $(@D)
@@ -638,18 +646,19 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/ddc_display_selection.Plo
 	-rm -f ./$(DEPDIR)/ddc_displays.Plo
 	-rm -f ./$(DEPDIR)/ddc_dumpload.Plo
+	-rm -f ./$(DEPDIR)/ddc_initial_checks.Plo
 	-rm -f ./$(DEPDIR)/ddc_multi_part_io.Plo
 	-rm -f ./$(DEPDIR)/ddc_output.Plo
 	-rm -f ./$(DEPDIR)/ddc_packet_io.Plo
+	-rm -f ./$(DEPDIR)/ddc_phantom_displays.Plo
 	-rm -f ./$(DEPDIR)/ddc_read_capabilities.Plo
+	-rm -f ./$(DEPDIR)/ddc_save_current_settings.Plo
 	-rm -f ./$(DEPDIR)/ddc_serialize.Plo
 	-rm -f ./$(DEPDIR)/ddc_services.Plo
-	-rm -f ./$(DEPDIR)/ddc_status_events.Plo
 	-rm -f ./$(DEPDIR)/ddc_strategy.Plo
 	-rm -f ./$(DEPDIR)/ddc_try_data.Plo
 	-rm -f ./$(DEPDIR)/ddc_vcp.Plo
 	-rm -f ./$(DEPDIR)/ddc_vcp_version.Plo
-	-rm -f ./$(DEPDIR)/ddc_watch_displays.Plo
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
 	distclean-tags
@@ -700,18 +709,19 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/ddc_display_selection.Plo
 	-rm -f ./$(DEPDIR)/ddc_displays.Plo
 	-rm -f ./$(DEPDIR)/ddc_dumpload.Plo
+	-rm -f ./$(DEPDIR)/ddc_initial_checks.Plo
 	-rm -f ./$(DEPDIR)/ddc_multi_part_io.Plo
 	-rm -f ./$(DEPDIR)/ddc_output.Plo
 	-rm -f ./$(DEPDIR)/ddc_packet_io.Plo
+	-rm -f ./$(DEPDIR)/ddc_phantom_displays.Plo
 	-rm -f ./$(DEPDIR)/ddc_read_capabilities.Plo
+	-rm -f ./$(DEPDIR)/ddc_save_current_settings.Plo
 	-rm -f ./$(DEPDIR)/ddc_serialize.Plo
 	-rm -f ./$(DEPDIR)/ddc_services.Plo
-	-rm -f ./$(DEPDIR)/ddc_status_events.Plo
 	-rm -f ./$(DEPDIR)/ddc_strategy.Plo
 	-rm -f ./$(DEPDIR)/ddc_try_data.Plo
 	-rm -f ./$(DEPDIR)/ddc_vcp.Plo
 	-rm -f ./$(DEPDIR)/ddc_vcp_version.Plo
-	-rm -f ./$(DEPDIR)/ddc_watch_displays.Plo
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic
 

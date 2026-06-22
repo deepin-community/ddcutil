@@ -2,7 +2,7 @@
  *  Implement the INTERROGATE command
  */
 
-// Copyright (C) 2021-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2021-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <assert.h>
@@ -15,6 +15,7 @@
 
 #include "public/ddcutil_types.h"
 
+#include "util/report_util.h"
 #include "util/string_util.h"
 
 #include "base/core.h"
@@ -26,6 +27,7 @@
 
 #include "vcp/persistent_capabilities.h"
 
+#include "i2c/i2c_bus_core.h"
 #include "i2c/i2c_execute.h"
 
 #include "ddc/ddc_displays.h"
@@ -60,19 +62,11 @@ void app_interrogate(Parsed_Cmd * parsed_cmd)
    DBGTRC_STARTING(debug, TRACE_GROUP, "");
    dup2(1,2);   // redirect stderr to stdout
    // set_ferr(fout);    // ensure that all messages are collected - made unnecessary by dup2()
-   f0printf(fout(), "Setting output level very-verbose...\n");
-   set_output_level(DDCA_OL_VV);  // affects this thread only
-   f0printf(fout(), "Setting maximum retries...\n");
-   try_data_set_maxtries2(WRITE_ONLY_TRIES_OP, MAX_MAX_TRIES);
-   try_data_set_maxtries2(WRITE_READ_TRIES_OP, MAX_MAX_TRIES);
-   try_data_set_maxtries2(MULTI_PART_READ_OP,  MAX_MAX_TRIES);
-   try_data_set_maxtries2(MULTI_PART_WRITE_OP, MAX_MAX_TRIES);
-   f0printf(fout(), "Forcing --stats...\n");
-   parsed_cmd->stats_types = DDCA_STATS_ALL;
-   f0printf(fout(), "Forcing --disable-capabilities-cache\n");
-   enable_capabilities_cache(false);
-   f0printf(fout(), "Forcing --force-slave-address..\n");
-   i2c_forceable_slave_addr_flag = true;
+
+   bool saved_prefix_report_output = rpt_set_ornamentation_enabled(false);
+
+
+   force_envcmd_settings(parsed_cmd);
    f0printf(fout(), "This command will take a while to run...\n\n");
 
    ddc_ensure_displays_detected();    // *** ???
@@ -114,6 +108,9 @@ void app_interrogate(Parsed_Cmd * parsed_cmd)
       reset_stats();
    }
    f0printf(fout(), "\nDisplay scanning complete.\n");
+
+   rpt_set_ornamentation_enabled(saved_prefix_report_output);
+
    DBGTRC_DONE(debug, TRACE_GROUP, "");
 }
 #endif

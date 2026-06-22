@@ -108,16 +108,6 @@ char * basename0(char * fn) {
 #endif
 
 
-static char * drm_bus_type_name(uint8_t bus) {
-   char * result = NULL;
-   if (bus == DRM_BUS_PCI)
-      result = "pci";
-   else
-      result = "unk";
-   return result;
-}
-
-
 static void report_drmVersion(drmVersion * vp, int depth) {
    rpt_vstring(depth, "Version:     %d.%d.%d",
                       vp->version_major, vp->version_minor, vp->version_patchlevel);
@@ -274,6 +264,17 @@ static void probe_open_device_using_libdrm(int fd, int depth) {
        rpt_vstring(d2, "drmCheckModesettingSupported() returned undocumented status code %d", rc);
     }
    }
+   rpt_nl();
+    int  is_master = drmIsMaster(fd);
+    rpt_vstring(d1, "drmIsMaster() returned %d", is_master);  // 1 == true, 0 == false
+     rpt_vstring(d2, "i.e. %s master", (is_master) ? "IS" : "IS NOT");
+
+    // int drmrc = drmSetMaster(fd);
+    // if (drmrc != 0)
+    //    rpt_vstring(d1, "drmSetMaster failed.  drmrc = %d - %s", drmrc, psc_name(-drmrc));
+    // else
+    //   rpt_vstring(d1, "drmSetMaster() succeeded");
+
 
 #ifdef REF
    extern drmModePropertyPtr drmModeGetProperty(int fd, uint32_t propertyId);
@@ -404,7 +405,7 @@ static void probe_open_device_using_libdrm(int fd, int depth) {
 
       char connector_name[100];
       snprintf(connector_name, 100, "%s-%u",
-                                    connector_type_title(conn->connector_type),
+                                    drm_connector_type_title(conn->connector_type),
                                     conn->connector_type_id);
 
       rpt_vstring(d1, "%-20s %u",       "connector_id:",      conn->connector_id);
@@ -412,7 +413,7 @@ static void probe_open_device_using_libdrm(int fd, int depth) {
       //                                                         conn->connector_type_id);
       rpt_vstring(d2, "%-20s %s",       "connector name",     connector_name);
       rpt_vstring(d2, "%-20s %d - %s",  "connector_type:",    conn->connector_type,
-                                                              connector_type_title(conn->connector_type));
+                                                              drm_connector_type_title(conn->connector_type));
       rpt_vstring(d2, "%-20s %d",       "connector_type_id:", conn->connector_type_id);
       rpt_vstring(d2, "%-20s %d - %s",  "connection:",        conn->connection,
                                                               connector_status_title(conn->connection));
@@ -766,7 +767,7 @@ static void probe_one_device_using_libdrm(char * devname, int depth) {
 
    if (fd >= 0) {
       probe_open_device_using_libdrm(fd, depth);
-      close(fd);
+      CLOSE_W_ERRMSG(fd);
    }
 }
 

@@ -3,13 +3,10 @@
  *  String utility functions
  */
 
-// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-
 /** \cond */
-#define _GNU_SOURCE
-
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
@@ -19,9 +16,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <syslog.h>
 /** \endcond */
 
 #include "glib_util.h"
+#include "debug_util.h"  // temp
 
 #include "string_util.h"
 
@@ -138,6 +137,9 @@ bool str_ends_with(const char * value_to_test, const char * suffix) {
  *  @return starting position of substring, -1 if not found
  */
 int str_contains(const char * value_to_test, const char * segment) {
+   bool debug = false;
+   if (debug)
+      printf("(%s) value_to_test=|%s|, segment=|%s|\n", __func__, value_to_test, segment);
    int result = -1;
    if (value_to_test && segment) {
       int seglen = strlen(segment);
@@ -149,6 +151,8 @@ int str_contains(const char * value_to_test, const char * segment) {
          }
       }
    }
+   if (debug)
+      printf("(%s) Returning: %d\n", __func__, result);
    return result;
 }
 
@@ -449,35 +453,43 @@ String_Array* new_string_array(int size) {
  *
  * Note: Each character in delims is used as an individual test.
  * The full string is NOT a delimiter string.
+ *
+ * If str_to_split is NULL, a null terminated array of 0 pieces is returned.
+ * If delims is NULL (and str_to_split is not NULL), a null terminated array
+ * containing 1 piece (containing the value of str_to_split) is returned.
  */
 Null_Terminated_String_Array strsplit(const char * str_to_split, const char * delims) {
    bool debug = false;
-   size_t max_pieces = (strlen(str_to_split)+1);
+   size_t max_pieces = (str_to_split) ? (strlen(str_to_split)+1) : 1;
    if (debug)
       printf("(%s) str_to_split=|%s|, delims=|%s|, max_pieces=%zu\n",
              __func__, str_to_split, delims, max_pieces);
 
    char** workstruct = calloc(sizeof(char *), max_pieces+1);
    int piecect = 0;
-
-   char * str_to_split_dup = g_strdup(str_to_split);
-   char * rest = str_to_split_dup;
-   char * token;
-   // originally token assignment was in while() clause, but valgrind
-   // complaining about uninitialized variable, trying to figure out why
-   token = strsep(&rest, delims);      // n. overwriteedid.cs character found
-   while (token) {
-      if (debug)
-         printf("(%s) token: |%s|\n", __func__, token);
-      if (strlen(token) > 0)
-         workstruct[piecect++] = g_strdup(token);
-      token = strsep(&rest, delims);
+   if (str_to_split) {
+      char * str_to_split_dup = g_strdup(str_to_split);
+      char * rest = str_to_split_dup;
+      char * token;
+      // originally token assignment was in while() clause, but valgrind
+      // complaining about uninitialized variable, trying to figure out why
+      token = strsep(&rest, delims);      // n. overwrites character found
+      while (token) {
+         if (debug)
+            printf("(%s) token: |%s|\n", __func__, token);
+         if (strlen(token) > 0)
+            workstruct[piecect++] = g_strdup(token);
+         token = strsep(&rest, delims);
+      }
+      free(str_to_split_dup);
    }
    if (debug)
       printf("(%s) piecect=%d\n", __func__, piecect);
+
    char ** result = calloc(sizeof(char *), piecect+1);
    // n. workstruct[piecect] == NULL because we used calloc()
    memcpy(result, workstruct, (piecect+1)*sizeof(char*) );
+
    if (debug) {
       int ndx = 0;
       char * curpiece = result[ndx];
@@ -485,11 +497,11 @@ Null_Terminated_String_Array strsplit(const char * str_to_split, const char * de
          printf("(%s) curpiece=%p |%s|\n", __func__, curpiece, curpiece);
          ndx++;
          curpiece = result[ndx];
-
       }
    }
+
    free(workstruct);
-   free(str_to_split_dup);
+
    return result;
 }
 
@@ -1223,7 +1235,7 @@ int hhs_to_byte_array(const char * hhs, Byte** ba_loc)
 {
    bool debug = false;
    if (debug)
-      printf("(%s) strlen(hhs) = %ld, ba_loc=%p\n", __func__, strlen(hhs), ba_loc);
+      printf("(%s) strlen(hhs) = %zu, ba_loc=%p\n", __func__, strlen(hhs), ba_loc);
    if ( strlen(hhs) % 2)     // if odd number of characters
       return -1;
    char xlate[] = "0123456789ABCDEF";
@@ -1484,7 +1496,7 @@ char * hexstring3_t(
          strcat(buf, sepstr);
    }
    if (debug) {
-      printf("(%s) strlen(buf) = %ld, required_size=%zu\n", __func__, strlen(buf), required_size );
+      printf("(%s) strlen(buf) = %zu, required_size=%zu\n", __func__, strlen(buf), required_size );
       printf("(%s)  buf=|%s|\n", __func__, buf );
    }
    assert(strlen(buf) <= required_size-1);
@@ -1519,6 +1531,75 @@ char * hexstring_t(
 
 
 /** Dump a region of memory as hex characters and their ASCII values.
+ *  The output is indented by the specified number of spaces, and
+ *  collected in a GPtrArray.
+ *
+ *  @param collector  line of output are added to this array
+ *  @param data       start of region to show
+ *  @param size       length of region
+ *  @param indents    number of spaces to indent the output
+ */
+void hex_dump_indented_collect(GPtrArray * collector, const Byte* data, int size, int indents)
+{
+   bool debug = false;
+   DBGF(debug, "Starting. indents=%d", indents);
+   assert(collector);
+   if (debug) {
+      show_backtrace(0);
+      backtrace_to_syslog(LOG_NOTICE, 0);
+   }
+
+   int i; // index in data...
+   int j; // index in line...
+   char temp[10];    // was 8, compiler complains that too small
+   char buffer[128];
+   char *ascii;
+   char indentation[100];
+   g_snprintf(indentation, 100, "%.*s", indents, "");
+
+   memset(buffer, 0, 128);
+
+   // Printing the ruler...
+   char * line = g_strdup_printf(
+           "%s        +0          +4          +8          +c            0   4   8   c   ",
+           indentation);
+   g_ptr_array_add(collector, line);
+
+   ascii = buffer + 58;
+   memset(buffer, ' ', 58 + 16);
+   buffer[58 + 16] = '\0';
+   buffer[0] = '+';
+   buffer[1] = '0';
+   buffer[2] = '0';
+   buffer[3] = '0';
+   buffer[4] = '0';
+   for (i = 0, j = 0; i < size; i++, j++) {
+      if (j == 16) {
+         char * line = g_strdup_printf("%s%s", indentation, buffer);
+         g_ptr_array_add(collector, line);
+         memset(buffer, ' ', 58 + 16);
+         sprintf(temp, "+%04x", i);
+         memcpy(buffer, temp, 5);
+         j = 0;
+      }
+
+      sprintf(temp, "%02x", 0xff & data[i]);
+      memcpy(buffer + 8 + (j * 3), temp, 2);
+      if ((data[i] > 31) && (data[i] < 127))
+         ascii[j] = data[i];
+      else
+         ascii[j] = '.';
+   }
+
+   if (j != 0) {
+      char * line = g_strdup_printf("%s%s", indentation, buffer);
+      g_ptr_array_add(collector, line);
+   }
+   DBGF(debug, "Done");
+}
+
+
+/** Dump a region of memory as hex characters and their ASCII values.
  *  The output is indented by the specified number of spaces.
  *
  *  @param fh       where to write output, if NULL, write nothing
@@ -1528,51 +1609,12 @@ char * hexstring_t(
  */
 void fhex_dump_indented(FILE * fh, const Byte* data, int size, int indents)
 {
-   if (fh) {
-      int i; // index in data...
-      int j; // index in line...
-      char temp[10];    // was 8, compiler complains that too small
-      char buffer[128];
-      char *ascii;
-      char indentation[100];
-      snprintf(indentation, 100, "%*s", indents, "");
-
-      memset(buffer, 0, 128);
-
-      // printf("\n");
-      // Printing the ruler...
-      fprintf(fh,
-              "%s        +0          +4          +8          +c            0   4   8   c   \n",
-              indentation);
-      ascii = buffer + 58;
-      memset(buffer, ' ', 58 + 16);
-      buffer[58 + 16] = '\n';
-      buffer[58 + 17] = '\0';
-      buffer[0] = '+';
-      buffer[1] = '0';
-      buffer[2] = '0';
-      buffer[3] = '0';
-      buffer[4] = '0';
-      for (i = 0, j = 0; i < size; i++, j++) {
-         if (j == 16) {
-            fprintf(fh, "%s%s", indentation, buffer);
-            memset(buffer, ' ', 58 + 16);
-            sprintf(temp, "+%04x", i);
-            memcpy(buffer, temp, 5);
-            j = 0;
-         }
-
-         sprintf(temp, "%02x", 0xff & data[i]);
-         memcpy(buffer + 8 + (j * 3), temp, 2);
-         if ((data[i] > 31) && (data[i] < 127))
-            ascii[j] = data[i];
-         else
-            ascii[j] = '.';
-      }
-
-      if (j != 0)
-         fprintf(fh, "%s%s", indentation, buffer);
+   GPtrArray * collector = g_ptr_array_new_with_free_func(g_free);
+   hex_dump_indented_collect(collector, data, size, indents);
+   for (int ndx = 0; ndx < collector->len; ndx++) {
+      fprintf(fh, "%s\n", (char*) g_ptr_array_index(collector, ndx));
    }
+   g_ptr_array_free(collector, true);
 }
 
 

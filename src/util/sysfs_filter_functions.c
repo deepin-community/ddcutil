@@ -1,9 +1,10 @@
 /** @file sysfs_filter_functions.c */
 
-// Copyright (C) 2021-2024 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2021-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <assert.h>
+#include <ctype.h>
 #include <glib-2.0/glib.h>
 #include <regex.h>
 #include <stdbool.h>
@@ -13,219 +14,52 @@
 
 #include "debug_util.h"
 #include "report_util.h"
+#include "regex_util.h"
 #include "string_util.h"
 #include "sysfs_util.h"
 
 #include "sysfs_filter_functions.h"
 
 
-//
-// Store compiled regular expressions
-//
-
-GHashTable * regex_hash_table = NULL;
-
-// GDestroyNotify void (*GDestroyNotify) (gpointer data);
-void destroy_regex(gpointer data) {
-   // printf("(%s) Destroying compiled regex at %p\n", __func__, data);
-   regfree( (regex_t*) data );
-   free(data);                      // ???
-}
-
-GHashTable* get_regex_hash_table() {
-   // printf("(%s) Starting. regex_hash_table = %p\n", __func__, regex_hash_table);
-   if (!regex_hash_table)
-      regex_hash_table = g_hash_table_new_full(
-            g_str_hash,                // GHashFunc hash_func,
-            g_str_equal,               // GEqualFunc key_equal_func,
-            g_free,                    // GDestroyNotify key_destroy_func,
-            destroy_regex);            // GDestroyNotify value_destroy_func
-
-   // printf("(%s) Done. Returning regex_hash_table = %p\n", __func__, regex_hash_table);
-   return regex_hash_table;
-}
-
-
-void dbgrpt_regex_hash_table() {
-   if (regex_hash_table) {
-      GHashTableIter iter;
-      gpointer key, value;
-      g_hash_table_iter_init(&iter, regex_hash_table);
-      while (g_hash_table_iter_next(&iter, &key, &value)) {
-          rpt_vstring(2, "   %p->\"%s\"  :   %p", key, (char *) key, value);
-      }
-   }
-   else
-      rpt_vstring(1, "regex_hash_table not allocated");
-}
-
-
-void free_regex_hash_table() {
-   bool debug = false;
-   if (debug)
-      printf("(%s) Starting. regex_hash_table=%p\n", __func__, (void*)regex_hash_table);
-   if (regex_hash_table) {
-      if (debug) {
-         printf("(%s) Hash table contents:\n", __func__);
-         dbgrpt_regex_hash_table(regex_hash_table);
-      }
-      g_hash_table_destroy(regex_hash_table);
-      regex_hash_table = NULL;
-   }
-   if (debug)
-      printf("(%s) Done.\n", __func__);
-}
-
-
-void save_compiled_regex(const char * pattern, regex_t * compiled_re) {
-   bool debug = false;
-   if (debug)
-      printf("(%s) Starting. pattern = |%s|, compiled_re=%p\n",
-             __func__, pattern, (void*)compiled_re);
-   GHashTable * regex_hash = get_regex_hash_table();
-   g_hash_table_replace(regex_hash, g_strdup( pattern), compiled_re);
-   if (debug)
-      printf("(%s) Done.\n", __func__);
-}
-
-
-regex_t * get_compiled_regex(const char * pattern) {
-   bool debug = false;
-   if (debug)
-      printf("(%s) Starting. pattern = |%s|\n", __func__, pattern);
-   GHashTable * regex_hash = get_regex_hash_table();
-   regex_t * result = g_hash_table_lookup(regex_hash, pattern);
-   if (debug)
-      printf("(%s) Returning %p. pattern = |%s|\n", __func__, (void*)result, pattern);
-   return result;
-}
-
-
-//
-// Filename_Filter_Func
-//
-
 static const char * cardN_connector_pattern = "^card[0-9]+[-]";
 static const char * cardN_pattern = "^card[0-9]+$";
 static const char * D_00hh_pattern = "^[0-9]+-00[0-9a-fA-F]{2}$";
 static const char * i2c_N_pattern = "^i2c-([0-9]+)$";
 
-#ifdef FUTURE
-// requires testing
-bool eval_regex_with_matches(regex_t * re, const char * value, size_t max_matches, regmatch_t * pm ) {
-   bool debug = false;
-   if (debug)
-      printf("(%s) Starting. re=%p, value=|%s|\n", __func__, (void*)re, value);
-   int rc = regexec(
-          re,                   /* the compiled pattern */
-          value,                /* the subject string */
-          max_matches,
-          pm,
-          0
-       );
-   bool result = (rc  == 0) ? true : false;
-   if (debug)
-       printf("(%s) Returning %s. value=|%s|, regexec() returned %d\n",
-             __func__, sbool(result), value, rc);
-   return result;
-}
-#endif
+//
+// Predicate functions for filenames and attribute values, of
+// typedef Filname_Filter_Func
+//
 
-bool eval_regex(regex_t * re, const char * value) {
-   bool debug = false;
-   if (debug)
-      printf("(%s) Starting. re=%p, value=|%s|\n", __func__, (void*)re, value);
-   int rc = regexec(
-          re,                   /* the compiled pattern */
-          value,                /* the subject string */
-          0,
-          NULL,
-          0
-       );
-   bool result = (rc  == 0) ? true : false;
-   if (debug)
-       printf("(%s) Returning %s. value=|%s|, regexec() returned %d\n",
-             __func__, sbool(result), value, rc);
-   return result;
-}
-
-
-bool compile_and_eval_regex(const char * pattern, const char * value) {
-   bool debug = false;
-   if (debug)
-      printf("(%s) Starting. pattern=|%s|, value=|%s|\n", __func__, pattern, value);
-   regex_t * re = get_compiled_regex(pattern);
-   // printf("(%s) forcing re = NULL\n", __func__);
-   // re = NULL;
-   if (!re) {
-      re = calloc(1, sizeof(regex_t));
-      if (debug)
-         printf("(%s) Allocated regex %p, compiling...\n", __func__, (void*)re);
-      int rc = regcomp(re, pattern, REG_EXTENDED);
-      if (rc != 0) {
-         printf("(%s) regcomp() returned %d\n", __func__, rc);
-         assert(rc == 0);
-      }
-      save_compiled_regex(pattern, re);
-   }
-   bool result = eval_regex(re, value);
-   if (debug)
-      printf("(%s) Done. Returning %s\n", __func__, sbool(result));
-   return result;
-}
-
-
-#ifdef FUTURE
-// to test
-bool compile_and_eval_regex_with_matches(
-      const char * pattern,
-      const char * value,
-      size_t       max_matches,
-      regmatch_t * pm)
-{
-   bool debug = false;
-   if (debug)
-      printf("(%s) Starting. pattern=|%s|, value=|%s|\n", __func__, pattern, value);
-   regex_t * re = get_compiled_regex(pattern);
-   // printf("(%s) forcing re = NULL\n", __func__);
-   // re = NULL;
-   if (!re) {
-      re = calloc(1, sizeof(regex_t));
-      if (debug)
-         printf("(%s) Allocated regex %p, compiling...\n", __func__, (void*)re);
-      int rc = regcomp(re, pattern, REG_EXTENDED);
-      if (rc != 0) {
-         printf("(%s) regcomp() returned %d\n", __func__, rc);
-         assert(rc == 0);
-      }
-      save_compiled_regex(pattern, re);
-   }
-   bool result = eval_regex_with_matches(re, value, max_matches, pm);
-   if (debug)
-      printf("(%s) Done. Returning %s\n", __func__, sbool(result));
-   return result;
-}
-#endif
-
-
-
+/** Tests if a value is a drm card identifier, e.g. "card1"
+ *
+ *  @param   value value to test
+ *  @result  true/false
+ */
 bool predicate_cardN(const char * value) {
    bool debug = false;
    if (debug)
       printf("(%s) Starting. value = |%s|\n", __func__, value);
 
-   bool b2 = compile_and_eval_regex(cardN_pattern, value);
+   bool result = compile_and_eval_regex(cardN_pattern, value);
 
-   // bool result = str_starts_with(value, "card") && strlen(value) == 5;
+   // bool b1 = str_starts_with(value, "card") && strlen(value) == 5;
    // if (debug)
-   //    printf("(%s) str_starts_with() && strlen() returned %s\n", __func__, sbool(result));
-   // assert(b2 == result);
+   //    printf("(%s) str_starts_with() && strlen() returned %s\n", __func__, sbool(b1));
+   // assert(b2 == b1);
+
    if (debug)
-      printf("(%s) Returning: %s. value=|%s|\n", __func__, sbool(b2), value);
-   return b2;
+      printf("(%s) Returning: %s. value=|%s|\n", __func__, sbool(result), value);
+   return result;
 }
 
 
+/** Tests if a value appears to be a DRM connector, e.g "card2-DP-1"
+ *  Only the initial part of the value being tested is actually checked.
+ *
+ *  @param  value value to test
+ *  @result true/false
+ */
 bool predicate_cardN_connector(const char * value) {
    bool debug = false;
    if (debug)
@@ -237,6 +71,11 @@ bool predicate_cardN_connector(const char * value) {
 }
 
 
+/** Tests if a value is an I2C bus identifier, e.g. "i2c-13"
+ *
+ *  @param  value value to test
+ *  @result true/false
+ */
 bool predicate_i2c_N(const char * value) {
    bool debug = false;
    bool b1 = compile_and_eval_regex(i2c_N_pattern, value);
@@ -249,7 +88,7 @@ bool predicate_i2c_N(const char * value) {
 #ifdef FUTURE
 // untested
 int match_i2c_N(const char * value) {
-   bool debug = true;
+   bool debug = false;
    regmatch_t matchpos;
    int result = -1;
    if (compile_and_eval_regex(i2c_N_pattern, value, &matchpos)) {
@@ -264,7 +103,7 @@ int match_i2c_N(const char * value) {
 
 
 int match_dev_i2c_N(const char * value) {
-   bool debug = true;
+   bool debug = false;
    int result = -1;
    if (str_starts_with(value,  "/dev/")) {
       result = match_i2c_N(value+5);
@@ -275,22 +114,68 @@ int match_dev_i2c_N(const char * value) {
 }
 #endif
 
-bool class_display_device_predicate(const char * value) {
-   return str_starts_with(value, "0x03");
-}
 
-
+/** Tests if a value looks like "3-00a7", found in /sys/bus/i2c/devices
+ *
+ *  @param  value value to test
+ *  @result true/false
+ */
 bool predicate_any_D_00hh(const char * value) {
    bool debug = false;
-   // if (debug)
-   //    printf("(%s) Starting. value=|%s|\n", __func__, value);
+
    bool b1 = compile_and_eval_regex(D_00hh_pattern, value);
+
    if (debug)
       printf("(%s) value=|%s|, Returning %s\n", __func__, value, sbool( b1));
    return b1;
 }
 
 
+/** Tests if a value (for a class attribute) indicates a display device,
+ *  e.g. the value starts with "0x03"
+ *
+ *  @param  value value to test
+ *  @result true/false
+ */
+bool class_display_device_predicate(const char * value) {
+   return str_starts_with(value, "0x03");
+}
+
+
+//
+// Predicate functions for filenames and attribute values, of
+// typedef Filname_Filter_Func_With_Arg
+//
+
+/** Tests if a filename has a specific value
+ *
+ *  @param  filename  value to test
+ *  @param  val       value to test against
+ *  @return true/false
+ */
+bool fn_equal(const char * filename, const char * val) {
+   return streq(filename, val);
+}
+
+
+/** Tests if a filename starts with a specific value
+ *
+ *  @param  filename  value to test
+ *  @param  val       value to test against
+ *  @return true/false
+ */
+bool fn_starts_with(const char * filename, const char * val) {
+   return str_starts_with(filename, val);
+}
+
+/** Tests if a value looks like "N-00HH", found in /sys/bus/i2c/devices
+ *  where HH is a specific hex value representing a bus number
+ *
+ *  @param  value    value to test
+ *  @param  sbusno   I2c Bus number, as hex string
+ *  @result true/false
+ */
+// e.g. "3-00hh" where hh is bus number
 bool predicate_exact_D_00hh(const char * value, const char * sbusno) {
    bool debug = false;
    if (debug)
@@ -310,7 +195,8 @@ bool predicate_exact_D_00hh(const char * value, const char * sbusno) {
 
 
 //
-// Dir_Filter_Func
+// Predicate functions for dirname/filename pairs,
+// i.e. functions of typedef Dir_Filter_Func
 //
 
 #ifdef MAYBE_FUTURE
@@ -323,7 +209,7 @@ bool dirname_starts_with(const char * dirname, const char * val) {
 #endif
 
 
-// for e.g. i2c-3
+// for e.g. dirname = "i2c-3"
 bool is_i2cN_dir(const char * dirname, const char * fn_ignored) {
    bool debug = false;
    bool result = predicate_i2c_N(dirname);
@@ -333,6 +219,7 @@ bool is_i2cN_dir(const char * dirname, const char * fn_ignored) {
 }
 
 
+// test dirname starts with "drm_dp_aux"
 bool is_drm_dp_aux_subdir(const char * dirname, const char * fn_ignored) {
    bool debug = false;
    bool result = str_starts_with(dirname, "drm_dp_aux");
@@ -341,7 +228,7 @@ bool is_drm_dp_aux_subdir(const char * dirname, const char * fn_ignored) {
    return result;
 }
 
-// for e.g. card0-DP-1
+// for simple_fn e.g. card0-DP-1, dirname ignored
 bool is_card_connector_dir(const char * dirname, const char * simple_fn) {
    bool debug = false;
    DBGF(debug, "Starting. dirname=|%s|, simple_fn=|%s|", dirname, simple_fn);
@@ -365,7 +252,14 @@ bool is_drm_dir(const char * dirname, const char * simple_fn) {
    return result;
 }
 
-// does dirname/simple_fn have attribute class with value display controller or docking station?
+
+/** Does dirname/simple_fn have attribute class with value
+ *  display controller or docking station?
+ *
+ *  @param  dirname   directory name
+ *  @param  simple_fn sugdirectory
+ *  @return true/false
+ */
 bool has_class_display_or_docking_station(
       const char * dirname, const char * simple_fn)
 {
@@ -390,7 +284,13 @@ bool has_class_display_or_docking_station(
 }
 
 
-// does dirname/simple_fn have attribute class with value display controller?
+/** Does dirname/simple_fn have attribute class with value display controller?
+ *  i.e. has value x03hh
+ *
+ *  @param  dirname   directory name
+ *  @param  simple_fn subdirectory
+ *  @return true/false
+ */
 bool has_class_display(
       const char * dirname, const char * simple_fn)
 {
@@ -411,6 +311,32 @@ bool has_class_display(
    if (debug)
       printf("(%s) class_val = %s, top_byte = 0x%02x, result=%s\n", __func__, class_val, top_byte, sbool(result) );
    free(class_val);
+   return result;
+}
+
+
+/** Tests whether the filename of a dirname/filename pair
+ *  has the form card<digits>-....
+ *
+ *  @param  dirname   directory name (ignored)
+ *  @param  simple_fn value to test
+ *  @return true/false
+ */
+bool is_drm_connector(const char * dirname, const char * simple_fn) {
+   bool debug = false;
+   DBGF(debug, "Starting. dirname=%s, simple_fn=%s", dirname, simple_fn);
+
+   bool result = false;
+   if (str_starts_with(simple_fn, "card")) {
+      char * s0 = g_strdup( simple_fn + 4);   // work around const char *
+      char * s = s0;
+      while (isdigit(*s)) s++;
+      if (*s == '-')
+         result = true;
+      free(s0);
+   }
+
+   DBGF(debug, "Done.     Returning %s", SBOOL(result));
    return result;
 }
 

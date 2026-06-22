@@ -5,8 +5,6 @@
 // Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#define _GNU_SOURCE
-
 /** \cond */
 #include <assert.h>
 #include <dirent.h>
@@ -292,6 +290,20 @@ bye:
 }
 
 
+
+/** Checks if a file exists, without checking type
+ *
+ * @param fqfn fully qualified file name
+ * @return     true/false
+ */
+bool
+any_file_exists(const char * fqfn) {
+   struct stat stat_buf;
+   int rc = stat(fqfn, &stat_buf);
+   return (rc == 0);
+}
+
+
 /** Checks if a regular file exists.
  *
  * @param fqfn fully qualified file name
@@ -413,7 +425,7 @@ filename_for_fd(int fd, char** filename_loc) {
       *filename_loc = result;
    }
    if (debug)
-      printf("(%s) fd=%d, ct=%ld, returning: %d, *filename_loc=%p -> |%s|\n",
+      printf("(%s) fd=%d, ct=%zd, returning: %d, *filename_loc=%p -> |%s|\n",
           __func__, fd, ct, rc, *filename_loc, *filename_loc);
    return rc;
 }
@@ -471,6 +483,9 @@ dir_foreach(
       void *               accumulator,
       int                  depth)
 {
+   // bool debug = true;
+   // DBGF(debug, "Starting. accumulator=%p", accumulator);
+
    struct dirent *dent;
    DIR           *d;
    d = opendir(dirname);
@@ -483,6 +498,37 @@ dir_foreach(
          if (!streq(dent->d_name, ".") && !streq(dent->d_name, "..") ) {
             if (!fn_filter || fn_filter(dent->d_name)) {
                func(dirname, dent->d_name, accumulator, depth);
+            }
+         }
+      }
+      closedir(d);
+   }
+
+   // DBGF(debug, "Done.  accumlator=%p", accumulator);
+}
+
+
+void dir_foreach_terminatable(
+      const char *          dirname,
+      Filename_Filter_Func  fn_filter,
+      Terminating_Dir_Foreach_Func      func,
+      void *                accumulator,
+      int                   depth)
+{
+   struct dirent *dent;
+   DIR           *d;
+   d = opendir(dirname);
+   if (!d) {
+      rpt_vstring(depth,"Unable to open directory %s: %s", dirname, strerror(errno));
+   }
+   else {
+      while ((dent = readdir(d)) != NULL) {
+         // DBGMSG("%s", dent->d_name);
+         if (!streq(dent->d_name, ".") && !streq(dent->d_name, "..") ) {
+            if (!fn_filter || fn_filter(dent->d_name)) {
+               bool halt = func(dirname, dent->d_name, accumulator, depth);
+               if (halt)
+                  break;
             }
          }
       }
@@ -935,3 +981,17 @@ long get_inode_by_fd(int fd) {
    }
    return result;
 }
+
+
+
+#ifdef UNUSED
+void set_fd_blocking(int fd) {
+   int flags = fcntl(fd, F_GETFL, /* ignored for F_GETFL */ 0);
+   assert (flags != -1);
+   flags &= ~O_NONBLOCK;
+   (void) fcntl(fd, F_SETFL, flags);
+   assert(rc != -1);
+}
+#endif
+
+
