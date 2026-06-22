@@ -11,7 +11,7 @@
  * - destination stack
  */
 
-// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 /** \cond */
@@ -22,14 +22,31 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <syslog.h>
 #include <unistd.h>
 /** \endcond */
 
 #include "coredefs_base.h"
 #include "file_util_base.h"
+#include "msg_util.h"
 #include "string_util.h"
 
 #include "report_util.h"
+
+bool redirect_reports_to_syslog = false;
+bool tag_output = false;
+
+static bool default_prefix_report_output = false;
+
+/** Sets the initial report ornamentation status.
+ *
+ *  Note this does not change the ornamentation status for existing threads.
+ *
+ *  @param output_dest  default output destination
+ */
+void rpt_set_default_ornamentation_enabled(bool onoff) {
+   default_prefix_report_output = onoff;
+}
 
 
 #define DEFAULT_INDENT_SPACES_PER_DEPTH 3
@@ -72,6 +89,9 @@ typedef struct {
    // work around for fact that can't initialize the initial stack entry to stdout
    FILE* alt_initial_output_dest;     // initial NULL;
    bool  initial_output_dest_changed; // initial false;
+
+   bool  prefix_report_output;        // initial false
+   // bool  temporary_reports_to_syslog; // initial false
 } Per_Thread_Settings;
 
 
@@ -90,6 +110,7 @@ static Per_Thread_Settings *  get_thread_settings() {
       settings = g_new0(Per_Thread_Settings, 1);
       settings->indent_spaces_stack_pos = -1;
       settings->output_dest_stack_pos   = -1;
+      settings->prefix_report_output = default_prefix_report_output;
 
       if (default_output_dest)
          settings->output_dest_stack[++settings->output_dest_stack_pos] = default_output_dest;
@@ -100,6 +121,26 @@ static Per_Thread_Settings *  get_thread_settings() {
    // printf("(%s) Returning: %p\n", __func__, settings);
    return settings;
 }
+
+
+//
+// Ornamentation control
+//
+
+
+bool rpt_get_ornamentation_enabled()  {
+   Per_Thread_Settings * settings = get_thread_settings();
+   return settings->prefix_report_output;
+}
+
+
+bool rpt_set_ornamentation_enabled(bool enabled) {
+   Per_Thread_Settings * settings = get_thread_settings();
+   bool old = settings->prefix_report_output;
+   settings->prefix_report_output = enabled;
+   return old;
+}
+
 
 
 //
@@ -242,16 +283,31 @@ void rpt_change_output_dest(FILE* new_dest) {
 }
 
 
+#ifdef MAYBE_FUTURE
+bool rpt_set_reports_to_syslog_override(bool onoff) {
+   Per_Thread_Settings * settings = get_thread_settings();
+   bool old = settings->temporary_reports_to_syslog;
+   settings->temporary_reports_to_syslog = onoff;
+   return old;
+}
+#endif
+
+
+
 // should not be needed, for diagnosing a problem
 void rpt_flush() {
-   fflush(rpt_cur_output_dest());
+   if (!redirect_reports_to_syslog)
+      fflush(rpt_cur_output_dest());
 }
 
 
 /** Writes a newline to the current output destination.
  */
 void rpt_nl() {
-   f0printf(rpt_cur_output_dest(), "\n");
+   if (redirect_reports_to_syslog)
+      syslog(LOG_NOTICE, "\n");
+   else
+      f0printf(rpt_cur_output_dest(), "\n");
 }
 
 
@@ -274,11 +330,21 @@ void rpt_title_collect(const char * title, GPtrArray * collector, int depth) {
    if (debug)
       printf("(%s) Writing to %p\n", __func__, (void*)rpt_cur_output_dest());
 
+   char prefix[100] = {0};
+   if (rpt_get_ornamentation_enabled())
+      get_msg_decoration(prefix, 100, redirect_reports_to_syslog);
+
    if (collector) {
-      g_ptr_array_add(collector, g_strdup_printf("%*s%s\n", rpt_get_indent(depth), "", title));
+      g_ptr_array_add(collector, g_strdup_printf("%*s%s", rpt_get_indent(depth), "", title));
    }
    else {
-      f0printf(rpt_cur_output_dest(), "%*s%s\n", rpt_get_indent(depth), "", title);
+      if (depth >= 0) {
+         if (redirect_reports_to_syslog)
+            syslog(LOG_NOTICE, "%s%*s%s%s",
+                  prefix, rpt_get_indent(depth), "", title, (tag_output) ? " (I)" : "");
+         else
+            f0printf(rpt_cur_output_dest(), "%s%*s%s\n", prefix, rpt_get_indent(depth), "", title);
+      }
    }
 }
 
@@ -447,7 +513,16 @@ void rpt_g_ptr_array(int depth, GPtrArray * strings) {
  *  @param depth logical indentation depth
  */
 void rpt_hex_dump(const Byte * data, int size, int depth) {
-   fhex_dump_indented(rpt_cur_output_dest(), data, size, rpt_get_indent(depth));
+   if (redirect_reports_to_syslog) {
+      GPtrArray * collector = g_ptr_array_new_with_free_func(g_free);
+      hex_dump_indented_collect(collector, data, size,  rpt_get_indent(depth));
+      for (int ndx = 0; ndx < collector->len; collector++) {
+         syslog(LOG_NOTICE, "%s", (char*) g_ptr_array_index(collector, ndx));
+      }
+      g_ptr_array_free(collector, true);
+   }
+   else
+      fhex_dump_indented(rpt_cur_output_dest(), data, size, rpt_get_indent(depth));
 }
 
 

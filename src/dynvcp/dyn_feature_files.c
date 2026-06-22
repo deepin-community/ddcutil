@@ -104,7 +104,7 @@ static void
 dfr_save(
       Dynamic_Features_Rec * dfr)
 {
-   char * key = model_id_string(
+   char * key = mmk_model_id_string(
                    dfr->mfg_id,
                    dfr->model_name,
                    dfr->product_code);
@@ -121,7 +121,7 @@ dfr_lookup(
 {
    Dynamic_Features_Rec * result = NULL;
    if (dynamic_features_records) {
-      char * key = model_id_string(mfg_id, model_name, product_code);
+      char * key = mmk_model_id_string(mfg_id, model_name, product_code);
       result = g_hash_table_lookup(dynamic_features_records, key);
       assert(memcmp(result->marker, DYNAMIC_FEATURES_REC_MARKER, 4) == 0);
       // if (result->flags & DFR_FLAGS_NOT_FOUND)
@@ -175,7 +175,7 @@ get_feature_metadata(
  *  \return fully qualified name of file found (caller must free), NULL if not found
  */
 char *
-find_feature_def_file(
+dfr_find_feature_def_file(
       const char * simple_fn)
 {
    bool debug = false;
@@ -214,13 +214,13 @@ dfr_load_by_mmk(
       Dynamic_Features_Rec ** dfr_loc)
 {
    bool debug = false;
-   DBGTRC_STARTING(debug, TRACE_GROUP, "mmk = %s", monitor_model_string(&mmk));
+   DBGTRC_STARTING(debug, TRACE_GROUP, "mmk = %s", mmk_string(&mmk));
 
    Error_Info *           errs = NULL;
    Dynamic_Features_Rec * dfr  = NULL;
 
-   char * simple_fn = model_id_string(mmk.mfg_id, mmk.model_name,mmk.product_code);
-   char * fqfn = find_feature_def_file(simple_fn);
+   char * simple_fn = mmk_model_id_string(mmk.mfg_id, mmk.model_name,mmk.product_code);
+   char * fqfn = dfr_find_feature_def_file(simple_fn);
    if (fqfn) {
       GPtrArray * lines = g_ptr_array_new_with_free_func(g_free);
       errs = file_getlines_errinfo(fqfn, lines); // read file into lines
@@ -314,13 +314,29 @@ dfr_check_by_dref(
    if (enable_dynamic_features) {   // global variable
       if ( !(dref->flags & DREF_DYNAMIC_FEATURES_CHECKED) ) {
          DBGTRC_NOPREFIX(debug, TRACE_GROUP, "DREF_DYNAMIC_FEATURES_CHECKED not yet set");
-         Monitor_Model_Key mmk = monitor_model_key_value_from_edid(dref->pedid);
+         Monitor_Model_Key mmk = mmk_value_from_edid(dref->pedid);
          errs = dfr_load_by_mmk(mmk, &dref->dfr);  // will be a dummy record if errors
          dref->flags |= DREF_DYNAMIC_FEATURES_CHECKED;
       }
    }
 
    DBGTRC_RET_ERRINFO(debug, TRACE_GROUP, errs, "dref->drf=%p", dref->dfr);
+   return errs;
+}
+
+
+Error_Info *
+dfr_check_by_dh(
+      Display_Handle * dh)
+{
+   bool debug = false;
+   DBGTRC_STARTING(debug, TRACE_GROUP, "dh=%s, enable_dynamic_features=%s",
+                 dh_repr_p(dh), sbool(enable_dynamic_features));
+
+   Display_Ref * dref = dh->dref;
+   Error_Info * errs = dfr_check_by_dref(dref);
+
+   DBGTRC_RET_ERRINFO(debug, TRACE_GROUP, errs, "dh->dref->drf=%p", dh->dref->dfr);
    return errs;
 }
 
@@ -356,5 +372,5 @@ dfr_check_by_mmk(
 void init_dyn_feature_files() {
    RTTI_ADD_FUNC(dfr_check_by_dref);
    RTTI_ADD_FUNC(dfr_load_by_mmk);
-   RTTI_ADD_FUNC(find_feature_def_file);
+   RTTI_ADD_FUNC(dfr_find_feature_def_file);
 }

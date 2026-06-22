@@ -3,7 +3,7 @@
  * ddc layer initialization and configuration, statistics management
  */
 
-// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "config.h"
@@ -15,6 +15,7 @@
 /** \endcond */
 
 #include "base/base_services.h"
+#include "base/display_lock.h"
 #include "base/display_retry_data.h"
 #include "base/dsa2.h"
 #include "base/feature_metadata.h"
@@ -28,8 +29,13 @@
 #include "vcp/persistent_capabilities.h"
 #include "vcp/vcp_feature_codes.h"
 
+#include "dynvcp/vcp_feature_set.h"
 #include "dynvcp/dyn_feature_codes.h"
+#include "dynvcp/dyn_feature_set.h"
 #include "dynvcp/dyn_feature_files.h"
+#include "dynvcp/dyn_parsed_capabilities.h"
+
+#include "sysfs/sysfs_services.h"
 
 #include "i2c/i2c_services.h"
 
@@ -39,20 +45,29 @@
 
 #include "ddc/ddc_common_init.h"
 #include "ddc/ddc_display_selection.h"
-#include "i2c/i2c_display_lock.h"
 #include "ddc/ddc_display_ref_reports.h"
 #include "ddc/ddc_displays.h"
 #include "ddc/ddc_dumpload.h"
+#include "ddc/ddc_initial_checks.h"
 #include "ddc/ddc_multi_part_io.h"
 #include "ddc/ddc_output.h"
 #include "ddc/ddc_packet_io.h"
+#include "ddc/ddc_phantom_displays.h"
 #include "ddc/ddc_read_capabilities.h"
 #include "ddc/ddc_serialize.h"
-#include "ddc/ddc_status_events.h"
+#include "ddc/ddc_save_current_settings.h"
 #include "ddc/ddc_try_data.h"
 #include "ddc/ddc_vcp.h"
+#include "ddc/ddc_vcp_version.h"
+
+#include "dw/dw_status_events.h"
 #ifdef BUILD_SHARED_LIB
-#include "ddc/ddc_watch_displays.h"
+#include "dw/dw_dref.h"
+#include "dw/dw_xevent.h"
+#include "dw/dw_udev.h"
+#include "dw/dw_poll.h"
+#include "dw/dw_main.h"
+#include "dw/dw_common.h"
 #endif
 
 #include "ddc/ddc_services.h"
@@ -93,6 +108,8 @@ void ddc_report_stats_main(DDCA_Stats_Type  stats,
    bool debug = false;
    DBGTRC_STARTING(debug, DDCA_TRC_DDC, "stats: 0x%02x, show_per_thread_stats: %s, include_dsa_internal: %s",
          stats, sbool(show_per_display_stats), sbool(include_dsa_internal));
+
+   bool saved_prefix_report_output = rpt_set_ornamentation_enabled(false);
 
    if (stats_to_syslog_only) {
       start_capture(DDCA_CAPTURE_STDERR);
@@ -165,17 +182,16 @@ void ddc_report_stats_main(DDCA_Stats_Type  stats,
    }
 
    if (stats_to_syslog_only) {
-      char * result = end_capture();
-      Null_Terminated_String_Array lines = strsplit(result, "\n");
-      free(result);
+      Null_Terminated_String_Array lines = end_capture_as_ntsa();
       int len = ntsa_length(lines);
-      int ndx;
-      for (ndx=0; ndx<len; ndx++) {
+      for (int ndx=0; ndx<len; ndx++) {
          syslog(LOG_INFO, "%s", lines[ndx]);
          // printf("%s\n", lines[ndx]);
       }
       ntsa_free(lines, true);
    }
+
+   rpt_set_ornamentation_enabled(saved_prefix_report_output);
 
    DBGTRC_DONE(debug, DDCA_TRC_DDC, "");
 }
@@ -186,6 +202,9 @@ void ddc_report_stats_main(DDCA_Stats_Type  stats,
 void init_ddc_services() {
    bool debug = false;
    DBGMSF(debug, "Starting");
+
+   // sysfs
+   init_sysfs_services();
 
    // i2c:
    init_i2c_services();
@@ -199,31 +218,35 @@ void init_ddc_services() {
    init_persistent_capabilities();
    init_parse_capabilities();
    init_vcp_feature_codes();
+   init_vcp_feature_set();
 
    // dyn:
    init_dyn_feature_codes();    // must come after init_vcp_feature_codes()
+   init_dyn_feature_set();
    init_dyn_feature_files();
+   init_dyn_parsed_capabilities();
 
    // i2c:
    init_i2c_display_lock();
 
    // ddc:
    init_ddc_common_init();
+   init_ddc_save_current_settings();
    init_ddc_try_data();
    init_ddc_display_selection();
    init_ddc_display_ref_reports();
+   init_ddc_phantom_displays();
+   init_ddc_initial_checks();
    init_ddc_displays();
    init_ddc_dumpload();
    init_ddc_output();
    init_ddc_packet_io();
    init_ddc_read_capabilities();
    init_ddc_serialize();
-   init_ddc_status_events();
+   init_dw_status_events();
    init_ddc_multi_part_io();
    init_ddc_vcp();
-// #ifdef BUILD_SHARED_LIB
-   init_ddc_watch_displays();
-// #endif
+   init_ddc_vcp_version();
 
    RTTI_ADD_FUNC(ddc_report_stats_main);
 
@@ -237,6 +260,7 @@ void init_ddc_services() {
 void terminate_ddc_services() {
    bool debug = false;
    DBGTRC_STARTING(debug, DDCA_TRC_DDCIO, "");
+   // ddc_stop_watch_displays(true,NULL);
    terminate_ddc_serialize();
    terminate_ddc_displays();  // must be called before terminate_ddc_packet_io()
    terminate_ddc_packet_io();

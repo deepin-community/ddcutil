@@ -3,7 +3,7 @@
  *  Report utility package
  */
 
-// Copyright (C) 2014-2022 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef REPORT_UTIL_H_
@@ -21,6 +21,26 @@ extern "C" {
 
 #include "coredefs_base.h"
 #include "string_util.h"
+
+#ifdef PERHAPS
+#define RPT_PREFIX_NONE   0x00
+#define RPT_PREFIX_PID    0x01
+#define RPT_PREFIX_TID    0x02
+#define RPT_PREFIX_TS     0x04
+#define RPT_PREFIX_WTD    0x08
+
+extern __thread Byte rpt_prefix_options;
+#endif
+
+// If set, report messages are written to the system log, not the terminal
+extern bool redirect_reports_to_syslog;
+// If set, report messages have a letter tag appended, as a debugging aid
+// for identifying message source location.
+extern bool tag_output;
+
+void rpt_set_default_ornamentation_enabled(bool onoff);
+bool rpt_get_ornamentation_enabled();
+bool rpt_set_ornamentation_enabled(bool enabled);
 
 void rpt_set_default_output_dest(FILE* output_dest);
 void rpt_push_output_dest(FILE* new_dest);

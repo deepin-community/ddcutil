@@ -1,7 +1,4 @@
-/** @file displays.c
- *
- * Monitor identifier, reference, handle
- */
+/** @file displays.c   Monitor identifier, reference, handle  */
 
 // Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -17,10 +14,12 @@
 #include <string.h>
 
 #include "util/data_structures.h"
+#include "util/debug_util.h"
 #include "util/glib_util.h"
 #include "util/report_util.h"
 #include "util/string_util.h"
 #include "util/sysfs_i2c_util.h"
+#include "util/timestamp.h"
 #ifdef ENABLE_UDEV
 #include "util/udev_util.h"
 #include "util/udev_usb_util.h"
@@ -39,6 +38,11 @@
 
 #include "displays.h"
 
+GPtrArray * all_display_refs = NULL;         // all detected displays, array of Display_Ref *
+GMutex      all_display_refs_mutex;
+bool        debug_locks = false;
+
+bool      terminate_watch_thread = false;
 
 // *** DDCA_IO_Path ***
 
@@ -392,6 +396,20 @@ DDCA_IO_Path i2c_io_path(int busno) {
 }
 
 
+/** A simple function allowing for the assignment of a value to a
+ *  #DDCA_IO_Path instance in a single line of code.
+ *
+ *  @parm   hiddev  USB device number
+ *  @return DDCA_IO_Path value
+ */
+DDCA_IO_Path usb_io_path(int hiddev_devno) {
+   DDCA_IO_Path path;
+   path.io_mode = DDCA_IO_USB;
+   path.path.hiddev_devno = hiddev_devno;
+   return path;
+}
+
+
 /** Thread safe function that returns a brief string representation of a #DDCA_IO_Path.
  *  The returned value is valid until the next call to this function on the current thread.
  *
@@ -447,16 +465,161 @@ char * dpath_repr_t(DDCA_IO_Path * dpath) {
 
 // *** Display_Ref ***
 
+static uint max_dref_id = 0;
+static GMutex max_dref_id_mutex;
+static GHashTable * published_dref_hash = NULL;
+static GMutex dref_hash_mutex;
+
+
+void init_published_dref_hash() {
+   published_dref_hash = g_hash_table_new(g_direct_hash, NULL);
+}
+
+
+void reset_published_dref_hash() {
+   if (published_dref_hash)
+      g_hash_table_destroy(published_dref_hash);
+   init_published_dref_hash();
+}
+
+
+void dbgrpt_published_dref_hash(const char * msg, int depth) {
+    if (msg)
+       rpt_vstring(depth, "%s: dref_hash_contents:", msg);
+    else
+       rpt_label(depth, "dref_hash contents: ");
+
+    GHashTableIter iter;
+    gpointer key, value;
+    g_hash_table_iter_init (&iter, published_dref_hash);
+    while (g_hash_table_iter_next (&iter, &key, &value)) {
+       uint dref_id = GPOINTER_TO_UINT(key);
+       Display_Ref * dref = (Display_Ref *) value;
+       rpt_vstring(depth+1, "dref_id %d -> %s", dref_id, dref_reprx_t(dref));
+    }
+}
+
+
+static uint next_dref_id(Display_Ref * dref) {
+   bool debug = false;
+   g_mutex_lock (&max_dref_id_mutex);
+   guint nextid = ++max_dref_id;
+   g_mutex_unlock(&max_dref_id_mutex);
+   DBGTRC_EXECUTED(debug, DDCA_TRC_NONE, "nextid = %u", nextid);
+   return nextid;
+}
+
+
+void add_published_dref_id_by_dref(Display_Ref * dref) {
+   bool debug = false;
+   g_mutex_lock (&dref_hash_mutex);
+   g_hash_table_insert(published_dref_hash, GUINT_TO_POINTER(dref->dref_id), dref);
+   if (debug) {
+      char msgbuf[100];
+      g_snprintf(msgbuf, 100, "After dref %s inserted", dref_reprx_t(dref));
+      dbgrpt_published_dref_hash(msgbuf, 0);
+   }
+   g_mutex_unlock(&dref_hash_mutex);
+   DBGTRC_EXECUTED(debug, DDCA_TRC_NONE, "%s -> %d", dref_reprx_t(dref), dref->dref_id);
+}
+
+
+static void delete_published_dref_id(uint dref_id) {
+   bool debug = false;
+   g_mutex_lock (&dref_hash_mutex);
+   g_hash_table_remove(published_dref_hash, GUINT_TO_POINTER(dref_id));
+   if (debug) {
+      char msgbuf[50];
+      g_snprintf(msgbuf, 50, "After dref_id %d removed", dref_id);
+      dbgrpt_published_dref_hash(msgbuf, 0);
+   }
+   g_mutex_unlock(&dref_hash_mutex);
+}
+
+
+#ifdef UNUSED
+Display_Ref * dref_id_to_ptr(guint dref_id) {
+   bool debug = false;
+   if (debug)
+      dbgrpt_published_dref_hash("Before g_hash_table_lookup", 2);
+
+   Display_Ref * dref = g_hash_table_lookup(published_dref_hash, GUINT_TO_POINTER(dref_id));
+   return dref;
+}
+#endif
+
+
+/** Given a DDCA_Display_Ref, looks up the corresponding Display_Ref*
+ *  in the hash table of external display refs that have been given
+ *  to the client.
+ *
+ *   @param ddca_dref public opaque display ref
+ *   @result pointer to internal Display_Ref, NULL if not found
+ */
+Display_Ref * dref_from_published_ddca_dref(DDCA_Display_Ref ddca_dref) {
+   bool debug = false;
+   DBGTRC_STARTING(debug, DDCA_TRC_NONE, "ddca_dref = %p", ddca_dref);
+
+#ifdef NUMERIC_DDCA_DISPLAY_REF
+    // if (debug)
+    //    dbgrpt_published_dref_hash(__func__, 1);
+   guint id = GPOINTER_TO_UINT(ddca_dref);
+   Display_Ref * dref = g_hash_table_lookup(published_dref_hash, GUINT_TO_POINTER(id));
+
+   if (dref) {
+      DBGTRC_NOPREFIX(debug, DDCA_TRC_NONE, "ddca_dref=%p -> %s", ddca_dref, dref_reprx_t(dref));
+      if (memcmp(dref->marker, DISPLAY_REF_MARKER, 4) != 0)
+         dbgrpt_display_ref(dref, true, 2);
+      assert(memcmp(dref->marker, DISPLAY_REF_MARKER, 4) == 0);
+   }
+#else
+   Display_Ref * dref = (Display_Ref*) ddca_dref;
+   if (dref) {
+      if (memcmp(dref->marker, DISPLAY_REF_MARKER, 4) != 0)
+         dref = NULL;
+   }
+#endif
+
+   if (dref)
+      DBGTRC_DONE(debug, DDCA_TRC_NONE, "ddca_dref=%p, returning %p -> %s", ddca_dref, dref, dref_reprx_t(dref));
+   else
+      DBGTRC_DONE(debug, DDCA_TRC_NONE, "ddca_dref=%p, returning %p", ddca_dref, dref);
+   return dref;
+}
+
+
+DDCA_Display_Ref dref_to_ddca_dref(Display_Ref * dref) {
+   bool debug = false;
+   DDCA_Display_Ref ddca_dref = (DDCA_Display_Ref*) GUINT_TO_POINTER(0);
+   if (dref) {
+#ifdef NUMERIC_DDCA_DISPLAY_REF
+      ddca_dref = (DDCA_Display_Ref*) GUINT_TO_POINTER(dref->dref_id);
+#else
+      ddca_dref = (void*) dref;
+#endif
+      DBGTRC_EXECUTED(debug, DDCA_TRC_NONE, "dref=%p, dref->dref_id=%d, returning %p",
+                                            dref, dref->dref_id, ddca_dref);
+   }
+   else
+      DBGTRC_EXECUTED(debug, DDCA_TRC_NONE, "dref=%p, returning %p", dref, ddca_dref);
+   return ddca_dref;
+}
+
+
+
 Display_Ref * create_base_display_ref(DDCA_IO_Path io_path) {
    bool debug = false;
    DBGTRC_STARTING(debug, DDCA_TRC_BASE, "io_path=%s", dpath_repr_t(&io_path));
    Display_Ref * dref = calloc(1, sizeof(Display_Ref));
    memcpy(dref->marker, DISPLAY_REF_MARKER, 4);
    dref->io_path = io_path;
+   dref->dref_id = next_dref_id(dref);
    dref->vcp_version_xdf = DDCA_VSPEC_UNQUERIED;
    dref->vcp_version_cmdline = DDCA_VSPEC_UNQUERIED;
+   dref->creation_timestamp = cur_realtime_nanosec();
    // Per_Display_Data * pdd = pdd_get_per_display_data(io_path, true);
    // dref->pdd = pdd;
+   g_mutex_init(&dref->access_mutex);
    // DBGTRC_RET_STRUCT(debug, DDCA_TRC_BASE, "Display_Ref", dbgrpt_display_ref, dref);
    DBGTRC_DONE(debug, DDCA_TRC_BASE, "Returning %p", dref);
    return dref;
@@ -477,13 +640,15 @@ Display_Ref * create_bus_display_ref(int busno) {
    io_path.path.i2c_busno = busno;
    Display_Ref * dref = create_base_display_ref(io_path);
 
+#ifdef OLD
    dref->driver_name = get_i2c_sysfs_driver_by_busno(busno);
+#endif
    if (debug) {
       DBGMSG("Done.  Constructed bus display ref %s:", dref_repr_t(dref));
-      dbgrpt_display_ref(dref,0);
+      dbgrpt_display_ref(dref, true, 0);
    }
 
-   DBGTRC_RET_STRUCT(debug, DDCA_TRC_BASE, "Display_Ref", dbgrpt_display_ref, dref);
+   DBGTRC_RET_STRUCT(debug, DDCA_TRC_BASE, "Display_Ref", dbgrpt_display_ref0, dref);
    return dref;
 }
 
@@ -510,13 +675,7 @@ Display_Ref * create_usb_display_ref(int usb_bus, int usb_device, char * hiddev_
    dref->usb_device  = usb_device;
    dref->usb_hiddev_name = g_strdup(hiddev_devname);
 
-#ifdef OLD
-   if (debug) {
-      DBGMSG("Done.  Constructed USB display ref:");
-      dbgrpt_display_ref(dref,0);
-   }
-#endif
-   DBGTRC_RET_STRUCT(debug, DDCA_TRC_BASE, "Display_Ref", dbgrpt_display_ref, dref);
+   DBGTRC_RET_STRUCT(debug, DDCA_TRC_BASE, "Display_Ref", dbgrpt_display_ref0, dref);
    // DBGTRC_DONE(debug, DDCA_TRC_BASE, "Returning %p", dref);
    return dref;
 }
@@ -531,6 +690,7 @@ Display_Ref * copy_display_ref(Display_Ref * dref) {
       DDCA_IO_Path iopath = dref->io_path;
       copy = create_base_display_ref(iopath);
       copy->usb_bus = dref->usb_bus;
+      copy->dref_id = next_dref_id(copy);
       copy->usb_device = dref->usb_device;
       copy->usb_hiddev_name = g_strdup(dref->usb_hiddev_name);
       copy->vcp_version_xdf = dref->vcp_version_xdf;
@@ -549,9 +709,12 @@ Display_Ref * copy_display_ref(Display_Ref * dref) {
       // do not set dfr
       // do not set actual_display
       copy->actual_display_path = dref->actual_display_path;
+#ifdef OLD
       copy->driver_name = g_strdup(dref->driver_name);
+#endif
       // dont set pdd
       copy->drm_connector = g_strdup(dref->drm_connector);
+      copy->drm_connector_id = dref->drm_connector_id;
    }
    // DBGTRC_RET_STRUCT(debug, DDCA_TRC_BASE, "Display_Ref", dbgrpt_display_ref, copy);
    DBGTRC_DONE(debug, DDCA_TRC_BASE, "Returning %p", copy);
@@ -581,6 +744,7 @@ DDCA_Status free_display_ref(Display_Ref * dref) {
             ddcrc = DDCRC_LOCKED;
          }
          else {
+            uint dref_id = dref->dref_id;
             free(dref->usb_hiddev_name);        // private copy
             free(dref->capabilities_string);    // private copy
             free(dref->mmid);                   // private copy
@@ -589,17 +753,45 @@ DDCA_Status free_display_ref(Display_Ref * dref) {
                free_parsed_edid(dref->pedid);  // private copy
             }
             dfr_free(dref->dfr);
+#ifdef OLD
             free(dref->driver_name);
+#endif
             free(dref->drm_connector);
             free(dref->communication_error_summary);
+            g_mutex_clear(&dref->access_mutex);
             dref->marker[3] = 'x';
             free(dref);
+            delete_published_dref_id(dref_id);
          }
       }
    }
    DBGTRC_RET_DDCRC(debug, DDCA_TRC_BASE, ddcrc, "");
    return ddcrc;
 }
+
+
+void dref_lock(Display_Ref * dref) {
+   bool debug = false;
+   DBGTRC_STARTING(debug, DDCA_TRC_NONE, "locking dref %s ...", dref_reprx_t(dref));
+   bool was_locked = !g_mutex_trylock(&(dref->access_mutex));
+   if (was_locked ) {
+      DBGTRC_NOPREFIX(true, DDCA_TRC_NONE, "dref %s is locked,  waiting ... ", dref_reprx_t(dref));
+      g_mutex_lock(&(dref->access_mutex));
+      DBGTRC_NOPREFIX(true, DDCA_TRC_NONE, "obtained lock on %s",  dref_reprx_t(dref));
+   }
+   DBGTRC_DONE(debug, DDCA_TRC_NONE, "dref %s", dref_reprx_t(dref));
+}
+
+
+void dref_unlock(Display_Ref * dref) {
+   bool debug = false;
+   DBGTRC_STARTING(debug, DDCA_TRC_NONE, "unlocking dref %s ...", dref_reprx_t(dref));
+
+   g_mutex_unlock(&dref->access_mutex);
+
+   DBGTRC_DONE(debug, DDCA_TRC_NONE, "dref %s unlocked", dref_reprx_t(dref));
+}
+
 
 #ifdef UNNEEDED
 // wraps free_display_ref() as GDestroyNotify()
@@ -625,10 +817,28 @@ bool dref_eq(Display_Ref* this, Display_Ref* that) {
 }
 
 
+/** Gets the driver name for an I2C device.
+ *
+ *  @param dref display reference
+ *  @return driver name, caller SHOULD NOT free
+ *
+ *  Returns NULL if not a I2C device, or display ref is disconnected
+ */
+const char * dref_get_i2c_driver(Display_Ref* dref) {
+   char * result = NULL;
+   if (dref->io_path.io_mode == DDCA_IO_I2C) {
+      I2C_Bus_Info* businfo = dref->detail;
+      if (businfo)
+         result = businfo->driver;
+   }
+   return result;
+}
+
+
 #ifdef UNUSED
 bool dref_set_alive(Display_Ref * dref, bool alive) {
    assert(dref);
-   bool debug = true;
+   bool debug = false;
    bool old = dref->flags & DREF_ALIVE;
    if (old != alive)
       DBGTRC_EXECUTED(debug, DDCA_TRC_BASE, "dref=%s, alive changed: %s -> %s",
@@ -650,13 +860,15 @@ bool dref_get_alive(Display_Ref * dref) {
  *  \param  dref  pointer to #Display_Ref instance
  *  \param  depth logical indentation depth
  */
-void dbgrpt_display_ref(Display_Ref * dref, int depth) {
+void dbgrpt_display_ref(Display_Ref * dref, bool include_businfo, int depth) {
    bool debug = false;
    DBGTRC_STARTING(debug, DDCA_TRC_NONE, "dref=%s", dref_repr_t(dref));
    int d1 = depth+1;
    int d2 = depth+2;
 
    rpt_structure_loc("Display_Ref", dref, depth);
+   rpt_vstring(d1, "marker            %.4s", dref->marker);
+   rpt_vstring(d1, "dref_id           %d", dref->dref_id);
    rpt_vstring(d1, "io_path:          %s", dpath_repr_t(&(dref->io_path)));
    if (dref->io_path.io_mode == DDCA_IO_USB) {
       rpt_int("usb_bus",         NULL, dref->usb_bus,         d1);
@@ -673,22 +885,59 @@ void dbgrpt_display_ref(Display_Ref * dref, int depth) {
    rpt_vstring(d1, "pedid:               %p", dref->pedid);
    report_parsed_edid(dref->pedid, /*verbose*/ false, depth+1);
 
+#ifdef OLD
    rpt_vstring(d1, "driver:           %s", dref->driver_name);
+#endif
    rpt_vstring(d1, "actual_display:   %p", dref->actual_display);
    rpt_vstring(d1, "actual_display_path: %s",
          (dref->actual_display_path) ? dpath_repr_t(dref->actual_display_path) : "NULL");
    rpt_vstring(d1, "detail:         %p", dref->detail);
-   if (dref->io_path.io_mode == DDCA_IO_I2C) {
+   if (dref->io_path.io_mode == DDCA_IO_I2C && include_businfo) {
       I2C_Bus_Info * businfo = dref->detail;
       if (businfo) {
-         i2c_dbgrpt_bus_info(businfo, d2);
+         i2c_dbgrpt_bus_info(businfo, true, d2);
       }
    }
    rpt_vstring(d1, "drm_connector:   %s", dref->drm_connector);
+   rpt_vstring(d1, "drm_connector_id: %d", dref->drm_connector_id);
+   rpt_vstring(d1, "creation_timestamp: %s", formatted_time_t(dref->creation_timestamp));
 
    DBGTRC_DONE(debug, DDCA_TRC_NONE, "");
 }
 
+// for use by DBGTRC_RET_STRUCT()
+void dbgrpt_display_ref0(Display_Ref * dref, int depth) {
+   dbgrpt_display_ref(dref, true, depth);
+}
+
+void dbgrpt_display_ref_summary(Display_Ref * dref, bool include_businfo, int depth) {
+   bool debug = false;
+   int d1 = depth+1;
+   int d2 = depth+2;
+   assert(dref);
+
+   DBGTRC_STARTING(debug, DDCA_TRC_NONE, "dref=%s", dref_reprx_t(dref));
+   rpt_vstring(depth, "%s", dref_reprx_t(dref));
+   rpt_vstring(d1, "dref_id              %d", dref->dref_id);
+   // rpt_vstring(d1, "io_path:          %s", dpath_repr_t(&(dref->io_path)));
+   rpt_vstring(d1, "flags:               %s", interpret_dref_flags_t(dref->flags) );
+   rpt_vstring(d1, "mmid:                %s", (dref->mmid) ? mmk_repr(*dref->mmid) : "NULL");
+   rpt_vstring(d1, "dispno:              %d", dref->dispno);
+   rpt_vstring(d1, "pedid:               %p", dref->pedid);
+   // report_parsed_edid(dref->pedid, /*verbose*/ false, depth+1);
+
+   rpt_vstring(d1, "detail:              %p", dref->detail);
+   if (dref->io_path.io_mode == DDCA_IO_I2C && include_businfo) {
+      I2C_Bus_Info * businfo = dref->detail;
+      if (businfo) {
+         i2c_dbgrpt_bus_info(businfo, false, d2);
+      }
+   }
+   rpt_vstring(d1, "drm_connector:       %s", dref->drm_connector);
+   rpt_vstring(d1, "drm_connector_id: %d", dref->drm_connector_id);
+
+   DBGTRC_DONE(debug, DDCA_TRC_NONE, "");
+}
 
 /** Thread safe function that returns a short description of a #Display_Ref.
  *  The returned value is valid until the next call to this function on
@@ -715,14 +964,217 @@ char * dref_repr_t(Display_Ref * dref) {
    char * buf = get_thread_fixed_buffer(&dref_repr_key, 100);
    if (dref)
 #ifdef WITH_ADDR
-      g_snprintf(buf, 100, "Display_Ref[%s @%p]", dpath_short_name_t(&dref->io_path), (void*)dref);
+      g_snprintf(buf, 100, "Display_Ref[%d:%s @%p]", dref->dref_id, dpath_short_name_t(&dref->io_path), (void*)dref);
 #else
-   g_snprintf(buf, 100, "Display_Ref[%s]", dpath_short_name_t(&dref->io_path));
+   g_snprintf(buf, 100, "Display_Ref[%d:%s]", dref->dref_id, dpath_short_name_t(&dref->io_path));
 #endif
    else
       strcpy(buf, "Display_Ref[NULL]");
    return buf;
 }
+
+
+/** Thread safe function that returns an extended string representation
+ *  of a #Display_Ref, suitable for diagnostic messages.
+ *  The representation includes the address of the #Display_Ref and
+ *  an indication if the display reference is for a disconnected monitor.
+ *
+ *  The returned value is valid until the next call to this function on
+ *  the current thread.
+ *
+ *  \param  dref  pointer to #Display_Ref
+ *  \return string representation of #Display_Ref
+ */
+char * dref_reprx_t(Display_Ref * dref) {
+   static GPrivate  dref_repr_key = G_PRIVATE_INIT(g_free);
+
+   char * buf = get_thread_fixed_buffer(&dref_repr_key, 100);
+   if (dref)
+      g_snprintf(buf, 200, "Display_Ref[%s%d:%s @%p]",
+            (dref->flags & DREF_REMOVED) ? "Disconnected: " : "",
+            dref->dref_id,
+            dpath_short_name_t(&dref->io_path),
+            (void*) dref);
+
+   else
+      strcpy(buf, "Display_Ref[NULL]");
+   return buf;
+}
+
+char * ddci_dref_repr_t(DDCA_Display_Ref * ddca_dref) {
+   static GPrivate  dref_repr_key = G_PRIVATE_INIT(g_free);
+
+   char * buf = get_thread_fixed_buffer(&dref_repr_key, 100);
+#ifdef NUMERIC_DDCA_DISPLAY_REF
+   g_snprintf(buf, 100, "DDCA_Display_Ref[%d]", GPOINTER_TO_INT(ddca_dref));
+#else
+   if (ddca_dref) {
+      Display_Ref * dref = (Display_Ref*) ddca_dref;
+#ifdef WITH_ADDR
+      g_snprintf(buf, 100, "DDCA_Display_Ref[%s @%p]", dpath_short_name_t(&dref->io_path), (void*)dref);
+#else
+      g_snprintf(buf, 100, "DDCA_Display_Ref[%s]", dpath_short_name_t(&dref->io_path));
+   }
+#endif
+   else
+      strcpy(buf, "DDCA_Display_Ref[NULL]");
+#endif
+   return buf;
+}
+
+
+/** Locates the currently live Display_Ref for the specified bus.
+ *  Discarded display references, i.e. ones marked removed (flag DREF_REMOVED)
+ *  are ignored. There should be at most one non-removed Display_Ref.
+ *
+ *  @param  busno    I2C_Bus_Number
+ *  @param  connector
+ *  @param  ignore_invalid
+ *  @return  display reference, NULL if no live reference exists
+ */
+Display_Ref * get_dref_by_busno_or_connector(
+      int          busno,
+      const char * connector,
+      bool         ignore_invalid)
+{
+   ASSERT_IFF(busno >= 0, !connector);
+   bool debug = false;
+   debug = debug || debug_locks;
+   DBGTRC_STARTING(debug, DDCA_TRC_NONE, "busno = %d, connector = %s, ignore_invalid=%s",
+                                       busno, connector, SBOOL(ignore_invalid));
+   assert(all_display_refs);
+
+   Display_Ref * result = NULL;
+   int non_removed_ct = 0;
+   uint64_t highest_non_removed_creation_timestamp = 0;
+   // lock entire function on the extremely rare possibility that recovery
+   // will mark a display ref removed
+   g_mutex_lock(&all_display_refs_mutex);
+   for (int ndx = 0; ndx < all_display_refs->len; ndx++) {
+      // If a display is repeatedly removed and added on a particular connector,
+      // there will be multiple Display_Ref records.  All but one should already
+      // be flagged DDCA_DISPLAY_REMOVED,
+      // ?? and should not have a pointer to an I2C_Bus_Info struct.
+
+      Display_Ref * cur_dref = g_ptr_array_index(all_display_refs, ndx);
+      // DBGMSG("Checking dref %s", dref_repr_t(cur_dref));
+
+      if (ignore_invalid && cur_dref->dispno <= 0) {
+         DBGTRC_NOPREFIX(debug, DDCA_TRC_NONE, "cur_dref=%s@%p dispno < 0, Ignoring",
+               dref_repr_t(cur_dref), cur_dref);
+         continue;
+      }
+
+      // I2C_Bus_Info * businfo = (I2C_Bus_Info*) cur_dref->detail;
+      // DBGTRC_NOPREFIX(debug, DDCA_TRC_NONE, "DREF_REMOVED=%s, dref_detail=%p -> /dev/i2c-%d",
+      //       sbool(cur_dref->flags&DREF_REMOVED), cur_dref->detail,  businfo->busno);
+
+      if (ignore_invalid && (cur_dref->flags&DREF_REMOVED)) {
+         DBGTRC_NOPREFIX(debug, DDCA_TRC_NONE, "cur_dref=%s@%p DREF_REMOVED set, Ignoring",
+                dref_repr_t(cur_dref), cur_dref);
+         continue;
+      }
+
+      if (cur_dref->io_path.io_mode != DDCA_IO_I2C) {
+         DBGTRC_NOPREFIX(debug, DDCA_TRC_NONE, "cur_dref=%s@%p io_mode != DDCA_IO_I2C, Ignoring",
+                dref_repr_t(cur_dref), cur_dref);
+         continue;
+      }
+
+      if (connector)   {   // consistency check
+         I2C_Bus_Info * businfo = cur_dref->detail;
+         if (businfo) {
+            assert(streq(businfo->drm_connector_name, cur_dref->drm_connector));
+         }
+         else {
+            SEVEREMSG("active display ref has no bus info");
+         }
+      }
+
+      if ( (busno >= 0 && cur_dref->io_path.path.i2c_busno == busno) ||
+           (connector  && streq(connector, cur_dref->drm_connector) ) )
+      {
+         // the match should only happen once, but count matches as check
+         non_removed_ct++;
+         if (cur_dref->creation_timestamp > highest_non_removed_creation_timestamp) {
+            highest_non_removed_creation_timestamp = cur_dref->creation_timestamp;
+            result = cur_dref;
+         }
+      }
+   }
+   // assert(non_removed_ct <= 1);
+   if (non_removed_ct > 1) {
+      if (!ignore_invalid) {
+         // don't try to recover from this very very very rare case
+         assert(non_removed_ct <= 1);
+      }
+      SEVEREMSG("Multiple non-removed displays on device %s detected. "
+                "All but the most recent are being marked DDC_REMOVED",
+                dpath_repr_t(&result->io_path));
+      for (int ndx = 0; ndx < all_display_refs->len; ndx++) {
+         Display_Ref * cur_dref = g_ptr_array_index(all_display_refs, ndx);
+         if (ignore_invalid && cur_dref->dispno <= 0)
+            continue;
+         if (ignore_invalid && (cur_dref->flags&DREF_REMOVED))
+            continue;
+         if (cur_dref->io_path.io_mode != DDCA_IO_I2C)
+            continue;
+         if ( (busno >= 0 && cur_dref->io_path.path.i2c_busno == busno) ||
+              (connector  && streq(connector, cur_dref->drm_connector) ) )
+         {
+            if (cur_dref->creation_timestamp < highest_non_removed_creation_timestamp) {
+               SEVEREMSG("Marking dref %s removed", dref_reprx_t(cur_dref));
+               //ddc_mark_display_ref_removed(cur_dref);
+               cur_dref->flags |= DREF_REMOVED;
+            }
+         }
+      }
+   }
+   g_mutex_unlock(&all_display_refs_mutex);
+
+   DBGTRC_DONE(debug, DDCA_TRC_NONE, "Returning: %p= %s", result, dref_repr_t(result));
+   return result;
+}
+
+#ifdef UNUSED
+Display_Ref *
+ddc_get_display_ref_by_drm_connector(
+      const char * connector_name,
+      bool         ignore_invalid)
+{
+   bool debug = false;
+   DBGTRC_STARTING(debug, TRACE_GROUP,
+         "connector_name=%s, ignore_invalid=%s", connector_name, sbool(ignore_invalid));
+   Display_Ref * result = NULL;
+   TRACED_ASSERT(all_display_refs);
+   DBGTRC_NOPREFIX(debug, DDCA_TRC_NONE, "all_displays->len=%d", all_display_refs->len);
+   for (int ndx = 0; ndx < all_display_refs->len; ndx++) {
+      Display_Ref * cur = g_ptr_array_index(all_display_refs, ndx);
+      // ddc_dbgrpt_display_ref(cur, 4);
+      bool pass_filter = true;
+      if (ignore_invalid) {
+         pass_filter = (cur->dispno > 0 || !(cur->flags&DREF_REMOVED));
+      }
+      if (pass_filter) {
+         if (cur->io_path.io_mode == DDCA_IO_I2C) {
+            I2C_Bus_Info * businfo = cur->detail;
+            if (!businfo) {
+               SEVEREMSG("active display ref has no bus info");
+               continue;
+            }
+            // TODO: handle drm_connector_name not yet checked
+            if (businfo->drm_connector_name && streq(businfo->drm_connector_name,connector_name)) {
+               result = cur;
+               break;
+            }
+         }
+      }
+   }
+
+   DBGTRC_DONE(debug, TRACE_GROUP, "Returning %s = %p", dref_repr_t(result), result);
+   return result;
+}
+#endif
 
 
 // *** Display_Handle ***
@@ -737,20 +1189,19 @@ char * dref_repr_t(Display_Ref * dref) {
  *  This functions handles the boilerplate of creating a #Display_Handle.
  */
 Display_Handle * create_base_display_handle(int fd, Display_Ref * dref) {
-   // assert(dref->io_mode == DDCA_IO_USB);
+   bool debug = false;
+   DBGTRC_STARTING(debug, DDCA_TRC_NONE, "fd=%d, dref=%s", fd, dref_reprx_t(dref));
+   if (debug)
+      dbgrpt_display_ref(dref, false,  1);
    Display_Handle * dh = calloc(1, sizeof(Display_Handle));
    memcpy(dh->marker, DISPLAY_HANDLE_MARKER, 4);
    dh->fd = fd;
    dh->dref = dref;
    if (dref->io_path.io_mode == DDCA_IO_I2C) {
-      dh->repr = g_strdup_printf(
-#ifdef WITH_ADDR
-                     "Display_Handle[i2c-%d: fd=%d @%p]",
-                     dh->dref->io_path.path.i2c_busno, dh->fd, (void*)dh);
-#else
-      "Display_Handle[i2c-%d: fd=%d]",
-      dh->dref->io_path.path.i2c_busno, dh->fd);
-#endif
+      dh->repr = g_strdup_printf("Display_Handle[i2c-%d: fd=%d]",
+                          dh->dref->io_path.path.i2c_busno, dh->fd);
+      dh->repr_p = g_strdup_printf("Display_Handle[i2c-%d: fd=%d @%p]",
+                          dh->dref->io_path.path.i2c_busno, dh->fd, (void*)dh);
    }
 #ifdef ENABLE_USB
    else if (dref->io_path.io_mode == DDCA_IO_USB) {
@@ -765,9 +1216,11 @@ Display_Handle * create_base_display_handle(int fd, Display_Ref * dref) {
    else {
       // DDCA_IO_USB if !ENABLE_USB
       PROGRAM_LOGIC_ERROR("Unimplemented io_mode = %d", dref->io_path.io_mode);
+      dbgrpt_display_ref(dref, false,  1);
       dh->repr = NULL;
    }
 
+   DBGTRC_DONE(debug, DDCA_TRC_NONE, "Returning %p", dh);
    return dh;
 }
 
@@ -828,6 +1281,21 @@ char * dh_repr(Display_Handle * dh) {
 }
 
 
+/** Returns a string summarizing the specified #Display_Handle,
+ *  including its address.
+ *
+ * \param  dh    display handle
+ * \return  string representation of handle
+ *
+ * \remark
+ * The value is calculated when the Display_Handle is created.
+ */
+char * dh_repr_p(Display_Handle * dh) {
+   if (!dh)
+      return "Display_Handle[NULL]";
+   return dh->repr_p;
+}
+
 /** Frees a #Display_Handle struct.
  *
  * \param  dh  display handle to free
@@ -838,6 +1306,7 @@ void   free_display_handle(Display_Handle * dh) {
    if (dh && memcmp(dh->marker, DISPLAY_HANDLE_MARKER, 4) == 0) {
       dh->marker[3] = 'x';
       free(dh->repr);
+      free(dh->repr_p);
       free(dh);
    }
    DBGTRC_DONE(debug, DDCA_TRC_BASE, "");
@@ -912,6 +1381,7 @@ Value_Name_Table dref_flags_table = {
       VN(DREF_OPEN),
       VN(DREF_DDC_BUSY),
       VN(DREF_REMOVED),
+      VN(DREF_DDC_DISABLED),
       VN(DREF_DPMS_SUSPEND_STANDBY_OFF),
 //    VN(CALLOPT_NONE),                // special entry
       VN_END
@@ -938,6 +1408,130 @@ char * interpret_dref_flags_t(Dref_Flags flags) {
 }
 
 
+const char * watch_mode_name(DDC_Watch_Mode mode) {
+   char * result = NULL;
+   switch (mode) {
+   case Watch_Mode_Poll:     result = "Watch_Mode_Poll";     break;
+   case Watch_Mode_Xevent:   result = "Watch_Mode_Xevent";   break;
+   case Watch_Mode_Udev:     result = "Watch_Mode_Udev";     break;
+   case Watch_Mode_Dynamic:  result = "Watch_Mode_Dynamic";  break;
+   }
+   return result;
+}
+
+
+void free_bus_open_error(Bus_Open_Error * boe) {
+   free(boe->detail);
+   free(boe);
+}
+
+
+//
+// Monitor models for which DDC is disabled
+//
+
+static GPtrArray  * ddc_disabled_table = NULL;
+
+
+/** Adds a Monitor Model Id to the list of monitors for which DDC is disabled
+ *
+ *  @param  mmid  monitor model key string
+ *  @return true  if mmid is defined, false if not
+ *
+ *  @remark
+ *  If the **ddc_disabled_table** does not already exist, it is created.
+ */
+bool add_disabled_display(Monitor_Model_Key * p_mmk) {
+   bool debug = false;
+   char * repr = NULL;
+   if (debug) {
+      repr = mmk_repr(*p_mmk);
+      DBG("Starting. mmk=|%s|", repr);
+   }
+
+   bool result = false;
+   bool missing = true;
+   if (p_mmk->defined) {  // if it's a valid monitor model id string
+      DBGF(debug, "%s is valid:", repr);
+      if (!ddc_disabled_table)
+         ddc_disabled_table = g_ptr_array_new();
+      // n. g_ptr_array_find_with_equal_func() requires glib 2.54
+      for (int ndx = 0; ndx < ddc_disabled_table->len; ndx++) {
+         Monitor_Model_Key* p = g_ptr_array_index(ddc_disabled_table, ndx);
+         if (monitor_model_key_eq(*p_mmk, *p)) {
+            missing = false;
+            break;
+         }
+      }
+      if (missing)
+         g_ptr_array_add(ddc_disabled_table, p_mmk);
+      result = true;
+   }
+
+   DBGF(debug, "Done. mmk=%s, missing=%s, returning: %s", repr,
+               sbool(missing), sbool(result));
+   return result;
+}
+
+
+bool add_disabled_mmk_by_string(const char * mmid) {
+   bool result = false;
+   Monitor_Model_Key* p_mmk = mmk_new_from_string(mmid);
+   if (p_mmk) {
+      add_disabled_display(p_mmk);
+      result = true;
+   }
+   return result;
+}
+
+
+void dbgrpt_ddc_disabled_table(int depth) {
+   const char * table_name = "ddc_disabled_table";
+   GPtrArray* table = ddc_disabled_table;
+   if (table) {
+      if (table->len == 0)
+         rpt_vstring(depth, "%s: empty", table_name);
+      else {
+         rpt_vstring(depth, "%s:", table_name);
+         for (int ndx = 0; ndx < table->len; ndx++) {
+             rpt_vstring(depth+1, mmk_repr(* (Monitor_Model_Key*) g_ptr_array_index(table, ndx)));
+         }
+      }
+   }
+   else {
+      rpt_vstring(depth, "%s: NULL", table_name);
+   }
+}
+
+
+/** Checks if DDC is disabled for a monitor model
+ *
+ *  @param mmk  monitor-model-id
+ *  @return **true** if the display type is disabled, **false** if not
+ */
+bool is_disabled_mmk(Monitor_Model_Key mmk) {
+   bool debug = false;
+   DBGF(debug, "Starting. mmk=%s", mmk_repr(mmk));
+
+  // dbgrpt_ddc_disabled_table(2);
+
+   bool result = false;
+   if (ddc_disabled_table) {
+      for (int ndx = 0; ndx < ddc_disabled_table->len; ndx++) {
+         Monitor_Model_Key* p = g_ptr_array_index(ddc_disabled_table, ndx);
+         DBGF(debug, "Comparing vs p = %p -> %s", p, mmk_repr(*p));
+         if (monitor_model_key_eq(mmk, *p)) {
+            result = true;
+            break;
+         }
+      }
+   }
+
+   DBGF(debug, "mmid=|%s|, returning: %s", mmk_repr(mmk), SBOOL(result));
+   return result;
+}
+
+
 void init_displays() {
    RTTI_ADD_FUNC(copy_display_ref);
    RTTI_ADD_FUNC(create_base_display_handle);
@@ -949,5 +1543,14 @@ void init_displays() {
    RTTI_ADD_FUNC(dbgrpt_display_ref);
    RTTI_ADD_FUNC(free_display_handle);
    RTTI_ADD_FUNC(free_display_ref);
+   RTTI_ADD_FUNC(dref_lock);
+   RTTI_ADD_FUNC(dref_unlock);
+   RTTI_ADD_FUNC(get_dref_by_busno_or_connector);
+
+   init_published_dref_hash();
 }
 
+
+void terminate_displays() {
+   g_hash_table_destroy(published_dref_hash);
+}

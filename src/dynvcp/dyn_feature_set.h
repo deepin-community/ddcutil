@@ -4,7 +4,7 @@
  *  user supplied feature information in feature metadata.
  */
 
-// Copyright (C) 2014-2022 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DYN_FEATURE_SET_H_
@@ -23,8 +23,7 @@
 #include "base/displays.h"
 #include "base/feature_set_ref.h"
 
-#include "vcp/vcp_feature_codes.h"
-#include "vcp/vcp_feature_set.h"
+// #include "dynvcp/vcp_feature_set.h"
 
 #include "dynvcp/dyn_feature_codes.h"
 
@@ -36,6 +35,11 @@ typedef struct {
    DDCA_Display_Ref     dref;
    GPtrArray *          members_dfm; // array of pointers to Display_Feature_Metadata - alt
 } Dyn_Feature_Set;
+
+
+void free_dyn_feature_set(Dyn_Feature_Set * fset);
+
+void report_dyn_feature_set(Dyn_Feature_Set * fset, int depth);
 
 void
 dbgrpt_dyn_feature_set(
@@ -52,6 +56,14 @@ dyn_create_feature_set(
       VCP_Feature_Subset  subset,
       DDCA_Display_Ref    dref,
       Feature_Set_Flags   flags);
+
+Dyn_Feature_Set *
+create_dyn_feature_set_from_feature_set_ref(
+   Feature_Set_Ref *         fsref,
+   DDCA_MCCS_Version_Spec    vcp_version,
+   Feature_Set_Flags         flags);
+
+
 
 #ifdef UNUSED
 Dyn_Feature_Set *
@@ -88,5 +100,7 @@ filter_feature_set(
 
 void dyn_free_feature_set(
       Dyn_Feature_Set *  feature_set);
+
+void init_dyn_feature_set();
 
 #endif /* DYN_FEATURE_SET_H_ */

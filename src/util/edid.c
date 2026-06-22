@@ -10,7 +10,7 @@
  *  to **ddcutil** are interpreted.
  */
 
-// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 /** \cond */
@@ -309,7 +309,11 @@ Parsed_Edid * copy_parsed_edid(Parsed_Edid * original) {
    DBGF(debug, "Starting. original=%p", original);
    Parsed_Edid * copy =  NULL;
    if (original) {
+      // it's easier to simply reparse the bytes we know successfully parsed
+      // than to perform a deep copy
       copy = create_parsed_edid(original->bytes);
+      assert(copy);
+      // the one field that won't have been reparsed
       memcpy(&copy->edid_source, original->edid_source, sizeof(original->edid_source));
       // report_parsed_edid(copy, true, 2);
    }
@@ -427,6 +431,12 @@ void report_parsed_edid_base(
    if (debug)
       printf("(%s) Starting. edid=%p, verbose_synopsis=%s, show_raw=%s\n",
              __func__, (void*)edid, SBOOL(verbose_synopsis), sbool(show_raw));
+
+   if (debug) {
+      show_backtrace(0);
+      if (redirect_reports_to_syslog)
+         backtrace_to_syslog(LOG_NOTICE, 0);
+   }
 
    int d1 = depth+1;
    int d2 = depth+2;
@@ -586,7 +596,7 @@ void report_parsed_edid_base(
    }
 
    if (debug)
-      printf("(%s) Done.", __func__);
+      printf("(%s) Done.\n", __func__);
 }
 
 
@@ -623,6 +633,7 @@ void report_parsed_edid(Parsed_Edid * edid, bool verbose, int depth) {
  */
 bool is_laptop_parsed_edid(Parsed_Edid * parsed_edid) {
    assert(parsed_edid);
+   // 12/10/2024: seen laptop screen w. model name but not serial_ascii
    bool result = streq(parsed_edid->model_name,  "") &&
                  streq(parsed_edid->serial_ascii,"");
    return result;

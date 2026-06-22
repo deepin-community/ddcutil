@@ -18,11 +18,10 @@
 
 #include "config.h"
 
-#define _GNU_SOURCE    // for syscall(), localtime_r()
-
 //* \cond */
 #include <glib-2.0/glib.h>
 #include <errno.h>
+#include <limits.h>
 #include <rtti.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,6 +39,7 @@
 #include <unistd.h>
 /** \endcond */
 
+#include "util/common_printf_formats.h"
 #include "util/data_structures.h"
 #include "util/debug_util.h"
 #include "util/error_info.h"
@@ -49,7 +49,9 @@
 #include "util/linux_util.h"
 #include "util/report_util.h"
 #include "util/string_util.h"
+#include "util/subprocess_util.h"
 #include "util/timestamp.h"
+#include "util/traced_function_stack.h"
 
 #include "base/build_info.h"
 #include "base/core_per_thread_settings.h"
@@ -60,6 +62,7 @@
 #include "base/core.h"
 
 bool tracing_initialized = false;
+bool library_disabled = false;
 
 //
 // Standard call options
@@ -87,7 +90,7 @@ Value_Name_Table callopt_bitname_table2 = {
  */
 char * interpret_call_options_t(Call_Options calloptions) {
    static GPrivate  buf_key = G_PRIVATE_INIT(g_free);
-   char * buf = get_thread_fixed_buffer(&buf_key, 100);
+   char * buf = get_thread_fixed_buffer(&buf_key, 200);
 
    char * buftemp = vnt_interpret_flags(calloptions, callopt_bitname_table2, false, "|");
    g_strlcpy(buf, buftemp, 200);    // n. this is a debug msg, truncation benign
@@ -109,11 +112,19 @@ print_simple_title_value(int          offset_start_to_title,
                          int          offset_title_start_to_value,
                          const char * value)
 {
-   f0printf(fout(), "%.*s%-*s%s\n",
+   if (redirect_reports_to_syslog) {
+      syslog(LOG_NOTICE, "%.*s%-*s%s\n",
             offset_start_to_title,"",
             offset_title_start_to_value, title,
             value);
-   fflush(fout());
+   }
+   else {
+      f0printf(fout(), "%.*s%-*s%s\n",
+               offset_start_to_title,"",
+               offset_title_start_to_value, title,
+               value);
+      fflush(fout());
+   }
 }
 
 
@@ -139,11 +150,6 @@ void show_output_level() {
  *
  */
 
-bool dbgtrc_show_time      =  false;  ///< include elapsed time in debug/trace output
-bool dbgtrc_show_wall_time =  false;  ///< include wall time in debug/trace output
-bool dbgtrc_show_thread_id =  false;  ///< include thread id in debug/trace output
-bool dbgtrc_show_process_id = false;  ///< include process id in debug/trace output
-bool dbgtrc_trace_to_syslog_only = false; ///< send trace output only to system log
 
 
 #ifdef UNUSED
@@ -310,10 +316,15 @@ bool logable_msg(DDCA_Syslog_Level log_level,
    va_start(args, format);
    char * buffer = g_strdup_vprintf(format, args);
    // vsnprintf(buffer, 500, format, args);
-   f0printf(fout(), "%s\n", buffer);
-   if (test_emit_syslog(log_level)) {
-      int importance = syslog_importance_from_ddcutil_syslog_level(log_level);
-      syslog(importance, "%s", buffer);
+    if (redirect_reports_to_syslog) {
+       syslog(LOG_NOTICE, "%s", buffer);
+    }
+    else {
+      f0printf(fout(), "%s\n", buffer);
+      if (test_emit_syslog(log_level)) {
+         int importance = syslog_importance_from_ddcutil_syslog_level(log_level);
+         syslog(importance, "%s", buffer);
+      }
    }
    fflush(fout());
    va_end(args);
@@ -352,28 +363,6 @@ void show_reporting() {
 }
 
 
-/** Returns the wall time as a formatted string.
- *
- *  The string is built in a thread specific private buffer.  The returned
- *  string is valid until the next call of this function in the same thread.
- *
- *  @return formatted wall time
- */
-static char * formatted_wall_time() {
-   static GPrivate  formatted_wall_time_key = G_PRIVATE_INIT(g_free);
-   char * time_buf = get_thread_fixed_buffer(&formatted_wall_time_key, 40);
-
-   time_t epoch_seconds = time(NULL);
-   struct tm broken_down_time;
-   localtime_r(&epoch_seconds, &broken_down_time);
-
-   strftime(time_buf, 40, "%b %d %T", &broken_down_time);
-
-   // printf("(%s) |%s|\n", __func__, time_buf);
-   return time_buf;
-}
-
-
 //
 // Issue messages of various types
 //
@@ -381,8 +370,8 @@ static char * formatted_wall_time() {
 #define MAX_TRACE_CALLSTACK_CALL_DEPTH 100
 
 // trace_callstack is per thread
-__thread  int    trace_api_call_depth = 0;
-__thread  unsigned int    trace_callstack_call_depth = 0;
+__thread  int           trace_api_call_depth = 0;
+__thread  unsigned int  trace_callstack_call_depth = 0;
 
 
 
@@ -413,18 +402,15 @@ __thread  unsigned int    trace_callstack_call_depth = 0;
  */
 bool is_tracing(DDCA_Trace_Group trace_group, const char * filename, const char * funcname) {
    bool debug = false;  //str_starts_with(funcname, "ddca_");
-   if (debug)
-      printf("(%s) Starting. trace_group=0x%04x, filename=%s, funcname=%s\n",
-              __func__, trace_group, filename, funcname);
-   bool result = false;
-// #ifdef ENABLE_TRACE
-   result =  (trace_group == DDCA_TRC_ALL) || (trace_levels & trace_group); // is trace_group being traced?
+   DBGF(debug, "Starting. trace_group=0x%04x, filename=%s, funcname=%s",
+               trace_group, filename, funcname);
 
+   bool result = false;
+   result =  (trace_group == DDCA_TRC_ALL) || (trace_levels & trace_group); // is trace_group being traced?
    result = result || is_traced_function(funcname) || is_traced_file(filename) || trace_api_call_depth > 0;
-// #endif
-   if (debug)
-      printf("(%s) Done.     trace_group=0x%04x, filename=%s, funcname=%s, trace_levels=0x%04x, returning %d\n",
-              __func__, trace_group, filename, funcname, trace_levels, result);
+
+   DBGF(debug, "Done.     trace_group=0x%04x, filename=%s, funcname=%s, trace_levels=0x%04x, returning %d\n",
+               trace_group, filename, funcname, trace_levels, result);
    return result;
 }
 
@@ -451,7 +437,7 @@ static void report_callstack() {
 
 static void push_callstack(const char * funcname) {
    // INIT_CALLSTACK();
-   bool debug = true;
+   bool debug = false;
    if (debug)
       printf("(%s) Starting. funcname=%s, trace_callstack_call_depth=%d\n",
             __func__, funcname, trace_callstack_call_depth);
@@ -464,7 +450,7 @@ static void push_callstack(const char * funcname) {
 
 static void pop_callstack(const char * funcname) {
    // INIT_CALLSTACK();
-   bool debug = true;
+   bool debug = false;
    if (debug)
       printf("(%s) Starting. funcname=%s, trace_callstack_call_depth=%d\n",
             __func__, funcname, trace_callstack_call_depth);
@@ -526,12 +512,13 @@ static bool vdbgtrc(
 {
    bool debug = false;
    if (debug) {
-      printf("(vdbgtrc) Starting. trace_group=0x%04x, options=0x%02x, funcname=%s"
-             " filename=%s, lineno=%d, thread=%ld, fout() %s sysout, pre_prefix=|%s|, format=|%s|\n",
-                       trace_group, options, funcname, filename, lineno, get_thread_id(),
-                       (fout() == stdout) ? "==" : "!=",
-                       retval_info, format);
-      printf("(vdbgtrc) trace_api_call_depth=%d\n", trace_api_call_depth);
+      printf("(vdbgtrc) Starting. trace_group=0x%04x, options=0x%02x, funcname=%s, filename=%s,"
+          " lineno=%d, thread=%jd, fout() %s sysout, pre_prefix=|%s|, format=|%s|\n",
+          trace_group, options, funcname, filename, lineno, get_thread_id(),
+          (fout() == stdout) ? "==" : "!=",
+          retval_info, format);
+      printf("trace_api_call_depth=%d\n", trace_api_call_depth);
+      printf("traced_function_stack_enabled = %s\n", sbool(traced_function_stack_enabled));
    }
 
    bool msg_emitted = false;
@@ -539,7 +526,7 @@ static bool vdbgtrc(
    if (trace_api_call_depth > 0 || trace_callstack_call_depth > 0)
       trace_group = DDCA_TRC_ALL;
    if (debug)
-      printf("(%s) Adjusted trace_group == 0x%02x\n", __func__, trace_group);
+      printf("Adjusted trace_group == 0x%02x\n", trace_group);
 
    bool perform_emit = true;
 // #ifndef ENABLE_TRACE
@@ -553,8 +540,8 @@ static bool vdbgtrc(
       if ( is_tracing(trace_group, filename, funcname)  ) {
          char * base_msg = g_strdup_vprintf(format, ap);
          if (debug) {
-            printf("(%s) base_msg=%p->|%s|\n", __func__, base_msg, base_msg);
-            printf("(%s) retval_info=%p->|%s|\n", __func__, retval_info, retval_info);
+            printf("base_msg=%p->|%s|\n", base_msg, base_msg);
+            printf("retval_info=%p->|%s|\n", retval_info, retval_info);
          }
          char elapsed_prefix[20]  = "";
          char walltime_prefix[20] = "";
@@ -567,7 +554,7 @@ static bool vdbgtrc(
          if (dbgtrc_show_thread_id && !(options & DBGTRC_OPTIONS_SEVERE) ) {
             // intmax_t tid = get_thread_id();
             // assert(tid == thread_settings->tid);
-            snprintf(thread_prefix, 15, "[%7jd]", thread_settings->tid);
+            snprintf(thread_prefix, 15, PRItid, thread_settings->tid);
          }
          if (dbgtrc_show_process_id && !(options & DBGTRC_OPTIONS_SEVERE) ) {
             intmax_t pid = get_process_id();
@@ -581,9 +568,7 @@ static bool vdbgtrc(
                           process_prefix, thread_prefix, walltime_prefix, elapsed_prefix, funcname,
                           retval_info, base_msg);
          if (debug)
-            printf("(%s) decorated_msg=%p->|%s|\n", __func__, decorated_msg, decorated_msg);
-
-
+            printf("decorated_msg=%p->|%s|\n", decorated_msg, decorated_msg);
 
 #ifdef NO
          if (trace_destination) {
@@ -617,23 +602,35 @@ static bool vdbgtrc(
 
          // if (trace_to_syslog || (options & DBGTRC_OPTIONS_SYSLOG)) {
          if (test_emit_syslog(DDCA_SYSLOG_DEBUG) || dbgtrc_trace_to_syslog_only) {
-            char * syslog_msg = g_strdup_printf("%s(%-30s) %s%s",
-                                     elapsed_prefix, funcname, retval_info, base_msg);
+#ifdef PREV
+            char * syslog_msg = g_strdup_printf("%s%s(%-30s) %s%s%s",
+                        thread_prefix, elapsed_prefix, funcname, retval_info, base_msg,
+                        (tag_output) ? " (J)" : "");
+#endif
+            char * syslog_msg = g_strdup_printf("%s(%-30s) %s%s%s",
+                        thread_prefix, funcname, retval_info, base_msg,
+                        (tag_output) ? " (J)" : "");
             syslog(LOG_DEBUG, "%s", syslog_msg);
             free(syslog_msg);
          }
          else if ( (options & DBGTRC_OPTIONS_SEVERE) && test_emit_syslog(DDCA_SYSLOG_ERROR)) {
-            char * syslog_msg = g_strdup_printf("%s(%-30s) %s%s",
-                                     elapsed_prefix, funcname, retval_info, base_msg);
+            char * syslog_msg = g_strdup_printf("%s(%-30s) %s%s%s",
+                                     thread_prefix, funcname, retval_info, base_msg,
+                                     (tag_output) ? " (K)" : ""  );
             syslog(LOG_ERR, "%s", syslog_msg);
             free(syslog_msg);
          }
+         else if (redirect_reports_to_syslog) {
+            syslog(LOG_NOTICE, "%s(%-30s) %s%s%s",
+                  thread_prefix, funcname, retval_info, base_msg,
+                  (tag_output) ? " (L)" : ""  );
+         }
 
-         if (!dbgtrc_trace_to_syslog_only) {
+         if (!dbgtrc_trace_to_syslog_only && !stdout_stderr_redirected && !redirect_reports_to_syslog) {
             FILE * where = (options & DBGTRC_OPTIONS_SEVERE)
                               ? thread_settings->ferr
                               : thread_settings->fout;
-            f0printf(where, "%s\n", decorated_msg);
+            f0printf(where, "%s%s\n", decorated_msg, (tag_output) ? " (M)" : ""  );
             // f0puts(decorated_msg, where);
             // f0putc('\n', where);
             fflush(where);
@@ -667,17 +664,15 @@ bool check_callstack(Dbgtrc_Options options, const char * funcname) {
             trace_callstack_call_depth = 1;
          }
       }
-      if (debug)
-         printf("(%s(           trace_callstack_call_depth=%d\n", __func__, trace_callstack_call_depth);
+      DBGF(debug, "      trace_callstack_call_depth=%d", trace_callstack_call_depth);
    }
 
    if ((options & DBGTRC_OPTIONS_DONE) && trace_callstack_call_depth > 0) {
       trace_callstack_call_depth--;
    }
 
-   if (debug)
-      printf("(%s) Done.     trace_callstack_call_depth=%d, returning %s\n",
-            __func__, trace_callstack_call_depth, sbool(trace_callstack_call_depth > 0));
+   DBGF(debug, "Done.     trace_callstack_call_depth=%d, returning %s",
+               trace_callstack_call_depth, sbool(trace_callstack_call_depth > 0));
    return trace_callstack_call_depth > 0;
 }
 
@@ -714,25 +709,23 @@ bool dbgtrc(
         ...)
 {
    bool debug = false;
-   if (debug)
-      printf("(dbgtrc) Starting. trace_group=0x%04x, options=0x%02x, funcname=%s"
-             " filename=%s, lineno=%d, thread=%ld, trace_callstack_call_depth=%d, fout() %s sysout\n",
-                       trace_group, options, funcname, filename, lineno, get_thread_id(), trace_callstack_call_depth,
-                       (fout() == stdout) ? "==" : "!=");
+   DBGF(debug, PRItid" Starting. trace_group=0x%04x, options=0x%02x, funcname=%s,"
+               " filename=%s, lineno=%d, thread=%jd, trace_callstack_call_depth=%d, fout() %s sysout",
+               TID(), trace_group, options, funcname, filename, lineno, get_thread_id(),
+               trace_callstack_call_depth, (fout() == stdout) ? "==" : "!=");
 
    bool msg_emitted = false;
    bool in_callstack = check_callstack(options, funcname);
    if ( in_callstack || is_tracing(trace_group, filename, funcname) ) {
       va_list(args);
       va_start(args, format);
-      // if (debug)
-      //    printf("(%s) &args=%p, args=%p\n", __func__, &args, args);
+      // DBGF(debug, "&args=%p, args=%p", &args, args);
       msg_emitted = vdbgtrc(trace_group, options, funcname, lineno, filename, "", format, args);
       va_end(args);
    }
 
-   if (debug)
-      printf("(%s) Done.      trace_callstack_call_depth=%d, Returning %s\n", __func__, trace_callstack_call_depth, sbool(msg_emitted));
+   DBGF(debug, "Done.      trace_callstack_call_depth=%d, Returning %s",
+               trace_callstack_call_depth, sbool(msg_emitted));
    return msg_emitted;
 }
 
@@ -751,32 +744,27 @@ bool dbgtrc_ret_ddcrc(
         ...)
 {
    bool debug = false;
-   if (debug)
-      printf("(%s) Starting. trace_group = 0x%04x, funcname=%s"
-             " filename=%s, lineno=%d, thread=%ld, fout() %s sysout, rc=%d, format=|%s|\n",
-                       __func__,
-                       trace_group, funcname, filename, lineno, get_thread_id(),
-                       (fout() == stdout) ? "==" : "!=",
-                       rc, format);
+   DBGF(debug, "Starting. trace_group = 0x%04x, funcname=%s,"
+               " filename=%s, lineno=%d, thread=%jd, fout() %s sysout, rc=%d, format=|%s|",
+               trace_group, funcname, filename, lineno, get_thread_id(),
+               (fout() == stdout) ? "==" : "!=", rc, format);
 
    bool msg_emitted = false;
    bool in_callstack = check_callstack(options, funcname);
    if ( in_callstack || is_tracing(trace_group, filename, funcname) ) {
       char pre_prefix[60];
       g_snprintf(pre_prefix, 60, "Done      Returning: %s. ", psc_name_code(rc));
-      if (debug)
-         printf("(%s) pre_prefix=|%s|\n", __func__, pre_prefix);
+      DBGF(debug, "pre_prefix=|%s|", pre_prefix);
 
       va_list(args);
       va_start(args, format);
       // arm7l, aarch64: "on  error: cannot convert to a pointer type"
-      // if (debug)
-      //    printf("(%s) &args=%p, args=%p\n", __func__, (void*)&args, (void*)args);
+      // DBGF(debug, "&args=%p, args=%p\n", (void*)&args, (void*)args);
       msg_emitted = vdbgtrc(trace_group, options, funcname, lineno, filename, pre_prefix, format, args);
       va_end(args);
    }
-   if (debug)
-      printf("(%s) Done.     Returning %s\n", __func__, sbool(msg_emitted));
+
+   DBGF(debug, "Done.     Returning %s", sbool(msg_emitted));
    return msg_emitted;
 }
 
@@ -795,7 +783,7 @@ bool dbgtrc_ret_bool(
    bool debug = false;
    if (debug)
       printf("(%s) Starting. trace_group = 0x%04x, funcname=%s"
-             " filename=%s, lineno=%d, thread=%ld, fout() %s sysout, result=%s, format=|%s|\n",
+             " filename=%s, lineno=%d, thread=%jd, fout() %s sysout, result=%s, format=|%s|\n",
                        __func__,
                        trace_group, funcname, filename, lineno, get_thread_id(),
                        (fout() == stdout) ? "==" : "!=",
@@ -838,13 +826,11 @@ bool dbgtrc_returning_errinfo(
         ...)
 {
    bool debug = false;
-   if (debug)
-      printf("(%s) Starting. trace_group = 0x%04x, funcname=%s"
-             " filename=%s, lineno=%d, thread=%ld, fout() %s sysout, errs=%p, format=|%s|\n",
-                       __func__,
-                       trace_group, funcname, filename, lineno, get_thread_id(),
-                       (fout() == stdout) ? "==" : "!=",
-                       (void*)errs, format);
+   DBGF(debug, "Starting. trace_group = 0x%04x, funcname=%s, filename=%s,"
+               " lineno=%d, thread=%jd, fout() %s sysout, errs=%p, format=|%s|",
+               trace_group, funcname, filename, lineno, get_thread_id(),
+               (fout() == stdout) ? "==" : "!=",
+               (void*)errs, format);
 
    bool msg_emitted = false;
    bool in_callstack = check_callstack(options, funcname);
@@ -863,15 +849,14 @@ bool dbgtrc_returning_errinfo(
       g_free(pre_prefix);
    }
 
-   if (debug)
-      printf("(%s) Done.     Returning %s\n", __func__, sbool(msg_emitted));
+   DBGF(debug, "Done.     Returning %s", sbool(msg_emitted));
    return msg_emitted;
 }
 
 
 /** dbgtrc() variant that reports a return value specified as a string.
  */
-bool dbgtrc_returning_expression(
+bool dbgtrc_returning_string(
         DDCA_Trace_Group  trace_group,
         Dbgtrc_Options    options,
         const char *      funcname,
@@ -882,13 +867,11 @@ bool dbgtrc_returning_expression(
         ...)
 {
    bool debug = false;
-   if (debug)
-      printf("(%s) Starting. trace_group = 0x%04x, funcname=%s"
-             " filename=%s, lineno=%d, thread=%ld, fout() %s sysout, retval=%s, format=|%s|\n",
-                       __func__,
-                       trace_group, funcname, filename, lineno, get_thread_id(),
-                       (fout() == stdout) ? "==" : "!=",
-                       retval, format);
+   DBGF(debug, "Starting. trace_group = 0x%04x, funcname=%s, filename=%s,"
+               "lineno=%d, thread=%jd, fout() %s sysout, retval=%s, format=|%s|",
+               trace_group, funcname, filename, lineno, get_thread_id(),
+               (fout() == stdout) ? "==" : "!=",
+               retval, format);
 
    bool msg_emitted = false;
    bool in_callstack = check_callstack(options, funcname);
@@ -906,8 +889,8 @@ bool dbgtrc_returning_expression(
       va_end(args);
       free(pre_prefix);
    }
-   if (debug)
-      printf("(%s) Done.     Returning %s\n", __func__, sbool(msg_emitted));
+
+   DBGF(debug, "Done.     Returning %s", sbool(msg_emitted));
    return msg_emitted;
 }
 
@@ -992,6 +975,8 @@ void core_errmsg_emitter(
 // Use system log
 //
 
+bool msg_to_syslog_only = false;
+
 DDCA_Syslog_Level syslog_level = DDCA_SYSLOG_NOT_SET;
 bool enable_syslog = true;
 
@@ -1035,6 +1020,8 @@ DDCA_Syslog_Level syslog_level_name_to_value(const char * name) {
 bool test_emit_syslog(DDCA_Syslog_Level msg_level) {
    bool result =  (syslog_level != DDCA_SYSLOG_NOT_SET && syslog_level != DDCA_SYSLOG_NEVER &&
          msg_level <= syslog_level);
+   // DBG("syslog_level=%d=%s, msg_level=%d=%s, returning %s",
+   //       syslog_level, syslog_level_name(syslog_level), msg_level, syslog_level_name(msg_level), sbool(result));
    return result;
 }
 
@@ -1072,6 +1059,7 @@ typedef struct {
    size_t in_memory_bufsize;
    DDCA_Capture_Option_Flags flags;
    bool   in_memory_capture_active;
+   bool   saved_rpt_to_syslog;
 } In_Memory_File_Desc;
 
 
@@ -1096,49 +1084,77 @@ get_thread_capture_buf_desc() {
 
 void
 start_capture(DDCA_Capture_Option_Flags flags) {
+   bool debug = false;
+   DBGF(debug,"Starting. flags=0x%02x", flags);
+
    In_Memory_File_Desc * fdesc = get_thread_capture_buf_desc();
+   // traced_function_stack_suspended = true;
+   msg_decoration_suspended = true;
 
    if (!fdesc->in_memory_file) {
       fdesc->in_memory_file = open_memstream(&fdesc->in_memory_bufstart, &fdesc->in_memory_bufsize);
    }
+   fdesc->saved_rpt_to_syslog = redirect_reports_to_syslog;
+   redirect_reports_to_syslog = false;
    set_fout(fdesc->in_memory_file);   // n. ddca_set_fout() is thread specific
    fdesc->flags = flags;
    if (flags & DDCA_CAPTURE_STDERR)
       set_ferr(fdesc->in_memory_file);
    fdesc->in_memory_capture_active = true;
-   // printf("(%s) Done.\n", __func__);
+
+   // DBGF(debug, "Done.");
 }
 
 
 char *
 end_capture(void) {
+   bool debug = false;
+   // DBGF(debug, "Starting");
+
    In_Memory_File_Desc * fdesc = get_thread_capture_buf_desc();
    assert(fdesc->in_memory_capture_active);
 
-   char * result = "\0";
+   char * result = NULL;
    // printf("(%s) Starting.\n", __func__);
    assert(fdesc->in_memory_file);
    if (fflush(fdesc->in_memory_file) < 0) {
       set_ferr_to_default();
       SEVEREMSG("flush() failed. errno=%d", errno);
-      return g_strdup(result);
+      // return g_strdup(result);
+      result = g_strdup("\0");
    }
-   // n. open_memstream() maintains a null byte at end of buffer, not included in in_memory_bufsize
-   result = g_strdup(fdesc->in_memory_bufstart);
-   if (fclose(fdesc->in_memory_file) < 0) {
-      set_ferr_to_default();
-      SEVEREMSG("fclose() failed. errno=%d", errno);
-      return result;
+   else {
+      // n. open_memstream() maintains a null byte at end of buffer, not included in in_memory_bufsize
+      result = g_strdup(fdesc->in_memory_bufstart);
+      if (fclose(fdesc->in_memory_file) < 0) {
+         set_ferr_to_default();
+         SEVEREMSG("fclose() failed. errno=%d", errno);
+         result = g_strdup("\0");
+      }
+      else {
+         free(fdesc->in_memory_bufstart);
+         fdesc->in_memory_file = NULL;
+      }
    }
-   // free(fdesc->in_memory_file); // double free, fclose() frees in memory file
-   fdesc->in_memory_file = NULL;
    set_fout_to_default();
    if (fdesc->flags & DDCA_CAPTURE_STDERR)
-      set_ferr_to_default();
+   set_ferr_to_default();
+   redirect_reports_to_syslog = fdesc->saved_rpt_to_syslog;
    fdesc->in_memory_capture_active = false;
+   // traced_function_stack_suspended = false;
+   msg_decoration_suspended = false;
 
-   // printf("(%s) Done. result=%p\n", __func__, result);
+   DBGF(debug, "Done.     result=%p", result);
    return result;
+}
+
+
+Null_Terminated_String_Array
+end_capture_as_ntsa() {
+   char * result = end_capture();
+   Null_Terminated_String_Array lines = strsplit(result, "\n");
+   free(result);
+   return lines;
 }
 
 
@@ -1184,7 +1200,7 @@ base_errinfo_free_with_report(
 {
    if (erec) {
       if (report || report_freed_exceptions) {
-         if ( dbgtrc_trace_to_syslog_only) {
+         if ( dbgtrc_trace_to_syslog_only || redirect_reports_to_syslog) {
             GPtrArray * collector = g_ptr_array_new_with_free_func(g_free);
             rpt_vstring_collect(0, collector, "(%s) Freeing exception:", func);
             for (int ndx = 0; ndx < collector->len; ndx++) {
@@ -1202,5 +1218,62 @@ base_errinfo_free_with_report(
 }
 
 
+void detect_stdout_stderr_redirection() {
+   bool debug = false;
+   DBGF(debug, "Starting");
+   // syslog(LOG_ERR,  "(%s)",msg);
+  //  msg_to_syslog_only = true;
+   // MSG_W_SYSLOG(DDCA_SYSLOG_ERROR, "msg_to_syslog_only = true");
+   // msg_to_syslog_only = false;
+   // MSG_W_SYSLOG(DDCA_SYSLOG_ERROR, "msg_to_syslog_only = false");
+
+   char * s = realpath("/sbin/init", NULL);
+   char * initsys = NULL;
+   if (!s) {   // pathological
+      initsys = g_strdup_printf("UNKNOWN");
+   }
+   else {
+      initsys = g_path_get_basename(s);
+      free(s);
+   }
+   DBGF(debug, "Init system: %s", initsys);
+   free(initsys);
+
+   char * stdout_fn = NULL;
+   filename_for_fd(1, &stdout_fn);
+   DBGF(debug, "stdout file name: %s",  stdout_fn);
+   stdout_stderr_redirected = (str_contains(stdout_fn, "socket") >= 0);
+   free(stdout_fn);
+   DBGF(debug, "set stdout_stderr_redirected = %s", SBOOL(stdout_stderr_redirected));
+   // stdout_stderr_redirected = false;    // *** TEMP ****
+   // DBG("Forced stdout_stderr_redirected = false for testing");
+
+
+#ifdef OLD
+   char * initsys = execute_shell_cmd_one_line_result("ps -p 1 -o comm=");
+   DBGF(debug, "Using init system: %s", initsys);
+   // need to check if initsys is a symbolic link and if so what it points to, use stat command
+   free(initsys);
+#endif
+
+   // shows nothing
+   // show_backtrace(1);
+
+   // syslog(LOG_ERR, "stdout file name: %s",  filename_for_fd_t(1));
+
+   char * journalstream = getenv("JOURNAL_STREAM");  // do not free
+   DBGF(debug, "$JOURNAL_STREAM = %s", journalstream);
+  //  MSG_W_SYSLOG(DDCA_SYSLOG_ERROR, "$JOURNAL_STREAM = %s", journalstream);
+   // char * s = getenv("INVOCATION_ID");  // do not free
+   // DBG("$INVOCATION_ID = %s", s);
+   // MSG_W_SYSLOG(DDCA_SYSLOG_ERROR, "$INVOCATION_ID = %s", s);
+   DBGF(debug, "Done");
+}
+
+
 void init_core() {
+   bool debug = false;
+   DBGF(debug, "Starting");
+   // detect_sysout_syserr_redirection();
+   DBGF(debug, "Done");
 }

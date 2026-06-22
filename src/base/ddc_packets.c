@@ -3,7 +3,7 @@
  * Functions for creating DDC packets and interpreting DDC response packets.
  */
 
-// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 /** \cond */
@@ -409,8 +409,8 @@ update_ddc_multi_part_read_request_packet_offset(
 
    // DBGMSG("Done.");
    // dump_packet(packet);
+   DBGTRC_DONE(debug, TRACE_GROUP, "");
    if (IS_DBGTRC(debug, TRACE_GROUP)) {
-      DBGTRC_DONE(true, TRACE_GROUP, "");
       dbgrpt_packet(packet,  2);
    }
 }
@@ -1020,6 +1020,7 @@ create_ddc_typed_response_packet(
       default:
          rc = DDCRC_INTERNAL_ERROR;
          DBGMSG("Unhandled case. expected_type=%d", expected_type);
+         SYSLOG2(DDCA_SYSLOG_ERROR, "Unhandled case in %s. expected_type=%d", __func__, expected_type);
          break;
       }
    }
@@ -1247,6 +1248,7 @@ Status_DDC get_vcp_cur_value(DDC_Packet * packet, int * value_ptr) {
 
 void init_ddc_packets() {
    RTTI_ADD_FUNC(create_empty_ddc_packet);
+   RTTI_ADD_FUNC(update_ddc_multi_part_read_request_packet_offset);
    RTTI_ADD_FUNC(create_ddc_base_request_packet);
    RTTI_ADD_FUNC(create_ddc_base_response_packet);
    RTTI_ADD_FUNC(create_ddc_getvcp_request_packet);

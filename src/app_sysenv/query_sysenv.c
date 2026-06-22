@@ -3,7 +3,7 @@
  *  Primary file for the ENVIRONMENT command
  */
 
-// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 // #define SYSENV_QUICK_TEST_RUN 1
@@ -17,6 +17,9 @@
 #include <errno.h>
 #include <string.h>
 #include <sys/utsname.h>
+#ifdef USE_X11
+#include <X11/extensions/randr.h>
+#endif
 
 #include "util/data_structures.h"
 #include "util/edid.h"
@@ -44,17 +47,24 @@
 #include "base/build_info.h"
 #include "base/core.h"
 #include "base/dsa2.h"
+#include "base/flock.h"
 #include "base/linux_errno.h"
 #include "base/parms.h"
 #include "base/rtti.h"
+#include "base/stats.h"
 
+#include "sysfs/sysfs_base.h"
+#include "sysfs/sysfs_sys_drm_connector.h"
+
+#include "i2c/i2c_bus_core.h"
 #include "i2c/i2c_execute.h"   // for i2c_forceable_slave_addr_flag
-#include "i2c/i2c_sysfs.h"
 
 #include "ddc/ddc_displays.h"     // for ddc_ensure_displays_detected()
 #include "ddc/ddc_display_ref_reports.h"
 #include "ddc/ddc_serialize.h"
-#include "ddc/ddc_watch_displays.h"
+#include "ddc/ddc_try_data.h"
+
+#include "dw/dw_udev.h"
 
 #include "vcp/persistent_capabilities.h"
 
@@ -304,21 +314,24 @@ static void driver_specific_tests(struct driver_name_node * driver_list) {
 
 /* Reports EDIDs known to X11
  *
- * Arguments:    none
+ * Arguments:   use_screen_resources_current
  *
  * Returns:      nothing
  */
-void query_x11() {
-   GPtrArray* edid_recs = get_x11_edids();
+void query_x11_0(bool use_screen_resources_current) {
+   GPtrArray* edid_recs = get_x11_edids(use_screen_resources_current);
    rpt_nl();
-   rpt_vstring(0,"*** EDIDs reported by X11 for connected xrandr outputs ***");
+   rpt_vstring(0,"EDIDs reported by X11 for connected xrandr outputs %susing XRRGetScreenResourcesCurrent",
+         (use_screen_resources_current) ? "" : "NOT ");
    // DBGMSG("Got %d X11_Edid_Recs\n", edid_recs->len);
+   int d1 = 1;
+   int d2 = 2;
 
    for (int ndx=0; ndx < edid_recs->len; ndx++) {
       X11_Edid_Rec * prec = g_ptr_array_index(edid_recs, ndx);
       // printf(" Output name: %s -> %p\n", prec->output_name, prec->edid);
       // hex_dump(prec->edid, 128);
-      rpt_vstring(1, "xrandr output: %s", prec->output_name);
+      rpt_vstring(d1, "xrandr output: %s", prec->output_name);
       Byte * edidbytes = prec->edidbytes;
 
 #ifdef SYSENV_TEST_IDENTICAL_EDIDS
@@ -329,7 +342,7 @@ void query_x11() {
       }
 #endif
 
-      rpt_label  (2, "Raw EDID:");
+      rpt_label  (d2, "Raw EDID:");
       rpt_hex_dump(edidbytes, 128, 2);
       Parsed_Edid * parsed_edid = create_parsed_edid2(edidbytes, "X11");
       if (parsed_edid) {
@@ -337,11 +350,11 @@ void query_x11() {
                parsed_edid,
                true,   // verbose
                false,  // show_hex
-               2);     // depth
+               d2);     // depth
          free_parsed_edid(parsed_edid);
       }
       else {
-         rpt_label(2, "Unable to parse EDID");
+         rpt_label(d2, "Unable to parse EDID");
          // printf(" Unparsable EDID for output name: %s -> %p\n", prec->output_name, prec->edidbytes);
          // hex_dump(prec->edidbytes, 128);
       }
@@ -351,8 +364,8 @@ void query_x11() {
       if (xref) {
          xref->xrandr_name = strdup(prec->output_name);
          if (xref->ambiguous_edid) {
-            rpt_vstring(2, "Multiple displays have same EDID ...%s", xref->edid_tag);
-            rpt_vstring(2, "xrandr name in device cross reference table may be incorrect.");
+            rpt_vstring(d2, "Multiple displays have same EDID ...%s", xref->edid_tag);
+            rpt_vstring(d2, "xrandr name in device cross reference table may be incorrect.");
          }
       }
       else {
@@ -366,6 +379,27 @@ void query_x11() {
    // GPtrArray *  outputs = get_x11_connected_outputs(x11_disp);
    // close_x11_display(x11_disp);
 }
+
+
+void query_x11() {
+   rpt_nl();
+   rpt_label(0, "*** Querying X11 ***");
+   rpt_nl();
+   rpt_vstring(0, "randr_version: %d.%d", RANDR_MAJOR, RANDR_MINOR);
+
+   query_x11_0(false);
+   query_x11_0(true);
+   rpt_nl();
+
+   unsigned short power_level;
+   unsigned char state;
+   bool got_dpms = get_x11_dpms_info(&power_level, &state);
+   rpt_vstring(0, "Extension DPMS is%s supported. get_x11_dpms_info() returned %s",
+         (got_dpms) ? "" : " NOT",
+         SBOOL(got_dpms));
+   rpt_nl();
+}
+
 #endif
 
 
@@ -733,6 +767,33 @@ void final_analysis(Env_Accumulator * accum, int depth) {
    }
 }
 
+
+void force_envcmd_settings(Parsed_Cmd * parsed_cmd) {
+   f0printf(fout(), "Setting output level very-verbose...\n");
+    set_output_level(DDCA_OL_VV);  // affects this thread only
+    f0printf(fout(), "Setting maximum retries...\n");
+    try_data_set_maxtries2(WRITE_ONLY_TRIES_OP, MAX_MAX_TRIES);
+    try_data_set_maxtries2(WRITE_READ_TRIES_OP, MAX_MAX_TRIES);
+    try_data_set_maxtries2(MULTI_PART_READ_OP,  MAX_MAX_TRIES);
+    try_data_set_maxtries2(MULTI_PART_WRITE_OP, MAX_MAX_TRIES);
+    f0printf(fout(), "Forcing --stats...\n");
+    parsed_cmd->stats_types = DDCA_STATS_ALL;
+    f0printf(fout(), "Forcing --disable-capabilities-cache...\n");
+    enable_capabilities_cache(false);
+    f0printf(fout(), "Forcing --force-slave-address..\n");
+    i2c_forceable_slave_addr_flag = true;
+    f0printf(fout(), "Forcing --disable-cross-instance-locking...\n");
+    i2c_enable_cross_instance_locks(false);
+    if (dsa2_is_enabled()) {
+       f0printf(fout(), "Dynamic sleep currently enabled, disabling...\n");
+       dsa2_enable(false);
+    }
+    else {
+       f0printf(fout(), "Dynamic sleep currently disabled.\n");
+    }
+}
+
+
 //
 // Mainline
 //
@@ -757,6 +818,8 @@ void query_sysenv(bool quick_env) {
    else if (get_output_level() >= DDCA_OL_VERBOSE) {
       rpt_label(0, "Set environment variable SYSENV_QUICK_TEST or option --quickenv to skip some long-running tests.");
    }
+
+
 
    i2c_forceable_slave_addr_flag = true;    // be a bully
 
@@ -897,7 +960,6 @@ void query_sysenv(bool quick_env) {
       }
 
       if (probe_what & Probe_Class_Most) {
-
          rpt_vstring(0, "Checking display manager environment variables...");
          char * s = getenv("DISPLAY");
          rpt_vstring(1, "DISPLAY=%s", (s) ? s : "(not set)");
@@ -922,7 +984,6 @@ void query_sysenv(bool quick_env) {
       }
 
       if (probe_what & Probe_Class_I2cdetect) {
-
          if (sysfs_quick_test)
             DBGMSG("!!! Skipping i2cdetect and get-edid|parse-edid to speed up testing !!!");
          else {
@@ -930,8 +991,9 @@ void query_sysenv(bool quick_env) {
                                       "i2cdetect -y %d",   // command to issue
                                       "i2cdetect");        // command name for error message
             rpt_nl();
+            // -i option may not exist
             query_using_shell_command(accumulator->dev_i2c_device_numbers,
-                                      "get-edid -b %d -i | parse-edid",   // command to issue
+                                      "get-edid -b %d | parse-edid",   // command to issue
                                       "get-edid | parse-edid");        // command name for error message
          }
       }
@@ -951,12 +1013,10 @@ void query_sysenv(bool quick_env) {
 #ifdef ENABLE_UDEV
          probe_i2c_devices_using_udev();
 #endif
-
          // temp
          // get_i2c_smbus_devices_using_udev();
 
          probe_config_files(accumulator);
-
       }
 
       if (probe_what & Probe_Class_Logs) {

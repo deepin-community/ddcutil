@@ -3,10 +3,8 @@
  *  Timestamp management
  */
 
-// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
-
-#define _GNU_SOURCE
 
 /** \cond */
 #include <assert.h>
@@ -209,7 +207,7 @@ char *   formatted_time_t(uint64_t nanos) {
  *  \param  epoch_time
  *  \return string representation
  */
-char * formatted_epoch_time_t(long epoch_seconds) {
+char * formatted_epoch_time_t(time_t epoch_seconds) {
    static GPrivate  formatted_epoch_time_key = G_PRIVATE_INIT(g_free);
    char * buf = get_thread_fixed_buffer(&formatted_epoch_time_key, 40);
 

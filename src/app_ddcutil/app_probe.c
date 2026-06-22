@@ -2,7 +2,7 @@
   * Implement PROBE command
   */
 
-// Copyright (C) 2020-2022 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2020-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "public/ddcutil_types.h"
@@ -44,6 +44,8 @@ void app_probe_display_by_dh(Display_Handle * dh)
    FILE * fout = stdout;
    bool debug = false;
    DBGTRC_STARTING(debug, TRACE_GROUP, "dh=%s", dh_repr(dh));
+
+   bool saved_prefix_report_output = rpt_set_ornamentation_enabled(false);
 
    Error_Info * ddc_excp = NULL;
    Parsed_Edid * pedid = dh->dref->pedid;
@@ -122,7 +124,7 @@ void app_probe_display_by_dh(Display_Handle * dh)
             if (bs256_contains(caps_not_seen, code)) {
                VCP_Feature_Table_Entry * vfte = vcp_find_feature_by_hexid_w_default(code);
                Display_Feature_Metadata * dfm =
-                     dyn_get_feature_metadata_by_dh(code, dh, /*with_default=*/true);
+                     dyn_get_feature_metadata_by_dh(code, dh, /*check_udf=*/true, /*with_default=*/true);
                char * feature_name = get_version_sensitive_feature_name(vfte, pcaps->parsed_mccs_version);
                if (!streq(feature_name, dfm->feature_name)) {
                   rpt_vstring(1, "VCP_Feature_Table_Entry feature name: %s", feature_name);
@@ -151,7 +153,7 @@ void app_probe_display_by_dh(Display_Handle * dh)
                VCP_Feature_Table_Entry * vfte = vcp_find_feature_by_hexid_w_default(code);
 
                Display_Feature_Metadata * dfm =
-                     dyn_get_feature_metadata_by_dh(code, dh, /*with_default=*/ true);
+                     dyn_get_feature_metadata_by_dh(code, dh, /*check_udf=*/ true, /*with_default=*/ true);
                char * feature_name = get_version_sensitive_feature_name(vfte, vspec);
                f0printf(fout, "   Feature x%02x - %s\n", code, feature_name);
                if (!streq(feature_name, dfm->feature_name)) {
@@ -213,6 +215,7 @@ void app_probe_display_by_dh(Display_Handle * dh)
 
    app_show_single_vcp_value_by_feature_id(dh, 0x14, true);
 
+   rpt_set_ornamentation_enabled(saved_prefix_report_output);
    DBGTRC_DONE(debug, TRACE_GROUP, "");
 }
 

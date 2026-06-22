@@ -3,7 +3,7 @@
  * Check I2C devices using directly coded I2C calls
  */
 
-// Copyright (C) 2014-2022 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 /** \cond */
@@ -11,7 +11,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/i2c-dev.h>
-
 #include <limits.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -29,6 +28,8 @@
 #include "base/linux_errno.h"
 #include "base/status_code_mgt.h"
 /** \endcond */
+
+#include "sysfs/sysfs_base.h"
 
 #include "i2c/i2c_bus_core.h"
 #include "i2c/i2c_edid.h"
@@ -133,7 +134,7 @@ Public_Status_Code try_single_getvcp_call(
       DBGMSF(debug, "read failed, errno=%s", linux_errno_desc(-rc));
       goto bye;
    }
-   rpt_vstring(depth, "read returned %s", hexstring_t(ddc_response_bytes+1,rc) );
+   rpt_vstring(depth, "read returned: %s", hexstring_t(ddc_response_bytes+1, readct) );
 
    if ( all_bytes_zero( ddc_response_bytes+1, readct) ) {
       DBGMSF(debug, "All bytes zero");
@@ -359,6 +360,11 @@ void raw_scan_i2c_devices(Env_Accumulator * accum) {
          rpt_nl();
          int fd = -1;
          Error_Info * erec = i2c_open_bus(busno, CALLOPT_ERR_MSG, &fd);
+#ifdef ALT_LOCK_REC
+         char filename[80];
+         g_snprintf(filename, 80, "i2c-%d", busno);
+         Error_Info * erec = i2c_open_bus_basic(filename, CALLOPT_ERR_MSG, &fd);
+#endif
          if (erec) {
             ERRINFO_FREE(erec);
             continue;
@@ -460,6 +466,9 @@ void raw_scan_i2c_devices(Env_Accumulator * accum) {
             edid = NULL;
          }
          i2c_close_bus(busno,fd, CALLOPT_ERR_MSG);
+#ifdef ALT_LOCK_REC
+         // todo
+#endif
       }
    }
 
@@ -484,6 +493,6 @@ void raw_scan_i2c_devices(Env_Accumulator * accum) {
 void query_i2c_buses() {
    rpt_vstring(0,"Examining I2C buses, as detected by I2C layer...");
    sysenv_rpt_current_time(NULL, 1);
-   i2c_dbgrpt_buses(true, 1 /* indentation depth */);    // in i2c_bus_core.c
+   i2c_dbgrpt_buses(true, true, 1 /* indentation depth */);    // in i2c_bus_core.c
 }
 

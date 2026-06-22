@@ -1,6 +1,6 @@
 /** @file api_displays.c */
 
-// Copyright (C) 2018-2024 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2018-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "config.h"
@@ -26,19 +26,23 @@
 #include "base/per_display_data.h"
 #include "base/rtti.h"
 
-#include "i2c/i2c_sysfs.h"
-#include "i2c/i2c_dpms.h"
+#include "sysfs/sysfs_conflicting_drivers.h"
+#include "sysfs/sysfs_dpms.h"
+#include "sysfs/sysfs_sys_drm_connector.h"
 
-#include "ddc/ddc_displays.h"
 #include "ddc/ddc_display_ref_reports.h"
 #include "ddc/ddc_display_selection.h"
-#include "ddc/ddc_status_events.h"
+#include "ddc/ddc_displays.h"
 #include "ddc/ddc_packet_io.h"
 #include "ddc/ddc_vcp_version.h"
-#include "ddc/ddc_watch_displays.h"
+
+#include "dw/dw_main.h"
+#include "dw/dw_status_events.h"
+#include "dw/dw_udev.h"
 
 #include "libmain/api_base_internal.h"
 #include "libmain/api_error_info_internal.h"
+
 #include "libmain/api_displays_internal.h"
 
 
@@ -52,8 +56,8 @@ static inline bool valid_display_ref(Display_Ref * dref) {
 }
 #endif
 
-
-DDCA_Status validate_ddca_display_ref(
+#ifdef OLD
+DDCA_Status ddci_validate_ddca_display_ref(
       DDCA_Display_Ref ddca_dref,
       bool             basic_only,
       bool             require_not_asleep,
@@ -64,6 +68,62 @@ DDCA_Status validate_ddca_display_ref(
    DDCA_Status result = ddc_validate_display_ref(dref, basic_only, require_not_asleep);
    if (result == DDCRC_OK && dref_loc)
       *dref_loc = dref;
+   return result;
+}
+#endif
+
+
+/** Validates an opaque #DDCA_Display_Ref, returning the corresponding
+ *  #Display_Ref if successful.
+ *
+ *  @param  ddca_dref DDCA_Display_Ref
+ *  @param  dh_loc    address at which to return the underlying Display_Handle.
+ *  @return
+ */
+DDCA_Status ddci_validate_ddca_display_ref2(
+      DDCA_Display_Ref        ddca_dref,
+      Dref_Validation_Options validation_options,
+      Display_Ref**           dref_loc)
+{
+   bool debug = false;
+   DBGTRC_STARTING(debug, DDCA_TRC_NONE, "ddca_dref=%p=%d, validation_options=0x%02x, dref_loc=%p",
+                                         ddca_dref, ddca_dref, validation_options, dref_loc);
+   DDCA_Status result = DDCRC_OK;
+   if (dref_loc)
+      *dref_loc = NULL;
+   if (debug)
+      dbgrpt_published_dref_hash("published_dref_hash", 1);
+   Display_Ref * dref = dref_from_published_ddca_dref(ddca_dref);
+   DBGTRC_NOPREFIX(debug, DDCA_TRC_NONE, "dref_from_ddca_dref() returned %s", dref_reprx_t(dref));
+   if (!dref) {
+      result = DDCRC_ARG;
+   }
+   else {
+      // should be redundant with ddc_validate_display_ref2(), but something not being caught
+      if (dref->flags & DREF_REMOVED) {
+         DBGTRC_NOPREFIX(debug, DDCA_TRC_NONE, "DREF_REMOVED set!");
+         SYSLOG2(DDCA_SYSLOG_WARNING, "DREF_REMOVED set for %s", dref_reprx_t(dref));
+         result = DDCRC_DISCONNECTED;
+      }
+      else if ( !(dref->flags & DREF_DDC_COMMUNICATION_WORKING) &&
+                !(validation_options & DREF_VALIDATE_DDC_COMMUNICATION_FAILURE_OK)
+              )
+      {
+         DBGTRC_NOPREFIX(true, DDCA_TRC_NONE, "DREF_DDC_COMMUNICATION_WORKING not set!");
+         result = DDCRC_INVALID_DISPLAY;
+      }
+      else {
+         result =  ddc_validate_display_ref2(dref, validation_options);
+      }
+   }
+
+   if (result == DDCRC_OK && dref_loc) {
+      *dref_loc = dref;
+      DBGTRC_RET_DDCRC(debug, DDCA_TRC_NONE, result, "ddca_dref=%p=%d. *dref_loc=%p -> %s",
+            ddca_dref, ddca_dref, *dref_loc, dref_reprx_t(*dref_loc));
+   }
+   else
+      DBGTRC_RET_DDCRC(debug, DDCA_TRC_NONE, result, "ddca_dref=%p=%d", ddca_dref, ddca_dref);
    return result;
 }
 
@@ -81,13 +141,20 @@ Display_Handle * validated_ddca_display_handle(DDCA_Display_Handle ddca_dh) {
 #endif
 
 
+/** Validates an opaque #DDCA_Display_Handle, returning the corresponding
+ *  #Display_Handle if successful.
+ *
+ *  @param  ddca_dh  DDCA_Display_Handle
+ *  @param  dh_loc   address at which to return the underlying Display_Handle.
+ *  @return
+ */
 DDCA_Status validate_ddca_display_handle(DDCA_Display_Handle ddca_dh, Display_Handle** dh_loc) {
    if (dh_loc)
       *dh_loc = NULL;
    Display_Handle * dh = (Display_Handle *) ddca_dh;
    DDCA_Status result = DDCRC_ARG;
    if (dh && memcmp(dh->marker, DISPLAY_HANDLE_MARKER,4) == 0) {
-      result = ddc_validate_display_handle(dh);
+      result = ddc_validate_display_handle2(dh);
    }
    if (result == DDCRC_OK && dh_loc)
       *dh_loc = dh;
@@ -97,8 +164,8 @@ DDCA_Status validate_ddca_display_handle(DDCA_Display_Handle ddca_dh, Display_Ha
 
 
 // forward declarations
-void dbgrpt_display_info(DDCA_Display_Info * dinfo, int depth);
-void dbgrpt_display_info_list(DDCA_Display_Info_List * dlist, int depth);
+STATIC void dbgrpt_display_info(DDCA_Display_Info * dinfo, int depth);
+STATIC void dbgrpt_display_info_list(DDCA_Display_Info_List * dlist, int depth);
 
 #ifdef REMOVED
 DDCA_Status
@@ -123,6 +190,7 @@ ddca_create_dispno_display_identifier(
       DDCA_Display_Identifier* did_loc)
 {
    free_thread_error_detail();
+   reset_current_traced_function_stack();
    // assert(did_loc);
    API_PRECOND(did_loc);
    Display_Identifier* did = create_dispno_display_identifier(dispno);
@@ -139,6 +207,7 @@ ddca_create_busno_display_identifier(
 {
    free_thread_error_detail();
    // assert(did_loc);
+   reset_current_traced_function_stack();
    API_PRECOND(did_loc);
    Display_Identifier* did = create_busno_display_identifier(busno);
    *did_loc = did;
@@ -155,6 +224,7 @@ ddca_create_mfg_model_sn_display_identifier(
       DDCA_Display_Identifier* did_loc)
 {
    free_thread_error_detail();
+   reset_current_traced_function_stack();
    // assert(did_loc);
    API_PRECOND(did_loc);
    *did_loc = NULL;
@@ -193,6 +263,7 @@ ddca_create_edid_display_identifier(
 {
    // assert(did_loc);
    free_thread_error_detail();
+   reset_current_traced_function_stack();
    API_PRECOND(did_loc);
    *did_loc = NULL;
    DDCA_Status rc = 0;
@@ -216,6 +287,7 @@ ddca_create_usb_display_identifier(
 {
    // assert(did_loc);
    free_thread_error_detail();
+   reset_current_traced_function_stack();
    API_PRECOND(did_loc);
    Display_Identifier* did = create_usb_display_identifier(bus, device);
    *did_loc = did;
@@ -231,6 +303,7 @@ ddca_create_usb_hiddev_display_identifier(
 {
    // assert(did_loc);
    free_thread_error_detail();
+   reset_current_traced_function_stack();
    API_PRECOND(did_loc);
    Display_Identifier* did = create_usb_hiddev_display_identifier(hiddev_devno);
    *did_loc = did;
@@ -280,7 +353,7 @@ ddca_get_display_ref(
 {
    free_thread_error_detail();
    bool debug = false;
-   API_PROLOGX(debug, "did=%p, dref_loc=%p", did, dref_loc);
+   API_PROLOGX(debug, NORESPECT_QUIESCE, "did=%p, dref_loc=%p", did, dref_loc);
    assert(library_initialized);
    API_PRECOND_W_EPILOG(dref_loc);
    *dref_loc = NULL;
@@ -301,7 +374,8 @@ ddca_get_display_ref(
          rc = DDCRC_INVALID_DISPLAY;
    }
 
-   API_EPILOG_WO_RETURN(debug, rc, "*dref_loc=%p", psc_name_code(rc), *dref_loc);
+   API_EPILOG_BEFORE_RETURN(debug, NORESPECT_QUIESCE, rc,
+                        "*dref_loc=%p", psc_name_code(rc), *dref_loc);
    TRACED_ASSERT( (rc==0 && *dref_loc) || (rc!=0 && !*dref_loc) );
    return rc;
 }
@@ -357,7 +431,7 @@ ddca_free_display_ref(DDCA_Display_Ref ddca_dref) {
          }
       );
    }
-   API_EPILOG_WO_RETURN(debug, psc, "");
+   API_EPILOG_BEFORE_RETURN(debug, psc, "");
    return psc;
 }
 #endif
@@ -366,23 +440,24 @@ ddca_free_display_ref(DDCA_Display_Ref ddca_dref) {
 DDCA_Status
 ddca_redetect_displays() {
    bool debug = false;
-   API_PROLOGX(debug, "");
-   ddc_redetect_displays();
-   API_EPILOG(debug, 0, "");
+   API_PROLOGX(debug, NORESPECT_QUIESCE, "");
+   quiesce_api();
+   dw_redetect_displays();
+   unquiesce_api();
+   API_EPILOG_RET_DDCRC(debug, NORESPECT_QUIESCE, 0, "");
 }
 
 
 const char *
 ddca_dref_repr(DDCA_Display_Ref ddca_dref) {
    bool debug = false;
-   DBGMSF(debug, "Starting.  ddca_dref = %p", ddca_dref);
-   char * result = NULL;
-   Display_Ref * dref = NULL;
-   validate_ddca_display_ref(ddca_dref, /*basic_only*/ true, /* require_not_asleep */ false, &dref);
-   if (dref) {
-      result = dref_repr_t(dref);
-   }
-   DBGMSF(debug, "Done.     Returning: %s", result);
+   reset_current_traced_function_stack();
+   DBGTRC_STARTING(debug, DDCA_TRC_NONE, "ddca_dref=%p", ddca_dref);
+
+   Display_Ref * dref = dref_from_published_ddca_dref(ddca_dref);
+   char * result = (dref) ? dref_reprx_t(dref) : "Invalid DDCA_Display_Ref";
+
+   DBGTRC_DONE(debug, DDCA_TRC_NONE, "ddca_dref=%p, returning: %s", ddca_dref, result);
    return result;
 }
 
@@ -393,12 +468,16 @@ ddca_dbgrpt_display_ref(
       int              depth)
 {
    bool debug = false;
+   reset_current_traced_function_stack();
    DBGMSF(debug, "Starting.  ddca_dref = %p, depth=%d", ddca_dref, depth);
-   Display_Ref * dref = NULL;
-   validate_ddca_display_ref(ddca_dref, /* basic_only*/ true, /* require_not_asleep */ false, &dref);
-   rpt_vstring(depth, "DDCA_Display_Ref at %p:", dref);
-   if (dref)
-      dbgrpt_display_ref(dref, depth+1);
+   Display_Ref * dref = ddca_dref;
+   if (dref && memcmp(dref->marker, DISPLAY_REF_MARKER, 4) == 0) {
+      rpt_vstring(depth, "DDCA_Display_Ref at %p:", dref);
+      dbgrpt_display_ref(dref, true, depth+1);
+   }
+   else {
+      rpt_vstring(depth, "Not a display ref: %p", dref);
+   }
 }
 
 
@@ -409,15 +488,16 @@ ddca_report_display_by_dref(
 {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug, "ddca_dref=%p", ddca_dref);
+   API_PROLOGX(debug, RESPECT_QUIESCE, "ddca_dref=%p", ddca_dref);
    assert(library_initialized);
 
    Display_Ref * dref = NULL;
-   DDCA_Status rc = validate_ddca_display_ref(ddca_dref,  /* basic_only*/ true, /*require_not_asleep*/ false,  &dref);
+   // DDCA_Status rc = ddci_validate_ddca_display_ref(ddca_dref,  /* basic_only*/ true, /*require_not_asleep*/ false,  &dref);
+   DDCA_Status rc = ddci_validate_ddca_display_ref2(ddca_dref,  DREF_VALIDATE_EDID,  &dref);
    if (rc == 0)
       ddc_report_display_by_dref(dref, depth);
 
-   API_EPILOG_WO_RETURN(debug, rc, "");
+   API_EPILOG_BEFORE_RETURN(debug, RESPECT_QUIESCE, rc, "");
    return rc;
 }
 
@@ -427,13 +507,18 @@ ddca_validate_display_ref(DDCA_Display_Ref ddca_dref, bool require_not_asleep)
 {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug, "ddca_dref = %p", ddca_dref);
+   API_PROLOGX(debug, RESPECT_QUIESCE, "ddca_dref = %p", ddca_dref);
    assert(library_initialized);
 
    Display_Ref * dref = NULL;
    DDCA_Status rc = DDCRC_ARG;
-   if (ddca_dref)
-      rc = validate_ddca_display_ref(ddca_dref, /* basic_only*/ false,  require_not_asleep, &dref);
+   if (ddca_dref) {
+      // rc = ddci_validate_ddca_display_ref(ddca_dref, /* basic_only*/ false,  require_not_asleep, &dref);
+      Dref_Validation_Options opts = DREF_VALIDATE_EDID;
+      if (require_not_asleep)
+         opts |= DREF_VALIDATE_AWAKE;
+      rc = ddci_validate_ddca_display_ref2(ddca_dref, opts, &dref);
+   }
 #ifdef REDUNDANT
    Error_Info * errinfo = NULL;
    if (rc != 0)
@@ -461,7 +546,7 @@ ddca_validate_display_ref(DDCA_Display_Ref ddca_dref, bool require_not_asleep)
    save_thread_error_detail(public_error_detail);
 #endif
 
-   API_EPILOG_WO_RETURN(debug, rc, "");
+   API_EPILOG_BEFORE_RETURN(debug, RESPECT_QUIESCE, rc, "");
    return rc;
 }
 
@@ -519,7 +604,7 @@ ddca_open_display3(
 {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug,
+   API_PROLOGX(debug, RESPECT_QUIESCE,
           "ddca_dref=%p, options=0x%02x, dh_loc=%p, on thread %d",
           ddca_dref, options, dh_loc, get_thread_id());
    DBGTRC_NOPREFIX(debug, DDCA_TRC_API,
@@ -533,26 +618,48 @@ ddca_open_display3(
    *dh_loc = NULL;        // in case of error
    DDCA_Status rc = 0;
    Error_Info * err = NULL;
-   rc  = validate_ddca_display_ref(ddca_dref, /* basic_only*/ false, /* require_not_asleep */ true, &dref);
-   if (!rc) {
-     Display_Handle* dh = NULL;
-     Call_Options callopts = CALLOPT_NONE;
-     if (options & DDCA_OPENOPT_WAIT)
-        callopts |= CALLOPT_WAIT;
-     if (options & DDCA_OPENOPT_FORCE_SLAVE_ADDR)
-        callopts |= CALLOPT_FORCE_SLAVE_ADDR;
-     err = ddc_open_display(dref,  callopts, &dh);
-     if (!err)
-        *dh_loc = dh;
-     else {
-        rc = err->status_code;
-        DDCA_Error_Detail * public_error_detail = error_info_to_ddca_detail(err);
-        errinfo_free_with_report(err, debug, __func__);
-        save_thread_error_detail(public_error_detail);
-     }
+   Display_Ref * dref0 = dref_from_published_ddca_dref(ddca_dref);
+   if (dref0) {
+      // rc  = ddci_validate_ddca_display_ref(ddca_dref, /* basic_only*/ false, /* require_not_asleep */ true, &dref);
+      rc  = ddci_validate_ddca_display_ref2(ddca_dref, DREF_VALIDATE_EDID | DREF_VALIDATE_AWAKE, &dref);
+      if (!rc) {
+        Display_Handle* dh = NULL;
+        Call_Options callopts = CALLOPT_NONE;
+        if (options & DDCA_OPENOPT_WAIT)
+           callopts |= CALLOPT_WAIT;
+        if (options & DDCA_OPENOPT_FORCE_SLAVE_ADDR)
+           callopts |= CALLOPT_FORCE_SLAVE_ADDR;
+        err = ddc_open_display(dref,  callopts, &dh);
+        if (!err)
+           *dh_loc = dh;
+        else {
+           rc = err->status_code;
+           char * detail2 = g_strdup_printf("%s, Internal display ref: %s", err->detail, dref_reprx_t(dref));
+           free(err->detail);
+           err->detail = detail2;
+
+           DDCA_Error_Detail * public_error_detail = error_info_to_ddca_detail(err);
+           errinfo_free_with_report(err, debug, __func__);
+           save_thread_error_detail(public_error_detail);
+        }
+      }
+      else {
+         Error_Info * err = ERRINFO_NEW(DDCRC_INVALID_DISPLAY, "Invalid display ref");
+         DDCA_Error_Detail * public_error_detail = error_info_to_ddca_detail(err);
+         errinfo_free_with_report(err, debug, __func__);
+         save_thread_error_detail(public_error_detail);
+      }
+   }
+   else {
+      Error_Info * err = ERRINFO_NEW(DDCRC_INVALID_DISPLAY, "Unknown display ref");
+      DDCA_Error_Detail * public_error_detail = error_info_to_ddca_detail(err);
+      errinfo_free_with_report(err, debug, __func__);
+      save_thread_error_detail(public_error_detail);
    }
 
-   API_EPILOG_WO_RETURN(debug, rc, "*dh_loc=%p -> %s", *dh_loc, dh_repr(*dh_loc));
+
+   API_EPILOG_BEFORE_RETURN(debug, RESPECT_QUIESCE, rc,
+                        "*dh_loc=%p -> %s", *dh_loc, dh_repr(*dh_loc));
    TRACED_ASSERT_IFF(rc==0, *dh_loc);
    return rc;
 }
@@ -577,10 +684,10 @@ ddca_close_display(DDCA_Display_Handle ddca_dh) {
    DDCA_Status rc = 0;
    Error_Info * err = NULL;
    Display_Handle * dh = (Display_Handle *) ddca_dh;
-   API_PROLOGX(debug, "dh = %s", dh_repr(dh));
+   API_PROLOGX(debug, RESPECT_QUIESCE, "dh = %s", dh_repr(dh));
    if (dh) {
       if (memcmp(dh->marker, DISPLAY_HANDLE_MARKER, 4) != 0 )  {
-         err = errinfo_new(DDCRC_ARG, __func__, "Invalid display handle");
+         err = ERRINFO_NEW(DDCRC_ARG, "Invalid display handle");
       }
       else {
          // TODO: ddc_close_display() needs an action if failure parm,
@@ -595,7 +702,7 @@ ddca_close_display(DDCA_Display_Handle ddca_dh) {
       save_thread_error_detail(public_error_detail);
    }
 
-   API_EPILOG_WO_RETURN(debug, rc, "");
+   API_EPILOG_BEFORE_RETURN(debug, RESPECT_QUIESCE, rc, "");
    return rc;
 }
 
@@ -631,6 +738,8 @@ ddca_get_mccs_version_by_dh(
       DDCA_Display_Handle     ddca_dh,
       DDCA_MCCS_Version_Spec* p_spec)
 {
+   bool debug = false;
+   API_PROLOGX(debug, true, "");
    free_thread_error_detail();
    assert(library_initialized);
    DDCA_Status rc = 0;
@@ -647,6 +756,7 @@ ddca_get_mccs_version_by_dh(
       p_spec->minor = vspec.minor;
       rc = 0;
    }
+   API_EPILOG_BEFORE_RETURN(debug, true, rc, "");
    return rc;
 }
 
@@ -806,10 +916,10 @@ ddca_get_display_info_list(void)
 }
 #endif
 
-
-STATIC void init_display_info(Display_Ref * dref, DDCA_Display_Info * curinfo) {
+STATIC
+ void ddci_init_display_info(Display_Ref * dref, DDCA_Display_Info * curinfo) {
    bool debug = false;
-   DBGMSF(debug, "dref=%p, curinfo=%p", dref,curinfo);
+   DBGTRC_STARTING(debug, DDCA_TRC_API, "dref=%s, curinfo=%p", dref_reprx_t(dref),curinfo);
    memcpy(curinfo->marker, DDCA_DISPLAY_INFO_MARKER, 4);
    curinfo->dispno        = dref->dispno;
 
@@ -820,7 +930,7 @@ STATIC void init_display_info(Display_Ref * dref, DDCA_Display_Info * curinfo) {
    }
 
    DDCA_MCCS_Version_Spec vspec = DDCA_VSPEC_UNKNOWN;
-   if (dref->dispno > 0) {
+   if (dref->dispno > 0 && (dref->flags&DREF_DDC_COMMUNICATION_WORKING)) {
       vspec = get_vcp_version_by_dref(dref);
    }
    memcpy(curinfo->edid_bytes,    dref->pedid->bytes, 128);
@@ -839,7 +949,7 @@ STATIC void init_display_info(Display_Ref * dref, DDCA_Display_Info * curinfo) {
 #endif
    curinfo->product_code  = dref->pedid->product_code;
    curinfo->vcp_version    = vspec;
-   curinfo->dref           = dref;
+   curinfo->dref           = dref_to_ddca_dref(dref);
 
 #ifdef MMID
    curinfo->mmid = monitor_model_key_value(
@@ -853,7 +963,7 @@ STATIC void init_display_info(Display_Ref * dref, DDCA_Display_Info * curinfo) {
 // #endif
 #endif
 
-   DBGMSF(debug, "Done");
+   DBGTRC_DONE(debug, DDCA_TRC_API, "dref=%s", dref_reprx_t(dref));
 }
 
 
@@ -863,53 +973,62 @@ ddca_get_display_info(
       DDCA_Display_Info ** dinfo_loc)
 {
    bool debug = false;
-   // causes return DDCRC_UNITIALIZED: called after explicit ddca_init()/init2() call failed
-   API_PROLOGX(debug, "ddca_dref=%p", ddca_dref);
+
+   Display_Ref * dref0 = dref_from_published_ddca_dref(ddca_dref);
+
+   // causes return DDCRC_UNINTIALIZED: called after explicit ddca_init()/init2() call failed
+   API_PROLOGX(debug, RESPECT_QUIESCE, "ddca_dref=%p, dref0=%s", ddca_dref, dref_reprx_t(dref0));
    // causes return DDCRC_ARG if dinfo_loc == NULL
    API_PRECOND_W_EPILOG(dinfo_loc);
    DDCA_Status ddcrc = 0;
 
    // if ddc_validate_display_ref() fails, returns its status code
-   WITH_BASIC_VALIDATED_DR3(
-         ddca_dref, ddcrc,
+   WITH_VALIDATED_DR4(
+         ddca_dref, ddcrc, DREF_VALIDATE_EDID | DREF_VALIDATE_DDC_COMMUNICATION_FAILURE_OK,
          {
             DDCA_Display_Info * info = calloc(1, sizeof(DDCA_Display_Info));
-            init_display_info(dref, info);
+            ddci_init_display_info(dref, info);
             *dinfo_loc = info;
          }
    )
 
-   API_EPILOG_WO_RETURN(debug, ddcrc, "");
+   API_EPILOG_BEFORE_RETURN(debug, RESPECT_QUIESCE, ddcrc, "ddca_dref=%p, dref=%s", ddca_dref, dref_reprx_t(dref0));
    return ddcrc;
 }
 
 
-STATIC DDCA_Status
+STATIC void
 set_ddca_error_detail_from_open_errors() {
    bool debug = false;
    GPtrArray * errs = ddc_get_bus_open_errors();
-   DDCA_Status master_rc = 0;
+   // DDCA_Status master_rc = 0;
    if (errs && errs->len > 0) {
-      Error_Info * master_error = errinfo_new(DDCRC_OTHER, __func__, "Error(s) opening ddc devices");
+      Error_Info * master_error = ERRINFO_NEW(DDCRC_OTHER, "Error(s) opening ddc devices");
+      MSG_W_SYSLOG(DDCA_SYSLOG_ERROR, "Error(s) opening ddc devices");
       for (int ndx = 0; ndx < errs->len; ndx++) {
          Bus_Open_Error * cur = g_ptr_array_index(errs, ndx);
          Error_Info * errinfo = NULL;
-         if (cur->io_mode == DDCA_IO_I2C)
-            errinfo = errinfo_new(cur->error, __func__, "Error %s opening /dev/i2c-%d",
+         if (cur->io_mode == DDCA_IO_I2C) {
+            errinfo = ERRINFO_NEW(cur->error, "Error %s opening /dev/i2c-%d",
                                              psc_desc(cur->error), cur->devno);
-         else
-            errinfo = errinfo_new(cur->error, __func__, "Error %s opening /dev/usb/hiddev%d %s",
+            MSG_W_SYSLOG(DDCA_SYSLOG_ERROR, "Error %s opening /dev/i2c-%d",
+                                             psc_desc(cur->error), cur->devno);
+         }
+         else {
+            errinfo = ERRINFO_NEW(cur->error, "Error %s opening /dev/usb/hiddev%d %s",
                                              psc_desc(cur->error), cur->devno, (cur->detail) ? cur->detail : "");
+            MSG_W_SYSLOG(DDCA_SYSLOG_ERROR, "Error %s opening /dev/usb/hiddev%d %s",
+                  psc_desc(cur->error), cur->devno, (cur->detail) ? cur->detail : "");
+         }
          errinfo_add_cause(master_error, errinfo);
       }
-      master_rc = master_error->status_code;
+      // master_rc = master_error->status_code;
       DDCA_Error_Detail * public_error_detail = error_info_to_ddca_detail(master_error);
       errinfo_free_with_report(master_error, debug, __func__);
       save_thread_error_detail(public_error_detail);
    }
-   return master_rc;
+   // return master_rc;
 }
-
 
 
 DDCA_Status
@@ -919,41 +1038,48 @@ ddca_get_display_refs(
 {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug, "include_invalid_displays=%s", SBOOL(include_invalid_displays));
-
+   API_PROLOGX(debug, RESPECT_QUIESCE, "include_invalid_displays=%s", SBOOL(include_invalid_displays));
    API_PRECOND_W_EPILOG(drefs_loc);
+
    int dref_ct = 0;
    DDCA_Status ddcrc = 0;
    ddc_ensure_displays_detected();
-   GPtrArray * filtered_displays = ddc_get_filtered_display_refs(include_invalid_displays);  // array of Display_Ref
+   GPtrArray * filtered_displays = ddc_get_filtered_display_refs(
+                                      include_invalid_displays,
+                                      false);  // include_removed_drefs
    DDCA_Display_Ref * result_list = calloc(filtered_displays->len + 1,sizeof(DDCA_Display_Ref));
    DDCA_Display_Ref * cur_ddca_dref = result_list;
    for (int ndx = 0; ndx < filtered_displays->len; ndx++) {
          Display_Ref * dref = g_ptr_array_index(filtered_displays, ndx);
-         *cur_ddca_dref = (DDCA_Display_Ref*) dref;
+         *cur_ddca_dref = dref_to_ddca_dref(dref);
+         // DBGTRC_NOPREFIX(debug, DDCA_TRC_NONE, "%p -> %p", cur_ddca_dref, *cur_ddca_dref);
+         add_published_dref_id_by_dref(dref);
          cur_ddca_dref++;
    }
    *cur_ddca_dref = NULL; // terminating NULL ptr, redundant since calloc()
+   dref_ct = filtered_displays->len;
    g_ptr_array_free(filtered_displays, true);
 
-   dref_ct = 0;
+
    if (IS_DBGTRC(debug, DDCA_TRC_API|DDCA_TRC_DDC )) {
-      DBGMSG("          *drefs_loc=%p");
+      DBGMSG("          *drefs_loc=%p", drefs_loc);
       DDCA_Display_Ref * cur_ddca_dref = result_list;
       while (*cur_ddca_dref) {
-         Display_Ref * dref = (Display_Ref*) *cur_ddca_dref;
+         Display_Ref * dref = dref_from_published_ddca_dref(*cur_ddca_dref);
          DBGMSG("          DDCA_Display_Ref %p -> display %d", *cur_ddca_dref, dref->dispno);
          cur_ddca_dref++;
-         dref_ct++;
       }
+      dbgrpt_published_dref_hash(__func__, 1);
    }
 
    *drefs_loc = result_list;
    assert(*drefs_loc);
 
-   ddcrc = set_ddca_error_detail_from_open_errors();
+   set_ddca_error_detail_from_open_errors();
+   ddcrc = 0;
 
-   API_EPILOG(debug, ddcrc, "Returned list has %d displays", dref_ct);
+   API_EPILOG_RET_DDCRC(debug, RESPECT_QUIESCE, ddcrc, "*drefs_loc=%p, returned list has %d displays",
+         *drefs_loc, dref_ct);
 }
 
 
@@ -964,15 +1090,16 @@ ddca_get_display_info_list2(
 {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug, "");
+   API_PROLOGX(debug, RESPECT_QUIESCE, "");
 
    int filtered_ct = 0;
    API_PRECOND_W_EPILOG(dlist_loc);
 
    DDCA_Status ddcrc = 0;
    ddc_ensure_displays_detected();
-   GPtrArray * filtered_displays = ddc_get_filtered_display_refs(include_invalid_displays);  // array of Display_Ref
-
+   GPtrArray * filtered_displays = ddc_get_filtered_display_refs(
+                                      include_invalid_displays,
+                                      false);  // include_removed_drefs
    filtered_ct = filtered_displays->len;
 
    int reqd_size =   offsetof(DDCA_Display_Info_List,info) + filtered_ct * sizeof(DDCA_Display_Info);
@@ -991,7 +1118,8 @@ ddca_get_display_info_list2(
       // DDCA_Display_Info * curinfo = &result_list->info[ndx++];
 
       DBGMSF(debug, "dref=%p, curinfo=%p", dref, curinfo);
-      init_display_info(dref, curinfo);
+      ddci_init_display_info(dref, curinfo);
+      add_published_dref_id_by_dref(dref);
       curinfo++;
    }
    g_ptr_array_free(filtered_displays, true);
@@ -999,13 +1127,15 @@ ddca_get_display_info_list2(
    if (IS_DBGTRC(debug, DDCA_TRC_API|DDCA_TRC_DDC )) {
       DBGMSG("Final result list %p", result_list);
       dbgrpt_display_info_list(result_list, 2);
+      dbgrpt_published_dref_hash(__func__, 1);
    }
 
-   ddcrc = set_ddca_error_detail_from_open_errors();
+   set_ddca_error_detail_from_open_errors();
+   ddcrc = 0;
    *dlist_loc = result_list;
    assert(*dlist_loc);
 
-   API_EPILOG(debug, ddcrc, "Returned list has %d displays", filtered_ct);
+   API_EPILOG_RET_DDCRC(debug, RESPECT_QUIESCE, ddcrc, "Returned list has %d displays", filtered_ct);
 }
 
 
@@ -1019,7 +1149,8 @@ ddca_free_display_info(DDCA_Display_Info * info_rec) {
       info_rec->marker[3] = 'x';
       free(info_rec);
    }
-   DBGTRC_DONE(debug, DDCA_TRC_API,"");
+   API_EPILOG_NO_RETURN(debug, false, "");
+   // DBGTRC_DONE(debug, DDCA_TRC_API,"");
    DISABLE_API_CALL_TRACING();
 }
 
@@ -1027,7 +1158,7 @@ ddca_free_display_info(DDCA_Display_Info * info_rec) {
 void
 ddca_free_display_info_list(DDCA_Display_Info_List * dlist) {
    bool debug = false;
-   API_PROLOG(debug, "dlist=%p", dlist);
+   API_PROLOG_NO_DISPLAY_IO(debug, "dlist=%p", dlist);
    if (dlist) {
       // n. DDCA_Display_Info contains no pointers,
       // DDCA_Display_Info_List can simply be free'd.
@@ -1038,7 +1169,8 @@ ddca_free_display_info_list(DDCA_Display_Info_List * dlist) {
       }
       free(dlist);
    }
-   DBGTRC_DONE(debug, DDCA_TRC_API, "");
+   API_EPILOG_NO_RETURN(debug, false, "");
+   // DBGTRC_DONE(debug, DDCA_TRC_API, "");
    DISABLE_API_CALL_TRACING();
 }
 
@@ -1049,7 +1181,8 @@ ddca_report_display_info(
       int                 depth)
 {
    bool debug = false;
-   API_PROLOGX(debug, "Starting. dinfo=%p, dinfo->dispno=%d, depth=%d", dinfo, dinfo->dispno, depth);
+   API_PROLOGX(debug, NORESPECT_QUIESCE, "dinfo=%p, dinfo->dispno=%d, depth=%d",
+                                         dinfo, dinfo->dispno, depth);
    DDCA_Status rc = 0;
    API_PRECOND_W_EPILOG(dinfo);
    API_PRECOND_W_EPILOG(memcmp(dinfo->marker, DDCA_DISPLAY_INFO_MARKER, 4) == 0);
@@ -1076,6 +1209,16 @@ ddca_report_display_info(
             break;
       }
 
+      // workaround, including drm_connector in DDCA_Display_Info would break API
+      Display_Ref * dref = dref_from_published_ddca_dref(dinfo->dref);
+      if (dref) {   // should never fail, but just in case
+         if (dref->drm_connector_id > 0)
+            // rpt_vstring(d1, "DRM connector id:        %d",  dref->drm_connector_id);
+            rpt_vstring(d1, "DRM connector:        %s (id: %d)",  dref->drm_connector, dref->drm_connector_id);
+         else
+            rpt_vstring(d1, "DRM connector:        %s",  dref->drm_connector);
+      }
+
       rpt_vstring(d1, "Mfg Id:               %s", dinfo->mfg_id);
       rpt_vstring(d1, "Model:                %s", dinfo->model_name);
       rpt_vstring(d1, "Product code:         %u", dinfo->product_code);
@@ -1086,7 +1229,8 @@ ddca_report_display_info(
       if (edid) {     // should never fail, but being ultra-cautious
          // Binary serial number is typically 0x00000000 or 0x01010101, but occasionally
          // useful for differentiating displays that share a generic ASCII "serial number"
-         rpt_vstring(d1,"Binary serial number: %"PRIu32" (0x%08x)", edid->serial_binary, edid->serial_binary);
+         rpt_vstring(d1,"Binary serial number: %"PRIu32" (0x%08x)",
+                        edid->serial_binary, edid->serial_binary);
          free_parsed_edid(edid);
       }
 
@@ -1102,11 +1246,18 @@ ddca_report_display_info(
       // rpt_vstring(d2, "Model name:       %s", dinfo->mmid.model_name);
       // rpt_vstring(d2, "Product code:     %d", dinfo->mmid.product_code);
       rpt_vstring(d1, "EDID:");
-      rpt_hex_dump(dinfo->edid_bytes, 128, d2);
+      GPtrArray * edid_lines = g_ptr_array_new_with_free_func(g_free);
+      hex_dump_indented_collect(edid_lines, dinfo->edid_bytes, 128, 0);
+      for (int ndx = 0; ndx < edid_lines->len; ndx++) {
+         rpt_vstring(d2, "%s", (char *) g_ptr_array_index(edid_lines, ndx));
+      }
+      g_ptr_array_free(edid_lines, true);
+
+      // OLD: rpt_hex_dump(dinfo->edid_bytes, 128, d2);
+
       // rpt_vstring(d1, "dref:                %p", dinfo->dref);
       rpt_vstring(d1, "VCP Version:          %s", format_vspec(dinfo->vcp_version));
-   // rpt_vstring(d1, "VCP Version Id:      %s", format_vcp_version_id(dinfo->vcp_version_id) );
-
+      // rpt_vstring(d1, "VCP Version Id:      %s", format_vcp_version_id(dinfo->vcp_version_id) );
 
       if (dinfo->dispno == DISPNO_BUSY) {
    #ifdef OLD
@@ -1139,11 +1290,11 @@ ddca_report_display_info(
          rpt_vstring(d1, "Consider using option --force-slave-address.");
       }
    }
-   API_EPILOG(debug, rc, "");
+   API_EPILOG_RET_DDCRC(debug, NORESPECT_QUIESCE, rc, "");
 }
 
 
-void
+STATIC void
 dbgrpt_display_info(
       DDCA_Display_Info * dinfo,
       int                 depth)
@@ -1160,12 +1311,14 @@ dbgrpt_display_info(
    DBGMSF(debug, "Done.");
 }
 
+
 void
 ddca_report_display_info_list(
       DDCA_Display_Info_List * dlist,
       int                      depth)
 {
    bool debug = false;
+   API_PROLOG_NO_DISPLAY_IO(debug, "");
    DBGMSF(debug, "Starting.  dlist=%p, depth=%d", dlist, depth);
 
    int d1 = depth+1;
@@ -1173,10 +1326,11 @@ ddca_report_display_info_list(
    for (int ndx=0; ndx<dlist->ct; ndx++) {
       ddca_report_display_info(&dlist->info[ndx], d1);
    }
+   API_EPILOG_NO_RETURN(debug, false, "");
 }
 
 
-void
+STATIC void
 dbgrpt_display_info_list(
       DDCA_Display_Info_List * dlist,
       int                      depth)
@@ -1277,6 +1431,7 @@ ddca_report_active_displays(int depth) {
 #endif
 
 
+// TODO: deprecate, does not respect quiesced
 int
 ddca_report_displays(bool include_invalid_displays, int depth) {
    bool debug = false;
@@ -1285,10 +1440,12 @@ ddca_report_displays(bool include_invalid_displays, int depth) {
    if (!library_initialization_failed) {
       display_ct = ddc_report_displays(include_invalid_displays, depth);
    }
-   DBGTRC_DONE(debug, DDCA_TRC_API, "Returning: %d", display_ct);
+   DBGTRC_NOPREFIX(debug, DDCA_TRC_API, "Returning: %d", display_ct);
    DISABLE_API_CALL_TRACING();
+   API_EPILOG_NO_RETURN(debug, false, ""); // hack
    return display_ct;
 }
+
 
 #ifdef DETAILED_DISPLAY_CHANGE_HANDLING
 
@@ -1319,17 +1476,15 @@ DDCA_Status
 ddca_register_display_status_callback(DDCA_Display_Status_Callback_Func func) {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug, "func=%p", func);
+   API_PROLOGX(debug, RESPECT_QUIESCE, "func=%p", func);
 
    DDCA_Status result = DDCRC_INVALID_OPERATION;
  #ifdef ENABLE_UDEV
-    result = (all_sysfs_i2c_info_drm(/*rescan=*/false))
-                       ? ddc_register_display_status_callback(func)
-                       : DDCRC_INVALID_OPERATION;
+    if (check_all_video_adapters_implement_drm())
+       result = dw_register_display_status_callback(func);
  #endif
 
-
-   API_EPILOG(debug, result, "");
+   API_EPILOG_RET_DDCRC(debug, RESPECT_QUIESCE, result, "func=%p", func);
    return result;
 }
 
@@ -1338,18 +1493,18 @@ DDCA_Status
 ddca_unregister_display_status_callback(DDCA_Display_Status_Callback_Func func) {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug, "func=%p", func);
+   API_PROLOGX(debug, RESPECT_QUIESCE, "func=%p", func);
 
-   DDCA_Status result = ddc_unregister_display_status_callback(func);
+   DDCA_Status result = dw_unregister_display_status_callback(func);
 
-   API_EPILOG(debug, result, "");
+   API_EPILOG_RET_DDCRC(debug, RESPECT_QUIESCE, result, "func=%p", func);
    return result;
 }
 
 
 const char *
    ddca_display_event_type_name(DDCA_Display_Event_Type event_type) {
-      return ddc_display_event_type_name(event_type);
+      return dw_display_event_type_name(event_type);
 }
 
 //
@@ -1363,11 +1518,12 @@ ddca_set_display_sleep_multiplier(
 {
    bool debug = false;
    free_thread_error_detail();
-    API_PROLOGX(debug, "ddca_dref=%p", ddca_dref);
+    API_PROLOGX(debug, RESPECT_QUIESCE, "ddca_dref=%p", ddca_dref);
 
     assert(library_initialized);
     Display_Ref * dref = NULL;
-    DDCA_Status rc = validate_ddca_display_ref(ddca_dref, /* basic_only*/ true, /*require_not_asleep*/false, &dref);
+     //DDCA_Status rc = ddci_validate_ddca_display_ref(ddca_dref, /* basic_only*/ true, /*require_not_asleep*/false, &dref);
+    DDCA_Status rc = ddci_validate_ddca_display_ref2(ddca_dref,  DREF_VALIDATE_EDID,  &dref);
     if (rc == 0)  {
        Per_Display_Data * pdd = dref->pdd;
        if (multiplier >= 0.0 && multiplier <= 10.0) {
@@ -1376,7 +1532,7 @@ ddca_set_display_sleep_multiplier(
        else
           rc = DDCRC_ARG;
     }
-    API_EPILOG_WO_RETURN(debug, rc, "");
+    API_EPILOG_BEFORE_RETURN(debug, RESPECT_QUIESCE, rc, "");
     return rc;
 }
 
@@ -1388,16 +1544,17 @@ ddca_get_current_display_sleep_multiplier(
 {
    bool debug = false;
    free_thread_error_detail();
-    API_PROLOGX(debug, "ddca_dref=%p", ddca_dref);
+    API_PROLOGX(debug, NORESPECT_QUIESCE, "ddca_dref=%p", ddca_dref);
 
     assert(library_initialized);
     Display_Ref * dref = NULL;
-    DDCA_Status rc = validate_ddca_display_ref(ddca_dref, true, false, &dref);
+    // DDCA_Status rc = ddci_validate_ddca_display_ref(ddca_dref, true, false, &dref);
+    DDCA_Status rc = ddci_validate_ddca_display_ref2(ddca_dref,  DREF_VALIDATE_EDID,  &dref);
     if (rc == 0) {
        Per_Display_Data * pdd = dref->pdd;
        *multiplier_loc        = pdd->final_successful_adjusted_sleep_multiplier;
     }
-    API_EPILOG_WO_RETURN(debug, rc, "");
+    API_EPILOG_BEFORE_RETURN(debug, NORESPECT_QUIESCE, rc, "");
     return rc;
 }
 
@@ -1412,7 +1569,7 @@ ddca_enable_dynamic_sleep(bool onoff)
    bool old = pdd_is_dynamic_sleep_enabled();
    pdd_enable_dynamic_sleep_all(onoff);
 
-   API_EPILOG_NO_RETURN(debug, "Returning %s", sbool(old));
+   API_EPILOG_NO_RETURN(debug, false, "Returning %s", sbool(old));
    return old;
 }
 
@@ -1425,7 +1582,7 @@ bool ddca_is_dynamic_sleep_enabled()
 
    bool result = pdd_is_dynamic_sleep_enabled();
 
-   API_EPILOG_NO_RETURN(debug, "Returning %s", sbool(result));
+   API_EPILOG_NO_RETURN(debug, false, "Returning %s", sbool(result));
    return result;
 }
 
@@ -1446,7 +1603,11 @@ void init_api_displays() {
    RTTI_ADD_FUNC(ddca_report_display_by_dref);
    RTTI_ADD_FUNC(ddca_register_display_status_callback);
    RTTI_ADD_FUNC(ddca_unregister_display_status_callback);
-   RTTI_ADD_FUNC(validate_ddca_display_ref);
+   RTTI_ADD_FUNC(ddci_init_display_info);
+#ifdef OLD
+   RTTI_ADD_FUNC(ddci_validate_ddca_display_ref);
+#endif
+   RTTI_ADD_FUNC(ddci_validate_ddca_display_ref2);
    RTTI_ADD_FUNC(ddca_validate_display_ref);
 }
 

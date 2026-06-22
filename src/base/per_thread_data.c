@@ -1,12 +1,11 @@
 /** @file per_thread_data.c
  */
 
-// Copyright (C) 2018-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2018-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "config.h"
 
-#define _GNU_SOURCE
 #include <assert.h>
 #include <dlfcn.h>
 #include <glib-2.0/glib.h>
@@ -476,6 +475,12 @@ void ptd_profile_function_stats_key_destroy(void * data) {   // GDestroyNotify
 }
 
 
+void free_per_thread_function_stats(Per_Thread_Function_Stats * stats) {
+   free(stats->function);
+   free(stats);
+}
+
+
 void ptd_profile_function_stats_value_destroy(void * data) {  // GDestroyNofify
    // value is Per_Thread_Function_Stats*
    Per_Thread_Function_Stats * stats = (Per_Thread_Function_Stats *) data;
@@ -514,11 +519,16 @@ static inline Function_Stats_Hash * ptd_profile_get_stats() {
 
 
 void ptd_profile_function_start(const char * func) {
-   // bool debug = false;
+   bool debug = false;
+   DBGMSF(debug, "Executing. func=%s", func);
    Per_Thread_Data *  ptd = ptd_get_per_thread_data();
+   // If profiling currently active, do not profile called functions
    if (!ptd->cur_func) {
       ptd->cur_func = strdup(func);
       ptd->cur_start = cur_realtime_nanosec();
+   }
+   else {
+      DBGMSF(debug, "Currently profiling %s, Ignoring called function %s", ptd->cur_func, func);
    }
 }
 
@@ -526,20 +536,27 @@ void ptd_profile_function_start(const char * func) {
 void ptd_profile_function_end(const char * func) {
    bool debug = false;
    Per_Thread_Data *  ptd = ptd_get_per_thread_data();
-   DBGF(debug, "Starting. func=%s, cur_func=%s", func, ptd->cur_func);
+   DBGMSF(debug, "Starting. func=%s, cur_func=%s", func, ptd->cur_func);
+   // Ignore called functions
    if (streq(ptd->cur_func, func)) {
       Function_Stats_Hash * stats_table = ptd_profile_get_stats();
       Per_Thread_Function_Stats * function_stats = g_hash_table_lookup(stats_table, func);
-      DBGF(debug, "       stats_table=%p, function_stats=%p", stats_table, function_stats);
+      // DBGMSF(debug, "       stats_table=%p, function_stats=%p", stats_table, function_stats);
       if (!function_stats) {
          function_stats = calloc(1, sizeof(Per_Thread_Function_Stats));
          function_stats->function = strdup(func);
          g_hash_table_insert(stats_table, strdup(func), function_stats);
       }
+      uint64_t elapsed_nanosec = cur_realtime_nanosec() - ptd->cur_start;
       function_stats->total_calls++;
-      function_stats->total_nanosec = (cur_realtime_nanosec() - ptd->cur_start);
+      function_stats->total_nanosec += elapsed_nanosec;
+      DBGMSF(debug, "Done.  func=%s, elapsed_nanosec=%jd, total_nanosec=%jd",
+            func, elapsed_nanosec, function_stats->total_nanosec);
       free(ptd->cur_func);
       ptd->cur_func = NULL;
+   }
+   else {
+      DBGMSF(debug, "Currently profiling %s, ignoring end of %s", ptd->cur_func, func);
    }
 }
 
@@ -621,7 +638,9 @@ void ptd_add_stats(Per_Thread_Data * ptd, void * data) {
  *  @return hash table with key = function name, value = Per_Thread_Function_Stats*
  */
 Function_Stats_Hash * summarize_per_thread_stats() {
-   Function_Stats_Hash * summary = g_hash_table_new(g_str_hash, g_str_equal);
+   Function_Stats_Hash * summary = g_hash_table_new_full(
+         g_str_hash, g_str_equal,
+         g_free, (GDestroyNotify) free_per_thread_function_stats);
    ptd_apply_all(ptd_add_stats, summary);   // ptd_apply_all manages locking
    return summary;
 }
@@ -739,8 +758,8 @@ void ptd_profile_report_stats_summary(int depth) {
    rpt_label(depth, "Count  Microsec  Function Name");
    Function_Stats_Hash * summary_stats = summarize_per_thread_stats();
    DBGMSF(debug, "    summary_stats=%p", summary_stats);
-   // g_hash_table_foreach(summary_stats, ptd_report_one_func, GINT_TO_POINTER(depth));
    ptd_profile_apply_all_sorted(summary_stats, ptd_report_one_func0, GINT_TO_POINTER(depth));
+   g_hash_table_destroy(summary_stats);
    DBGMSF(debug, "Done");
 }
 
@@ -749,5 +768,4 @@ void ptd_profile_report_stats_summary(int depth) {
 void init_per_thread_data() {
    per_thread_data_hash = g_hash_table_new_full(g_direct_hash, NULL, NULL, per_thread_data_destroy);
    // DBGMSG("per_thead_data_hash = %p", per_thread_data_hash);
-   // test_get_thread_id();
 }

@@ -107,7 +107,7 @@ LTLIBRARIES = $(noinst_LTLIBRARIES)
 libvcp_la_LIBADD =
 am_libvcp_la_OBJECTS = parse_capabilities.lo \
 	parsed_capabilities_feature.lo persistent_capabilities.lo \
-	vcp_feature_codes.lo vcp_feature_set.lo vcp_feature_values.lo
+	vcp_feature_codes.lo vcp_feature_values.lo
 libvcp_la_OBJECTS = $(am_libvcp_la_OBJECTS)
 AM_V_lt = $(am__v_lt_@AM_V@)
 am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
@@ -132,7 +132,6 @@ am__depfiles_remade = ./$(DEPDIR)/parse_capabilities.Plo \
 	./$(DEPDIR)/parsed_capabilities_feature.Plo \
 	./$(DEPDIR)/persistent_capabilities.Plo \
 	./$(DEPDIR)/vcp_feature_codes.Plo \
-	./$(DEPDIR)/vcp_feature_set.Plo \
 	./$(DEPDIR)/vcp_feature_values.Plo
 am__mv = mv -f
 COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
@@ -230,6 +229,7 @@ ECHO_C = @ECHO_C@
 ECHO_N = @ECHO_N@
 ECHO_T = @ECHO_T@
 EGREP = @EGREP@
+ENABLE_BUILD_TIMESTAMP_FLAG = @ENABLE_BUILD_TIMESTAMP_FLAG@
 ENABLE_ENVCMDS_FLAG = @ENABLE_ENVCMDS_FLAG@
 ENABLE_SHARED_LIB_FLAG = @ENABLE_SHARED_LIB_FLAG@
 ENABLE_TARGETBSD_FLAG = @ENABLE_TARGETBSD_FLAG@
@@ -380,7 +380,6 @@ parse_capabilities.c          \
 parsed_capabilities_feature.c \
 persistent_capabilities.c     \
 vcp_feature_codes.c           \
-vcp_feature_set.c             \
 vcp_feature_values.c    
 
 all: all-am
@@ -441,7 +440,6 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/parsed_capabilities_feature.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/persistent_capabilities.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vcp_feature_codes.Plo@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vcp_feature_set.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vcp_feature_values.Plo@am__quote@ # am--include-marker
 
 $(am__depfiles_remade):
@@ -612,7 +610,6 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/parsed_capabilities_feature.Plo
 	-rm -f ./$(DEPDIR)/persistent_capabilities.Plo
 	-rm -f ./$(DEPDIR)/vcp_feature_codes.Plo
-	-rm -f ./$(DEPDIR)/vcp_feature_set.Plo
 	-rm -f ./$(DEPDIR)/vcp_feature_values.Plo
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
@@ -663,7 +660,6 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/parsed_capabilities_feature.Plo
 	-rm -f ./$(DEPDIR)/persistent_capabilities.Plo
 	-rm -f ./$(DEPDIR)/vcp_feature_codes.Plo
-	-rm -f ./$(DEPDIR)/vcp_feature_set.Plo
 	-rm -f ./$(DEPDIR)/vcp_feature_values.Plo
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic

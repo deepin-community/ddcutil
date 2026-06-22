@@ -3,18 +3,19 @@
  * Runtime trace information
  */
 
-// Copyright (C) 2018-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2018-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <glib-2.0/glib.h>
 #include <stdbool.h>
 #include <string.h>
- 
-#include "base/rtti.h"
+
+#include "util/debug_util.h"
 #include "util/glib_util.h"
 #include "util/report_util.h"
 #include "util/string_util.h"
 
+#include "base/rtti.h"
 
 static GHashTable * func_name_table = NULL;
 
@@ -39,8 +40,8 @@ char * rtti_get_func_name_by_addr(void * ptr) {
 
 void * rtti_get_func_addr_by_name(const char * name) {
    bool debug = false;
-   if (debug)
-      printf("(%s) func_name_table=%p, name=|%s|\n", __func__, func_name_table, name);
+   DBGF(debug, "func_name_table=%p, name=|%s|", func_name_table, name);
+
    void * result = NULL;
    if (func_name_table) {
       GHashTableIter iter;
@@ -53,8 +54,8 @@ void * rtti_get_func_addr_by_name(const char * name) {
          }
       }
    }
-   if (debug)
-      printf("(%s) name=%s, returning %s\n", __func__, name, SBOOL(result));
+
+   DBGF(debug, "name=%s, returning %s", name, SBOOL(result));
    return result;
 }
 
@@ -75,11 +76,11 @@ void dbgrpt_rtti_func_name_table(int depth, bool show_internal) {
          }
          g_ptr_array_add(values, value);
       }
-
       g_ptr_array_sort(values, gaux_ptr_scomp);
       for (int ndx = 0; ndx < values->len; ndx++) {
          rpt_vstring(depth, "   %s", (char *) g_ptr_array_index(values, ndx));
       }
+      g_ptr_array_free(values, true);
    }
    else {
       if (!show_internal) {
@@ -90,11 +91,15 @@ void dbgrpt_rtti_func_name_table(int depth, bool show_internal) {
 
 
 void report_rtti_func_name_table(int depth, char * msg) {
+   bool saved_prefix_report_output = rpt_set_ornamentation_enabled(false);
+
    if (msg) {
       rpt_label(depth, msg);
       depth++;
    }
    dbgrpt_rtti_func_name_table(depth, false);
+
+   rpt_set_ornamentation_enabled(saved_prefix_report_output);
 }
 
 

@@ -3,7 +3,7 @@
  * Basic functions for writing to and reading from the I2C bus using
  * alternative mechanisms.
  */
-// Copyright (C) 2014-2022 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "config.h"
@@ -23,6 +23,7 @@
 /** \endcond */
 
 #include "util/coredefs.h"
+#include "util/debug_util.h"
 #include "util/file_util.h"
 #include "util/report_util.h"
 #include "util/string_util.h"
@@ -464,7 +465,7 @@ i2c_ioctl_writer(
    msgset.msgs  = messages;
    msgset.nmsgs = 1;
 
-   if (IS_TRACING())
+   if (IS_DBGTRC(debug, DDCA_TRC_NONE))
       dbgrpt_i2c_rdwr_ioctl_data(1, &msgset);
 
    // per ioctl() man page:
@@ -481,22 +482,24 @@ i2c_ioctl_writer(
          );
    int errsv = errno;
    if (rc < 0) {
-      if (debug) {
-         REPORT_IOCTL_ERROR("I2C_RDWR", errno);
+      if (rc != -1) {
+         DBGTRC_NOPREFIX(debug, TRACE_GROUP,  "Unexpected: ioctl() write returned %d", rc);
+         SYSLOG2(DDCA_SYSLOG_ERROR,
+               "Unexpected: (%s) ioctl() write returned %d", __func__, rc);
+         // show_backtrace(1);
       }
-   }
-   // DBGMSG("ioctl(..I2C_RDWR..) returned %d", rc);
-
-   if (rc >= 0) {
-      if (rc != 1)      // expected success value
-         DBGMSG("Unexpected: ioctl() write returned %d", rc);
-      rc = 0;
-   }
-   else if (rc < 0) {
       rc = -errsv;
    }
+   else {    // (rc >= 0) {
+      if (rc != 1)   {   // expected success value
+         DBGTRC_NOPREFIX(debug, TRACE_GROUP,  "Unexpected: ioctl() write returned %d", rc);
+         SYSLOG2(DDCA_SYSLOG_ERROR, "(%s) Unexpected: ioctl() write returned %d", __func__, rc);
+         // show_backtrace(1);
+      }
+      rc = 0;
+   }
 
-   DBGTRC_RET_DDCRC(debug, TRACE_GROUP, rc, "");
+   DBGTRC_RET_DDCRC(debug, TRACE_GROUP, rc, "fh=%d, filename=%s", fd, filename_for_fd_t(fd));
    return rc;
 }
 
@@ -540,7 +543,7 @@ i2c_ioctl_reader1(
    msgset.msgs  = messages;
    msgset.nmsgs = 1;
 
-   if (IS_TRACING())
+   if (IS_DBGTRC(debug, DDCA_TRC_NONE))
       dbgrpt_i2c_rdwr_ioctl_data(1, &msgset);
 
    RECORD_IO_EVENT(
@@ -550,24 +553,32 @@ i2c_ioctl_reader1(
      );
    int errsv = errno;
    if (rc < 0) {
-      if (debug) {
-         REPORT_IOCTL_ERROR("I2C_RDWR", errno);
+      DBGTRC_NOPREFIX(debug, TRACE_GROUP,
+            "Error in ioctl() read, rc=%d, errno=%s, device=%s",
+                        rc, psc_desc(-errsv), filename_for_fd_t(fd));
+      SYSLOG2(DDCA_SYSLOG_DEBUG, "(%s) Error in ioctl() read, rc=%d, errno=%s, device=%s",
+            __func__, rc, psc_desc(-errsv), filename_for_fd_t(fd));
+      if (IS_DBGTRC(debug, TRACE_GROUP)) {
+         show_backtrace(0);
+         dbgrpt_traced_callstack_call_table(0);
       }
+      rc = -errsv;
    }
-   // DBGMSG("ioctl(..I2C_RDWR..) returned %d", rc);
-   if (rc >= 0) {
-      // always see rc == 1
+   else {
       if (rc != 1) {
-         DBGMSG("Unexpected ioctl rc = %d, bytect =%d", rc, bytect);
+         DBGTRC_NOPREFIX(debug, TRACE_GROUP,
+               "Unexpected ioctl() read rc=%d, bytect =%d,  device=%s",
+                           rc, bytect, filename_for_fd_t(fd));
+         SYSLOG2(DDCA_SYSLOG_ERROR, "(%s) Unexpected ioctl() read rc = %d, bytect =%d, device=%s",
+               __func__, rc, bytect, filename_for_fd_t(fd));
+        //  show_backtrace(1);
       }
       rc = 0;
    }
-   else if (rc < 0)
-      rc = -errsv;
-
    free(messages);
-   // DBGMSG("readbuf=%p, bytect=%d", readbuf, bytect);
-   DBGTRC_RET_DDCRC(debug, TRACE_GROUP, rc, "readbuf: %s", hexstring_t(readbuf, bytect));
+   
+   DBGTRC_RET_DDCRC(debug, TRACE_GROUP, rc, "fh=%d, filename=%s, readbuf: %s",
+         fd, filename_for_fd_t(fd), hexstring_t(readbuf, bytect));
    return rc;
 }
 
@@ -607,7 +618,8 @@ i2c_ioctl_reader(
       rc = i2c_ioctl_reader1(fd, slave_addr, bytect, readbuf);
    }
 
-   DBGTRC_RET_DDCRC(debug, TRACE_GROUP, rc, "readbuf: %s", hexstring_t(readbuf, bytect));
+   DBGTRC_RET_DDCRC(debug, TRACE_GROUP, rc, "fh=%d, filename=%s, readbuf: %s",
+         fd, filename_for_fd_t(fd), hexstring_t(readbuf, bytect));
    return rc;
 }
 

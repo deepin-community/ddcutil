@@ -3,7 +3,7 @@
  * Dynamic Feature Record definition, creation, destruction, and conversion
  */
 
-// Copyright (C) 2022-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2022-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef BASE_DYNAMIC_FEATURES_H_
@@ -21,7 +21,8 @@
 
 typedef enum {
    DFR_FLAGS_NONE      = 0,
-   DFR_FLAGS_NOT_FOUND = 1
+   DFR_FLAGS_NOT_FOUND = 1,
+   DFR_FLAG_EXCLUDE_FROM_API = 2,
 } DFR_Flags;
 
 // Replaces use of DDCA_Feature_Metadata for representing dynamic spec read from file
@@ -33,7 +34,10 @@ struct {
    char                                  marker[4];      /**< always "DMET" */
    DDCA_Vcp_Feature_Code                 feature_code;   /**< VCP feature code */
    DDCA_MCCS_Version_Spec                vcp_version;    /**< MCCS version    */
-   DDCA_Feature_Flags                    feature_flags;  /**< feature type description */
+   // DDCA_Feature_Flags                    feature_flags;  /**< feature type description */
+   DDCA_Global_Feature_Flags             global_feature_flags;
+   DDCA_Version_Feature_Flags            version_feature_flags;
+
    DDCA_Feature_Value_Entry *            sl_values;      /**< valid when DDCA_SIMPLE_NC set */
    void *                                unused;         /** no longer used, was latest_sl_values */
    char *                                feature_name;   /**< feature name */
@@ -70,10 +74,6 @@ void
 dfr_free(
       Dynamic_Features_Rec *  frec);
 
-void
-dfr_gdestroy(
-      gpointer p);
-
 Error_Info *
 create_dynamic_features_rec(
       const char *            mfg_id,
@@ -84,14 +84,14 @@ create_dynamic_features_rec(
       Dynamic_Features_Rec ** dynamic_features_loc);
 
 Dyn_Feature_Metadata *
-get_dynamic_feature_metadata(
+dyn_get_dynamic_feature_metadata(
       Dynamic_Features_Rec *  dfr,
       uint8_t                 feature_code);
 
 // satisfies glib signature
 void
-free_feature_metadata(
-      gpointer data);    // i.e. Dyn_Feature_Metadata *
+dyn_free_feature_metadata(
+      Dyn_Feature_Metadata* data);    // castable to GDestroyNotify
 
 void dbgrpt_dynamic_features_rec(
       Dynamic_Features_Rec*   dfr,

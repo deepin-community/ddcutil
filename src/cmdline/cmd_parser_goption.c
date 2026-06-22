@@ -3,7 +3,7 @@
  *  Parse the command line using the glib goption functions.
  */
 
-// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <config.h>
@@ -24,6 +24,7 @@
 #include "util/report_util.h"
 
 #include "base/build_info.h"
+#include "base/build_timestamp.h"
 #include "base/core.h"
 #include "base/displays.h"
 #include "base/parms.h"
@@ -107,6 +108,9 @@ stats_arg_func(const    gchar* option_name,
       else if ( is_abbrev(v2,"ELAPSED",3) || is_abbrev(v2, "TIME",3)) {
          stats_work |= DDCA_STATS_ELAPSED;
       }
+      else if ( streq(v2,"API") ){
+         stats_work |= DDCA_STATS_API;
+      }
       else
          ok = false;
       free(v2);
@@ -120,7 +124,6 @@ stats_arg_func(const    gchar* option_name,
    }
    return ok;
 }
-
 
 
 // Callback function for processing --discard-cache
@@ -159,6 +162,7 @@ discard_cache_arg_func(
    }
    return ok;
 }
+
 
 
 #ifdef ENABLE_USB
@@ -211,6 +215,8 @@ ignored_hiddev_arg_func(const    gchar* option_name,
 
 
 static void emit_parser_error(GPtrArray* errmsgs, const char * func, const char * msg, ...) {
+   bool debug = false;
+   DBGF(debug, "errmsgs=%p, func=%s, msg=%s", errmsgs, func, msg);
    va_list(args);
    va_start(args, msg);
    char * buffer = g_strdup_vprintf(msg, args);
@@ -221,6 +227,7 @@ static void emit_parser_error(GPtrArray* errmsgs, const char * func, const char 
       buffer[strlen(buffer)-1] = '\0';
 
    if (errmsgs) {
+      DBGF(debug,"Adding error msg %s", buffer);
       g_ptr_array_add(errmsgs, g_strdup(buffer));
    }
    else{
@@ -441,6 +448,24 @@ static bool parse_int_work(char * sval, int * result_loc, GPtrArray * errmsgs) {
 }
 
 
+#ifdef UNUSED
+static bool parse_positive_int(int ival, int * result_loc, GPtrArray * errmsgs) {
+   bool debug = false;
+   bool ok = true;
+   DBGMSF(debug, "ival: %d", ival);
+   ok = (ival > 0);
+   if (ok)
+      *result_loc = ival;
+   else
+      EMIT_PARSER_ERROR(errmsgs,  "Must be a positive number: %d", ival);
+
+   DBGMSF(debug, "Done.  Returning: %d. result_loc -> %d",
+         sbool(ok), *result_loc);
+   return ok;
+}
+#endif
+
+
 static bool parse_sleep_multiplier(
       const char*  sval,
       float *      result_loc,
@@ -466,6 +491,41 @@ static bool parse_sleep_multiplier(
       }
    }
    return arg_ok;
+}
+
+
+static bool parse_watch_mode(
+      const char * sval,
+      Parsed_Cmd* parsed_cmd,
+      GPtrArray* errmsgs)
+{
+   bool debug = false;
+   DBGMSF(debug,"sval=|%s|", sval);
+
+   bool ok = true;
+   if (sval) {
+      char * v2 = strdup_uc(sval);
+
+      if (     is_abbrev(v2, "POLL", 3))
+         parsed_cmd->watch_mode = Watch_Mode_Poll;
+      else if (is_abbrev(v2, "XEVENT", 3))
+         parsed_cmd->watch_mode = Watch_Mode_Xevent;
+   // else if (is_abbrev(v2, "UDEV", 3))
+   //    parsed_cmd->watch_mode = Watch_Mode_Udev;
+      else if (is_abbrev(v2, "DYNAMIC", 3))
+         parsed_cmd->watch_mode = Watch_Mode_Dynamic;
+
+      else {
+         EMIT_PARSER_ERROR(errmsgs, "Invalid watch-mode: %s", sval);
+         ok = false;
+      }
+      free(v2);
+   }
+   else {
+      EMIT_PARSER_ERROR(errmsgs, "--watch-mode argument missing");
+      ok = false;
+   }
+   return ok;
 }
 
 
@@ -697,9 +757,7 @@ static bool parse_discard_args(Parsed_Cmd * parsed_cmd, GPtrArray* errmsgs) {
 
 
 static void report_ddcutil_build_info() {
-
-      // TODO: patch values at link time
-      // printf("Built %s at %s\n", BUILD_DATE, BUILD_TIME);
+      printf("Built %s at %s\n", BUILD_DATE, BUILD_TIME);
 #ifdef ENABLE_USB
       printf("Built with support for displays using USB for MCCS communication.\n");
 #else
@@ -726,7 +784,7 @@ Preparsed_Cmd * preparse_command(
       Parser_Mode parser_mode,
       GPtrArray * errmsgs)
 {
-   bool debug = true;
+   bool debug = false;
    char * s = getenv("DDCUTIL_DEBUG_PARSE");
    if (s && strlen(s) > 0)
       debug = true;
@@ -825,13 +883,13 @@ parse_command(
    char * s = getenv("DDCUTIL_DEBUG_PARSE");
    if (s && strlen(s) > 0)
       debug = true;
-   DBGMSF(debug, "Starting. parser_mode = %d", parser_mode );
+   DBGF(debug, "Starting. parser_mode = %d", parser_mode );
 #ifndef NDEBUG
    init_cmd_parser_base();   // assertions
 #endif
 
    if (debug) {
-      DBGMSG("argc=%d", argc);
+      DBG("argc=%d", argc);
       int ndx = 0;
       for (; ndx < argc; ndx++) {
          DBGMSG("argv[%d] = |%s|", ndx, argv[ndx]);
@@ -844,7 +902,7 @@ parse_command(
    // DBGMSG("After new_parsed_cmd(), parsed_cmd->output_level_name = %s", output_level_name(parsed_cmd->output_level));
 
    gchar * original_command = g_strjoinv(" ",argv);
-   DBGMSF(debug, "original command: %s", original_command);
+   DBGF(debug, "original command: %s", original_command);
    parsed_cmd->raw_command = original_command;
 
 // gboolean stats_flag       = false;
@@ -858,7 +916,11 @@ parse_command(
    gboolean wall_timestamp_trace_flag = false;
    gboolean thread_id_trace_flag = false;
    gboolean process_id_trace_flag = false;
-   gboolean verify_flag    = false;
+   const char * verify_expl   = (DEFAULT_SETVCP_VERIFY) ? "Verify value set by setvcp (default)"
+                                                        : "Verify value set by setvcp";
+   const char * noverify_expl = (DEFAULT_SETVCP_VERIFY) ? "Do not verify value by setvcp"
+                                                        : "Do not verify value set by setvcp (default)";
+   gboolean verify_flag    = DEFAULT_SETVCP_VERIFY;
    gboolean noverify_flag  = false;
    gboolean async_flag     = false;
    // gboolean async_check_i2c_flag = true;
@@ -886,6 +948,8 @@ parse_command(
    gboolean parse_only_flag    = false;
    gboolean x52_no_fifo_flag   = false;
    gboolean enable_dsa2_flag   = DEFAULT_ENABLE_DSA2;
+   gboolean traced_function_stack_flag = false;
+   gboolean traced_function_stack_errors_fatal_flag = false;
    // int      i2c_bus_check_async_min = DEFAULT_I2C_BUS_CHECK_ASYNC_MIN;
    // int      ddc_check_async_min = DEFAULT_DDC_CHECK_ASYNC_MIN;
    char     i2c_bus_check_async_expl[80];
@@ -937,20 +1001,35 @@ parse_command(
    gboolean trace_to_syslog_only_flag = false;
    gboolean stats_to_syslog_only_flag = false;
    gint     edid_read_size_work = -1;
-   gboolean watch_displays_flag = false;
+   gboolean disable_api_flag = false;
+   gboolean discard_cached_capabilities_flag = false;
+   gboolean discard_dsa_cache_flag = false;
 
    gboolean try_get_edid_from_sysfs = DEFAULT_TRY_GET_EDID_FROM_SYSFS;
-
    char *   enable_tgefs_expl = NULL;
-   char *  disable_tgefs_expl = NULL;
+   char *   disable_tgefs_expl = NULL;
    if (DEFAULT_TRY_GET_EDID_FROM_SYSFS) {
-      enable_tgefs_expl = "get EDID from /sys when possible (default)";
+      enable_tgefs_expl  = "get EDID from /sys when possible (default)";
       disable_tgefs_expl = "do not try to get EDID from /sys";
    }
    else {
-      enable_tgefs_expl = "get EDID from /sys when possible";
+      enable_tgefs_expl  = "get EDID from /sys when possible";
       disable_tgefs_expl = "do not try to get EDID from /sys (default)";
    }
+
+   DDC_Watch_Mode default_watch_mode = DEFAULT_WATCH_MODE;
+   char * default_watch_mode_keyword;
+   switch(default_watch_mode) {
+   case Watch_Mode_Dynamic:  default_watch_mode_keyword = "DYNAMIC"; break;
+   case Watch_Mode_Xevent:   default_watch_mode_keyword = "XEVENT";  break;
+   case Watch_Mode_Poll:     default_watch_mode_keyword = "POLL";    break;
+   case Watch_Mode_Udev:     default_watch_mode_keyword = "UDEV";    break;
+   }
+   char watch_mode_expl[80];
+   g_snprintf(watch_mode_expl, 80, "DYNAMIC|XEVENT|POLL, default: %s", default_watch_mode_keyword);
+   gboolean enable_watch_displays = true;
+   gint     xevent_watch_loop_millis_work = DEFAULT_XEVENT_WATCH_LOOP_MILLISEC;
+   gint     poll_watch_loop_millis_work = DEFAULT_POLL_WATCH_LOOP_MILLISEC;
 
    gboolean f1_flag         = false;
    gboolean f2_flag         = false;
@@ -966,6 +1045,24 @@ parse_command(
    gboolean f12_flag        = false;
    gboolean f13_flag        = false;
    gboolean f14_flag        = false;
+   gboolean f15_flag        = false;
+   gboolean f16_flag        = false;
+   gboolean f17_flag        = false;
+   gboolean f18_flag        = false;
+   gboolean f19_flag        = false;
+   gboolean f20_flag        = false;
+   gboolean f21_flag        = false;
+   gboolean f22_flag        = false;
+   gboolean f23_flag        = false;
+   gboolean f24_flag        = false;
+   gboolean f25_flag        = false;
+   gboolean f26_flag        = false;
+   gboolean f27_flag        = false;
+   gboolean f28_flag        = false;
+   gboolean f29_flag        = false;
+   gboolean f30_flag        = false;
+   gboolean f31_flag        = false;
+   gboolean f32_flag        = false;
    char *   i1_work         = NULL;
    char *   i2_work         = NULL;
    char *   i3_work         = NULL;
@@ -974,6 +1071,14 @@ parse_command(
    char *   i6_work         = NULL;
    char *   i7_work         = NULL;
    char *   i8_work         = NULL;
+   char *   i9_work         = NULL;
+   char *   i10_work         = NULL;
+   char *   i11_work         = NULL;
+   char *   i12_work         = NULL;
+   char *   i13_work         = NULL;
+   char *   i14_work         = NULL;
+   char *   i15_work         = NULL;
+   char *   i16_work         = NULL;
    char *   fl1_work        = NULL;
    char *   fl2_work        = NULL;
    char *   failsim_fn_work = NULL;
@@ -981,6 +1086,7 @@ parse_command(
    char *   sleep_multiplier_work = NULL;
    char *   min_dynamic_sleep_work = NULL;
    char *   i2c_source_addr_work = NULL;
+   char *   watch_mode_work = NULL;
    gboolean skip_ddc_checks_flag = false;
 
    gboolean hidden_help_flag = false;
@@ -993,9 +1099,37 @@ parse_command(
 
 #ifdef OLD
    GOptionEntry libddcutil_only_options[] = {
+         {"disable-api", '\0', G_OPTION_FLAG_HIDDEN,
+                              G_OPTION_ARG_NONE, &disable_api, "Completely disable API", NULL },
          {NULL},
    };
 #endif
+
+   GOptionEntry initial_options[] = {
+         // Output control
+         {"verbose", 'v',  G_OPTION_FLAG_NO_ARG,
+                              G_OPTION_ARG_CALLBACK, output_arg_func,   "Show extended detail",             NULL},
+         {"terse",   't',  G_OPTION_FLAG_NO_ARG,
+                              G_OPTION_ARG_CALLBACK, output_arg_func,   "Show brief detail",                NULL},
+         {"brief",   '\0', G_OPTION_FLAG_NO_ARG,
+                              G_OPTION_ARG_CALLBACK, output_arg_func,   "Show brief detail",                NULL},
+         {"vv",      '\0', G_OPTION_FLAG_NO_ARG | G_OPTION_FLAG_HIDDEN,
+                              G_OPTION_ARG_CALLBACK, output_arg_func,   "Show extra verbose detail",        NULL},
+         {"very-verbose", '\0', G_OPTION_FLAG_NO_ARG | G_OPTION_FLAG_HIDDEN,
+                              G_OPTION_ARG_CALLBACK, output_arg_func,   "Show extra verbose detail",        NULL},
+
+         // Program information
+         {"settings",'\0', 0, G_OPTION_ARG_NONE,     &show_settings_flag,"Show current settings",           NULL},
+         {"version", 'V',  0, G_OPTION_ARG_NONE,     &version_flag,     "Show ddcutil version",             NULL},
+
+         // Miscellaneous
+         // move to preparser_options if also implemented for libddcutil
+         {"noconfig",'\0', 0, G_OPTION_ARG_NONE,     &disable_config_flag, "Do not process configuration file", NULL},
+
+         {NULL},
+       };
+
+
 
    GOptionEntry ddcutil_only_options[] = {
          //  Monitor selection options
@@ -1021,26 +1155,6 @@ parse_command(
          {"ro",      '\0', 0, G_OPTION_ARG_NONE,     &ro_only_flag,     "Include only RO features",         NULL},
          {"wo",      '\0', 0, G_OPTION_ARG_NONE,     &wo_only_flag,     "Include only WO features",         NULL},
 
-         // Output control
-         {"verbose", 'v',  G_OPTION_FLAG_NO_ARG,
-                              G_OPTION_ARG_CALLBACK, output_arg_func,   "Show extended detail",             NULL},
-         {"terse",   't',  G_OPTION_FLAG_NO_ARG,
-                              G_OPTION_ARG_CALLBACK, output_arg_func,   "Show brief detail",                NULL},
-         {"brief",   '\0', G_OPTION_FLAG_NO_ARG,
-                              G_OPTION_ARG_CALLBACK, output_arg_func,   "Show brief detail",                NULL},
-         {"vv",      '\0', G_OPTION_FLAG_NO_ARG | G_OPTION_FLAG_HIDDEN,
-                              G_OPTION_ARG_CALLBACK, output_arg_func,   "Show extra verbose detail",        NULL},
-         {"very-verbose", '\0', G_OPTION_FLAG_NO_ARG | G_OPTION_FLAG_HIDDEN,
-                              G_OPTION_ARG_CALLBACK, output_arg_func,   "Show extra verbose detail",        NULL},
-
-         // Program information
-         {"settings",'\0', 0, G_OPTION_ARG_NONE,     &show_settings_flag,"Show current settings",           NULL},
-         {"version", 'V',  0, G_OPTION_ARG_NONE,     &version_flag,     "Show ddcutil version",             NULL},
-
-         // Miscellaneous
-         // move to preparser_options if also implemented for libddcutil
-         {"noconfig",'\0', 0, G_OPTION_ARG_NONE,     &disable_config_flag, "Do not process configuration file", NULL},
-
       {NULL},
    };
 
@@ -1048,17 +1162,19 @@ parse_command(
    //  long_name short flags option-type          gpointer           description                    arg description
 
       // Diagnostic output
-      {"ddc",     '\0', 0, G_OPTION_ARG_NONE,     &ddc_flag,         "Report DDC protocol and data errors (Deprecated, use --ddcdata)", NULL},
-      {"ddcdata", '\0', 0, G_OPTION_ARG_NONE,     &ddc_flag,         "Report DDC protocol and data errors", NULL},
+      {"ddc",     '\0', G_OPTION_FLAG_HIDDEN,
+                        G_OPTION_ARG_NONE, &ddc_flag,         "Report DDC protocol and data errors (Deprecated, use --ddcdata)", NULL},
+      {"ddcdata", '\0', 0,
+                        G_OPTION_ARG_NONE,     &ddc_flag,         "Report DDC protocol and data errors", NULL},
       {"stats",   's',  G_OPTION_FLAG_OPTIONAL_ARG,
-                           G_OPTION_ARG_CALLBACK, stats_arg_func,    "Show performance statistics",  "stats type"},
+                        G_OPTION_ARG_CALLBACK, stats_arg_func,    "Show performance statistics",  "stats type"},
       {"vstats",  '\0', G_OPTION_FLAG_OPTIONAL_ARG,
-                           G_OPTION_ARG_CALLBACK, stats_arg_func,    "Show detailed performance statistics",  "stats type"},
+                        G_OPTION_ARG_CALLBACK, stats_arg_func,    "Show detailed performance statistics",  "stats type"},
       {"istats",  '\0', G_OPTION_FLAG_OPTIONAL_ARG,
-                                                G_OPTION_ARG_CALLBACK, stats_arg_func,    "Show detailed and internal performance statistics",  "stats type"},
-      {"profile-api",'\0', 0, G_OPTION_ARG_NONE, &profile_api_flag,      "Profile API calls", NULL},
+                        G_OPTION_ARG_CALLBACK, stats_arg_func,    "Show detailed and internal performance statistics",  "stats type"},
+      {"profile-api",'\0', G_OPTION_FLAG_HIDDEN,
+                           G_OPTION_ARG_NONE, &profile_api_flag,      "Profile API calls", NULL},
       {"syslog",      '\0',0, G_OPTION_ARG_STRING,       &syslog_work,                    "system log level", valid_syslog_levels_string},
-
 
       // Performance
       {"enable-capabilities-cache",
@@ -1103,14 +1219,20 @@ parse_command(
 #endif
       {"async",   '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE,     &async_flag,       "Enable asynchronous display detection (deprecated)", NULL},
 
-      {"i2c-bus-checks-async-min",'\0', 0,
+      {"i2c-bus-checks-async-min",'\0', G_OPTION_FLAG_HIDDEN,
                                          G_OPTION_ARG_INT, &parsed_cmd->i2c_bus_check_async_min, i2c_bus_check_async_expl, NULL},
-      {"ddc-checks-async-min",    '\0', G_OPTION_FLAG_NONE,
+      {"ddc-checks-async-min",    '\0', G_OPTION_FLAG_HIDDEN,
                                      G_OPTION_ARG_INT, &parsed_cmd->ddc_check_async_min, ddc_check_async_expl, NULL},
+      {"i2c-init-async-min",'\0', G_OPTION_FLAG_HIDDEN,
+         G_OPTION_ARG_INT, &parsed_cmd->i2c_bus_check_async_min, i2c_bus_check_async_expl, NULL},
+      {"ddc-init-async-min",    '\0', G_OPTION_FLAG_HIDDEN,
+         G_OPTION_ARG_INT, &parsed_cmd->ddc_check_async_min, ddc_check_async_expl, NULL},
+
 
       {"skip-ddc-checks",'\0',0,G_OPTION_ARG_NONE,     &skip_ddc_checks_flag,     "Skip initial DDC checks",  NULL},
 
-      {"lazy-sleep",  '\0', 0, G_OPTION_ARG_NONE, &deferred_sleep_flag, "Delay sleeps if possible",  NULL},
+      {"lazy-sleep",  '\0', G_OPTION_FLAG_HIDDEN,
+                            G_OPTION_ARG_NONE, &deferred_sleep_flag, "Delay sleeps if possible",  NULL},
  //   {"defer-sleeps",'\0', 0, G_OPTION_ARG_NONE, &deferred_sleep_flag, "Delay sleeps if possible",  NULL},
 
       {"less-sleep" ,       '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE, &reduce_sleeps_specified, "Deprecated",  NULL},
@@ -1122,11 +1244,17 @@ parse_command(
                                   G_OPTION_ARG_CALLBACK, discard_cache_arg_func,    "Discard performance caches",  "cache type"},
       {"discard-cache",     '\0', G_OPTION_FLAG_OPTIONAL_ARG,
          G_OPTION_ARG_CALLBACK, discard_cache_arg_func,    "Discard performance caches",  "cache type"},
+      {"discard-capabilities-cache",
+                  '\0', 0, G_OPTION_ARG_NONE, &discard_cached_capabilities_flag, "Discard capabilities cache", NULL},
+      {"discard-dynamic-sleep-cache",
+         '\0', 0, G_OPTION_ARG_NONE, &discard_dsa_cache_flag, "Discard dynamic sleep cache", NULL},
+   // {"discard-dsa-cache",
+   //    '\0', 0, G_OPTION_ARG_NONE, &discard_dsa_cache_flag, "Discard dynamic sleep cache", NULL},
 
       // Behavior options
       {"maxtries",'\0', 0, G_OPTION_ARG_STRING,   &maxtrywork,       "Max try adjustment",  "comma separated list" },
-      {"verify",  '\0', 0, G_OPTION_ARG_NONE,     &verify_flag,      "Read VCP value after setting it", NULL},
-      {"noverify",'\0', 0, G_OPTION_ARG_NONE,     &noverify_flag,    "Do not read VCP value after setting it", NULL},
+      {"verify",  '\0', 0, G_OPTION_ARG_NONE,     &verify_flag,      verify_expl,        NULL},
+      {"noverify",'\0', 0, G_OPTION_ARG_NONE,     &noverify_flag,    noverify_expl,      NULL},
 
       {"mccs",    '\0', 0, G_OPTION_ARG_STRING,   &mccswork,         "Tailor feature handling to specific MCCS version",   "major.minor" },
 
@@ -1144,15 +1272,26 @@ parse_command(
             '\0', 0, G_OPTION_ARG_NONE,     &enable_flock_flag,   enable_flock_expl,     NULL},
       {"disable-cross-instance-locks", '\0', G_OPTION_FLAG_REVERSE,
                      G_OPTION_ARG_NONE,     &enable_flock_flag,   disable_flock_expl ,   NULL},
+      {"enable-flock",
+            '\0', 0, G_OPTION_ARG_NONE,     &enable_flock_flag,   enable_flock_expl,     NULL},
+      {"disable-flock", '\0', G_OPTION_FLAG_REVERSE,
+                       G_OPTION_ARG_NONE,     &enable_flock_flag,   disable_flock_expl ,   NULL},
 
       {"enable-try-get-edid-from-sysfs", '\0', 0,
                             G_OPTION_ARG_NONE,    &try_get_edid_from_sysfs,   enable_tgefs_expl, NULL},
       {"disable-try-get-edid-from-sysfs", '\0', G_OPTION_FLAG_REVERSE,
                            G_OPTION_ARG_NONE,     &try_get_edid_from_sysfs,   disable_tgefs_expl, NULL},
 //      {"enable-watch-displays",  '\0', 0, G_OPTION_ARG_NONE, &watch_displays_flag, "Watch for display hotplug events", NULL },
-//      {"disable-watch-displays", '\0', G_OPTION_FLAG_REVERSE,
-//                                G_OPTION_ARG_NONE, &watch_displays_flag, "Do not watch for display hotplug events", NULL },
-
+      {"disable-watch-displays", '\0', G_OPTION_FLAG_REVERSE,
+                                G_OPTION_ARG_NONE, &enable_watch_displays, "Do not watch for display change events", NULL },
+      {"disable-api", '\0', G_OPTION_FLAG_HIDDEN,
+                      G_OPTION_ARG_NONE, &disable_api_flag, "Completely disable API", NULL },
+      {"watch-mode", '\0', G_OPTION_FLAG_HIDDEN,
+                           G_OPTION_ARG_STRING, &watch_mode_work, "How to watch for display changes",  watch_mode_expl},
+      {"xevent-watch-loop-millisec", '\0', G_OPTION_FLAG_HIDDEN,
+                           G_OPTION_ARG_INT, &xevent_watch_loop_millis_work, "Loop delay for mode XEVENT", "milliseconds"},
+      {"poll-watch-loop-millisec", '\0', G_OPTION_FLAG_HIDDEN,
+                           G_OPTION_ARG_INT, &poll_watch_loop_millis_work, "Loop delay for mode POLL", "milliseconds"},
 #ifdef ENABLE_USB
       {"enable-usb", '\0', G_OPTION_FLAG_NONE,
                                G_OPTION_ARG_NONE, &enable_usb_flag,  enable_usb_expl, NULL},
@@ -1163,6 +1302,9 @@ parse_command(
       {"ignore-usb-vid-pid", '\0', 0, G_OPTION_ARG_STRING_ARRAY, &ignored_vid_pid, "USB device to ignore","vid:pid" },
       {"ignore-hiddev", '\0', 0, G_OPTION_ARG_CALLBACK, ignored_hiddev_arg_func,  "USB device to ignore", "hiddev number"},
 #endif
+      {"disable-ddc",   '\0', G_OPTION_FLAG_HIDDEN,
+                                 G_OPTION_ARG_STRING_ARRAY, &parsed_cmd->ddc_disabled,  "Disable DDC for monitor","monitor model id" },
+      {"ignore-mmid",   '\0', 0, G_OPTION_ARG_STRING_ARRAY, &parsed_cmd->ddc_disabled,  "Disable DDC for monitor","monitor model id" },
 
 #ifdef FUTURE
       {"force-slave-address",
@@ -1177,7 +1319,8 @@ parse_command(
                   '\0', G_OPTION_FLAG_HIDDEN,
                            G_OPTION_ARG_NONE,     &i2c_io_ioctl_flag, "Use i2c-dev ioctl() calls by default",     NULL},
 
-      {"x52-no-fifo",'\0',0,G_OPTION_ARG_NONE,    &x52_no_fifo_flag, "Feature x52 does not have a FIFO queue", NULL},
+      {"x52-no-fifo",'\0',G_OPTION_FLAG_HIDDEN,
+                          G_OPTION_ARG_NONE,    &x52_no_fifo_flag, "Feature x52 does not have a FIFO queue", NULL},
 
       {"edid-read-size",
                       '\0', 0, G_OPTION_ARG_INT,  &edid_read_size_work, "Number of EDID bytes to read", "128,256" },
@@ -1199,26 +1342,30 @@ parse_command(
       // Debugging
       {"excp",       '\0', G_OPTION_FLAG_HIDDEN,
                               G_OPTION_ARG_NONE,         &report_freed_excp_flag, "Report freed exceptions", NULL},
-      {"trace",      '\0', 0, G_OPTION_ARG_STRING_ARRAY, &trace_classes,        "Trace classes",  "trace class name" },
+      {"trace",      '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_STRING_ARRAY, &trace_classes,        "Trace classes",  "trace class name" },
 //    {"trace",      '\0', 0, G_OPTION_ARG_STRING,       &tracework,            "Trace classes",  "comma separated list" },
-      {"trcapi",     '\0', 0, G_OPTION_ARG_STRING_ARRAY, &parsed_cmd->traced_api_calls,      "Trace API call", "function name"},
-      {"trcfunc",    '\0', 0, G_OPTION_ARG_STRING_ARRAY, &parsed_cmd->traced_functions,  "Trace functions","function name" },
-      {"trcfrom",    '\0', 0, G_OPTION_ARG_STRING_ARRAY, &parsed_cmd->traced_calls,      "Trace call stack from function","function name" },
-      {"trcfile",    '\0', 0, G_OPTION_ARG_STRING_ARRAY, &parsed_cmd->traced_files,      "Trace files",    "file name" },
+      {"trcapi",     '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_STRING_ARRAY, &parsed_cmd->traced_api_calls,      "Trace API call", "function name"},
+      {"trcfunc",    '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_STRING_ARRAY, &parsed_cmd->traced_functions,  "Trace functions","function name" },
+      {"trcfrom",    '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_STRING_ARRAY, &parsed_cmd->traced_calls,      "Trace call stack from function","function name" },
+      {"trcfile",    '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_STRING_ARRAY, &parsed_cmd->traced_files,      "Trace files",    "file name" },
+      {"enable-traced-function-stack",
+                  '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE, &traced_function_stack_flag, "Enable traced function stack", NULL},
+//    {"traced-function-stack-errors-fatal",
+//                '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE, &traced_function_stack_errors_fatal_flag, "Traced function stack errors are fatal", NULL},
 
-      {"timestamp",  '\0', 0, G_OPTION_ARG_NONE,         &timestamp_trace_flag, "Prepend trace msgs with elapsed time",  NULL},
-      {"ts",         '\0', 0, G_OPTION_ARG_NONE,         &timestamp_trace_flag, "Prepend trace msgs with elapsed time",  NULL},
+      {"timestamp",  '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE,         &timestamp_trace_flag, "Prepend trace msgs with elapsed time",  NULL},
+      {"ts",         '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE,         &timestamp_trace_flag, "Prepend trace msgs with elapsed time",  NULL},
       {"wall-timestamp",
-                     '\0', 0, G_OPTION_ARG_NONE,         &wall_timestamp_trace_flag, "Prepend trace msgs with wall time",  NULL},
-      {"wts",        '\0', 0, G_OPTION_ARG_NONE,         &wall_timestamp_trace_flag, "Prepend trace msgs with wall time",  NULL},
-      {"thread-id",  '\0', 0, G_OPTION_ARG_NONE,         &thread_id_trace_flag, "Prepend trace msgs with thread id",  NULL},
-      {"tid",        '\0', 0, G_OPTION_ARG_NONE,         &thread_id_trace_flag, "Prepend trace msgs with thread id",  NULL},
-      {"process-id", '\0', 0, G_OPTION_ARG_NONE,         &process_id_trace_flag, "Prepend trace msgs with process id",  NULL},
-      {"pid",        '\0', 0, G_OPTION_ARG_NONE,         &process_id_trace_flag, "Prepend trace msgs with process id",  NULL},
+                     '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE,         &wall_timestamp_trace_flag, "Prepend trace msgs with wall time",  NULL},
+      {"wts",        '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE,         &wall_timestamp_trace_flag, "Prepend trace msgs with wall time",  NULL},
+      {"thread-id",  '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE,         &thread_id_trace_flag, "Prepend trace msgs with thread id",  NULL},
+      {"tid",        '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE,         &thread_id_trace_flag, "Prepend trace msgs with thread id",  NULL},
+      {"process-id", '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE,         &process_id_trace_flag, "Prepend trace msgs with process id",  NULL},
+      {"pid",        '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE,         &process_id_trace_flag, "Prepend trace msgs with process id",  NULL},
 //    {"trace-to-file",'\0',0,G_OPTION_ARG_STRING,       &parsed_cmd->trace_destination,    "Send trace output here instead of terminal", "file name or \"syslog\""},
       {"trace-to-syslog-only",'\0', G_OPTION_FLAG_HIDDEN,
                               G_OPTION_ARG_NONE,         &trace_to_syslog_only_flag,  "Direct trace output only to syslog", NULL},
-      {"libddcutil-trace-file",'\0', 0, G_OPTION_ARG_STRING,   &parsed_cmd->trace_destination,  "libddcutil trace file",  "file name"},
+      {"libddcutil-trace-file",'\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_STRING,   &parsed_cmd->trace_destination,  "libddcutil trace file",  "file name"},
       {"stats-to-syslog",'\0', G_OPTION_FLAG_HIDDEN,
                               G_OPTION_ARG_NONE,         &stats_to_syslog_only_flag,  "Direct stats to syslog", NULL},
 
@@ -1239,7 +1386,15 @@ parse_command(
       {"i5",      '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_STRING,   &i5_work,         "Special integer 5", "decimal or hex number" },
       {"i6",      '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_STRING,   &i6_work,         "Special integer 6", "decimal or hex number" },
       {"i7",      '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_STRING,   &i7_work,         "Special integer 7", "decimal or hex number" },
-      {"i8",      '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_STRING,   &i8_work,         "Special integer 9", "decimal or hex number" },
+      {"i8",      '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_STRING,   &i8_work,         "Special integer 8", "decimal or hex number" },
+      {"i9",      '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_STRING,   &i9_work,         "Special integer 9", "decimal or hex number" },
+      {"i10",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_STRING,   &i10_work,        "Special integer 10", "decimal or hex number" },
+      {"i11",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_STRING,   &i11_work,        "Special integer 11", "decimal or hex number" },
+      {"i12",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_STRING,   &i12_work,        "Special integer 12", "decimal or hex number" },
+      {"i13",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_STRING,   &i13_work,        "Special integer 13", "decimal or hex number" },
+      {"i14",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_STRING,   &i14_work,        "Special integer 14", "decimal or hex number" },
+      {"i15",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_STRING,   &i15_work,        "Special integer 15", "decimal or hex number" },
+      {"i16",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_STRING,   &i16_work,        "Special integer 16", "decimal or hex number" },
       {"fl1",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_STRING,   &fl1_work,        "Special floating point number 1", "floating point number" },
       {"fl2",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_STRING,   &fl2_work,        "Special floating point number 2", "floating point number" },
       {"f1",      '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_NONE,     &f1_flag,         "Special flag 1",    NULL},
@@ -1256,6 +1411,25 @@ parse_command(
       {"f12",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_NONE,    &f12_flag,         "Special flag 12",   NULL},
       {"f13",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_NONE,    &f13_flag,         "Special flag 13",   NULL},
       {"f14",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_NONE,    &f14_flag,         "Special flag 14",   NULL},
+      {"f15",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_NONE,    &f15_flag,         "Special flag 15",   NULL},
+      {"f16",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_NONE,    &f16_flag,         "Special flag 16",   NULL},
+      {"f17",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_NONE,    &f17_flag,         "Special flag 17",   NULL},
+      {"f18",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_NONE,    &f18_flag,         "Special flag 18",   NULL},
+      {"f19",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_NONE,    &f19_flag,         "Special flag 19",   NULL},
+      {"f20",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_NONE,    &f20_flag,         "Special flag 20",   NULL},
+      {"f21",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_NONE,    &f21_flag,         "Special flag 21",   NULL},
+      {"f22",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_NONE,    &f22_flag,         "Special flag 22",   NULL},
+      {"f23",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_NONE,    &f23_flag,         "Special flag 23",   NULL},
+      {"f24",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_NONE,    &f24_flag,         "Special flag 24",   NULL},
+      {"f25",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_NONE,    &f25_flag,         "Special flag 25",   NULL},
+      {"f26",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_NONE,    &f26_flag,         "Special flag 26",   NULL},
+      {"f27",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_NONE,    &f27_flag,         "Special flag 27",   NULL},
+      {"f28",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_NONE,    &f28_flag,         "Special flag 28",   NULL},
+      {"f29",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_NONE,    &f29_flag,         "Special flag 29",   NULL},
+      {"f30",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_NONE,    &f30_flag,         "Special flag 30",   NULL},
+      {"f31",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_NONE,    &f31_flag,         "Special flag 31",   NULL},
+      {"f32",     '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_NONE,    &f32_flag,         "Special flag 32",   NULL},
+
       {"s1",      '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_STRING,   &parsed_cmd->s1,  "Special string 1",  "string"},
       {"s2",      '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_STRING,   &parsed_cmd->s2,  "Special string 2",  "string"},
       {"s3",      '\0', G_OPTION_FLAG_HIDDEN,  G_OPTION_ARG_STRING,   &parsed_cmd->s3,  "Special string 3",  "string"},
@@ -1269,16 +1443,18 @@ parse_command(
       { NULL }
    };
 
+   // DBG("Looking for --hh...");
    Null_Terminated_String_Array temp_argv = ntsa_copy(argv, true);
    int hh_ndx = ntsa_find(temp_argv, "--hh");
    if (hh_ndx >= 0) {
-      DBGMSG("--hh found");
+      DBGF(debug, "--hh found");
       hidden_help_flag = true;
       free(temp_argv[hh_ndx]);
       temp_argv[hh_ndx] = g_strdup("-h");
    }
 
    if (hidden_help_flag) {
+      unhide_options(initial_options);
       unhide_options(ddcutil_only_options);
       unhide_options(common_options);
       unhide_options(debug_options);
@@ -1292,6 +1468,7 @@ parse_command(
 
    GOptionGroup * all_options = g_option_group_new(
          "group name", "group description", "help description", NULL, NULL);
+   g_option_group_add_entries(all_options, initial_options);
    if (parser_mode == MODE_DDCUTIL) {
       g_option_group_add_entries(all_options, ddcutil_only_options);
    }
@@ -1347,6 +1524,7 @@ parse_command(
    // Main Parser
 
    GError* error = NULL;
+   // DBG("Allocating context...");
    GOptionContext* context  = g_option_context_new("- DDC query and manipulation");
    // g_option_context_add_main_entries(context, option_entries, NULL);
    g_option_context_set_main_group(context, all_options);
@@ -1365,7 +1543,6 @@ parse_command(
 
    // const char * pieces3[] = {commands_list_help, command_argument_help};
    // char * help_summary = strjoin(pieces3, 2, NULL);
-
 
    char * help_summary = NULL;
    if (preparse_verbose) {
@@ -1402,8 +1579,8 @@ parse_command(
       // const char * help_pieces[] = {monitor_selection_option_help};
       // help_description = strjoin(help_pieces, 1, NULL);
       // help_description = g_strdup(monitor_selection_option_help);
-      help_description = g_strdup("For detailed help, use option \"--verbose\"");
-                              //    "\nTo see all options, use option \"--hh\"");
+      help_description = g_strdup("For detailed help, use option \"--verbose\""
+                                  "\nTo see all options, use option \"--hh\"");
    }
 
    // on --help, comes after usage line, before option detail
@@ -1415,7 +1592,6 @@ parse_command(
    free(help_description);
 
    g_option_context_set_help_enabled(context, true);
-
    /* From g_option_parse_documentation():
       If the parsing is successful, any parsed arguments are removed from the
       array and argc and argv are updated accordingly.
@@ -1430,12 +1606,16 @@ parse_command(
       Pass a mangleable copy of argv to g_option_context_parse_strv().
    */
    // Null_Terminated_String_Array temp_argv = ntsa_copy(argv, true);
+   // DBG("Before g_option_context_parse_strv()");
    bool parsing_ok = g_option_context_parse_strv(context, &temp_argv, &error);
+   DBGF(debug, "g_option_contenxt_parser_strv() returned %s, error=%p", sbool(parsing_ok), error);
    if (!parsing_ok) {
       char * mode_name = (parser_mode == MODE_DDCUTIL) ? "ddcutil" : "libddcutil";
       if (error) {
          // EMIT_PARSER_ERROR(errmsgs,  "%s option parsing failed: %s", mode_name, error->message);
          EMIT_PARSER_ERROR(errmsgs, "%s", error->message);
+         free(error->message);
+         free(error);
       }
       else
          EMIT_PARSER_ERROR(errmsgs,  "%s option parsing failed", mode_name);
@@ -1466,6 +1646,9 @@ parse_command(
       EMIT_PARSER_ERROR(errmsgs, "Deprecated option ignored: --async.");
       EMIT_PARSER_ERROR(errmsgs, "Use --i2c-bus-checks-async-min (experimental) or --ddc-checks-async-min");
    }
+   if (verify_flag && noverify_flag) {
+      EMIT_PARSER_ERROR(errmsgs, "Both --verify and --noverify specified");
+   }
 
 #define LIBDDCUTIL_ONLY_OPTION(_name,_val) \
    do \
@@ -1479,7 +1662,8 @@ parse_command(
       LIBDDCUTIL_ONLY_OPTION("--trcapi",                parsed_cmd->traced_api_calls);
       LIBDDCUTIL_ONLY_OPTION("--profile-api",           profile_api_flag);
       LIBDDCUTIL_ONLY_OPTION("--libddcutil-trace-file", parsed_cmd->trace_destination);
-      LIBDDCUTIL_ONLY_OPTION("--enable-watch-displays", watch_displays_flag);
+      LIBDDCUTIL_ONLY_OPTION("--disable-watch-displays", !enable_watch_displays);
+      LIBDDCUTIL_ONLY_OPTION("--disable-api",           disable_api_flag);
    }
 
 #undef LIBDDCUTIL_ONLY_OPTION
@@ -1488,6 +1672,12 @@ parse_command(
    do { \
       if (_flag) \
          parsed_cmd->flags |= _bit; \
+   } while(0)
+
+#define SET_CMDFLAG2(_bit, _flag) \
+   do { \
+      if (_flag) \
+         parsed_cmd->flags2 |= _bit; \
    } while(0)
 
 #define SET_CLR_CMDFLAG(_bit, _flag) \
@@ -1541,21 +1731,9 @@ parse_command(
 #endif
    SET_CMDFLAG(CMD_FLAG_DSA2,              enable_dsa2_flag);
    SET_CMDFLAG(CMD_FLAG_DEFER_SLEEPS,      deferred_sleep_flag);
-   SET_CMDFLAG(CMD_FLAG_F1,                f1_flag);
-   SET_CMDFLAG(CMD_FLAG_F2,                f2_flag);
-   SET_CMDFLAG(CMD_FLAG_F3,                f3_flag);
-   SET_CMDFLAG(CMD_FLAG_F4,                f4_flag);
-   SET_CMDFLAG(CMD_FLAG_F5,                f5_flag);
-   SET_CMDFLAG(CMD_FLAG_F6,                f6_flag);
-   SET_CMDFLAG(CMD_FLAG_F7,                f7_flag);
-   SET_CMDFLAG(CMD_FLAG_F8,                f8_flag);
-   SET_CMDFLAG(CMD_FLAG_F9,                f9_flag);
-   SET_CMDFLAG(CMD_FLAG_F10,               f10_flag);
-   SET_CMDFLAG(CMD_FLAG_F11,               f11_flag);
-   SET_CMDFLAG(CMD_FLAG_F12,               f12_flag);
-   SET_CMDFLAG(CMD_FLAG_F13,               f13_flag);
-   SET_CMDFLAG(CMD_FLAG_F14,               f14_flag);
-   SET_CMDFLAG(CMD_FLAG_WATCH_DISPLAY_HOTPLUG_EVENTS,    watch_displays_flag);
+
+   SET_CMDFLAG(CMD_FLAG_WATCH_DISPLAY_EVENTS,    enable_watch_displays);
+   SET_CMDFLAG(CMD_FLAG_DISABLE_API,       disable_api_flag);
    SET_CMDFLAG(CMD_FLAG_X52_NO_FIFO,       x52_no_fifo_flag);
    SET_CMDFLAG(CMD_FLAG_SHOW_SETTINGS,     show_settings_flag);
    SET_CMDFLAG(CMD_FLAG_I2C_IO_FILEIO,     i2c_io_fileio_flag);
@@ -1569,15 +1747,61 @@ parse_command(
    SET_CMDFLAG(CMD_FLAG_HEURISTIC_UNSUPPORTED_FEATURES, enable_heuristic_unsupported_flag);
    SET_CMDFLAG(CMD_FLAG_SKIP_DDC_CHECKS,   skip_ddc_checks_flag);
    SET_CMDFLAG(CMD_FLAG_FLOCK,             enable_flock_flag);
+   SET_CMDFLAG(CMD_FLAG_ENABLE_TRACED_FUNCTION_STACK,
+                                           traced_function_stack_flag);
+   SET_CMDFLAG(CMD_FLAG_TRACED_FUNCTION_STACK_ERRORS_FATAL,
+                                           traced_function_stack_errors_fatal_flag);
 
-   SET_CLR_CMDFLAG2(CMD_FLAG_TRY_GET_EDID_FROM_SYSFS,    try_get_edid_from_sysfs);
+
+   SET_CLR_CMDFLAG(CMD_FLAG_TRY_GET_EDID_FROM_SYSFS,    try_get_edid_from_sysfs);
    SET_CLR_CMDFLAG(CMD_FLAG_ENABLE_CACHED_CAPABILITIES, enable_cc_flag);
 // #ifdef REMOVED
    SET_CLR_CMDFLAG(CMD_FLAG_ENABLE_CACHED_DISPLAYS, enable_cd_flag);
 // #endif
 
+   SET_CMDFLAG2(CMD_FLAG2_F1,                f1_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F2,                f2_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F3,                f3_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F4,                f4_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F5,                f5_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F6,                f6_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F7,                f7_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F8,                f8_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F9,                f9_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F10,               f10_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F11,               f11_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F12,               f12_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F13,               f13_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F14,               f14_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F15,               f15_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F16,               f16_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F17,               f17_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F18,               f18_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F19,               f19_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F20,               f20_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F21,               f21_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F22,               f22_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F23,               f23_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F24,               f24_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F25,               f25_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F26,               f26_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F27,               f27_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F28,               f28_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F29,               f29_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F30,               f30_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F31,               f31_flag);
+   SET_CMDFLAG2(CMD_FLAG2_F32,               f32_flag);
+
    if (discarded_caches_work) {
       parsed_cmd->discarded_cache_types = discarded_caches_work;
+      SET_CMDFLAG(CMD_FLAG_DISCARD_CACHES, true);
+   }
+   if (discard_cached_capabilities_flag) {
+      parsed_cmd->discarded_cache_types |= CAPABILITIES_CACHE;;
+      SET_CMDFLAG(CMD_FLAG_DISCARD_CACHES, true);
+   }
+   if (discard_dsa_cache_flag) {
+      parsed_cmd->discarded_cache_types |= DSA2_CACHE;;
       SET_CMDFLAG(CMD_FLAG_DISCARD_CACHES, true);
    }
 
@@ -1593,6 +1817,7 @@ parse_command(
    }
 
 #undef SET_CMDFLAG
+#undef SET_CMDFLAG2
 #undef SET_CLR_CMDFLAG
 
    // Create display identifier
@@ -1701,6 +1926,14 @@ parse_command(
    SET_CMDFLAG_I(6);
    SET_CMDFLAG_I(7);
    SET_CMDFLAG_I(8);
+   SET_CMDFLAG_I(9);
+   SET_CMDFLAG_I(10);
+   SET_CMDFLAG_I(11);
+   SET_CMDFLAG_I(12);
+   SET_CMDFLAG_I(13);
+   SET_CMDFLAG_I(14);
+   SET_CMDFLAG_I(15);
+   SET_CMDFLAG_I(16);
 
 #undef SET_CMDFLAG_I
 
@@ -1709,7 +1942,7 @@ parse_command(
      if (!ok)
         EMIT_PARSER_ERROR(errmsgs, "Invalid floating point number: %s", fl1_work);
      else
-         parsed_cmd->flags = parsed_cmd->flags | CMD_FLAG_FL1_SET;
+         parsed_cmd->flags = parsed_cmd->flags2 | CMD_FLAG2_FL1_SET;
       parsing_ok &= ok;
       FREE(fl1_work);
    }
@@ -1719,7 +1952,7 @@ parse_command(
      if (!ok)
         EMIT_PARSER_ERROR(errmsgs, "Invalid floating point number: %s", fl2_work);
      else
-         parsed_cmd->flags = parsed_cmd->flags | CMD_FLAG_FL2_SET;
+         parsed_cmd->flags = parsed_cmd->flags2 | CMD_FLAG2_FL2_SET;
       parsing_ok &= ok;
       FREE(fl2_work);
    }
@@ -1766,10 +1999,16 @@ parse_command(
    }
 
    if (min_dynamic_sleep_work) {
-      parsing_ok &= parse_sleep_multiplier(min_dynamic_sleep_work, &parsed_cmd->min_dynamic_multiplier, errmsgs);
+      parsing_ok  &= parse_sleep_multiplier(min_dynamic_sleep_work, &parsed_cmd->min_dynamic_multiplier, errmsgs);
       FREE(min_dynamic_sleep_work);
    }
 
+   if (watch_mode_work) {
+      parsing_ok &= parse_watch_mode(watch_mode_work, parsed_cmd, errmsgs);
+      FREE(watch_mode_work);
+   }
+   else
+      parsed_cmd->watch_mode = DEFAULT_WATCH_MODE;
 
    DBGMSF(debug, "edid_read_size_work = %d", edid_read_size_work);
    if (edid_read_size_work !=  -1 &&
@@ -1806,7 +2045,7 @@ parse_command(
       // if no command specified, include license in version information and terminate
       if (rest_ct == 0) {
          if (output_level > DDCA_OL_TERSE) {
-            puts("Copyright (C) 2015-2024 Sanford Rockowitz");
+            puts("Copyright (C) 2015-2025 Sanford Rockowitz");
             puts("License GPLv2: GNU GPL version 2 or later <http://gnu.org/licenses/gpl.html>");
             puts("This is free software: you are free to change and redistribute it.");
             puts("There is NO WARRANTY, to the extent permitted by law.");
@@ -1814,6 +2053,23 @@ parse_command(
          exit(0);
       }
    }
+
+   if (xevent_watch_loop_millis_work <= 0) {
+      EMIT_PARSER_ERROR(errmsgs,
+            "--xevent-watch-loop-millisec not a positive number: %d", xevent_watch_loop_millis_work);
+      parsing_ok = false;
+   }
+   else
+      parsed_cmd->xevent_watch_loop_millisec = (uint16_t) xevent_watch_loop_millis_work;
+
+   if (poll_watch_loop_millis_work <= 0) {
+      EMIT_PARSER_ERROR(errmsgs,
+            "--poll-watch-loop-millisec not a positive number: %d", poll_watch_loop_millis_work);
+      parsing_ok = false;
+   }
+   else
+      parsed_cmd->poll_watch_loop_millisec = (uint16_t) poll_watch_loop_millis_work;
+
 
    // All options processed.  Check for consistency, set defaults
 
@@ -1838,8 +2094,8 @@ parse_command(
          if (debug)
             show_cmd_desc(cmdInfo);
          // process command args
-         parsed_cmd->cmd_id  = cmdInfo->cmd_id;
-         // parsedCmd->argCt  = cmdInfo->argct;
+         parsed_cmd->cmd_id = cmdInfo->cmd_id;
+         // parsedCmd->argCt = cmdInfo->argct;
          int min_arg_ct = cmdInfo->min_arg_ct;
          int max_arg_ct = cmdInfo->max_arg_ct;
          int argctr = 1;
@@ -1936,6 +2192,7 @@ parse_command(
          DBGMSG("argv[%d] = |%s|", ndx, argv[ndx]);
       }
    }
+
    if (parse_only_flag && parsing_ok) {
       free_parsed_cmd(parsed_cmd);
       parsed_cmd = NULL;

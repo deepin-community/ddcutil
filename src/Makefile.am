@@ -1,10 +1,10 @@
 # src/Makefile.am
 
-DIST_SUBDIRS = app_ddcutil app_sysenv base cmdline ddc dynvcp i2c libmain  sample_clients test usb usb_util util vcp
+DIST_SUBDIRS = app_ddcutil app_sysenv base cmdline ddc dw dynvcp i2c libmain sysfs  sample_clients test usb usb_util util vcp
 # contain only header files:
 EXTRA_DIST = bsd private public
 
-SUBDIRS = util usb_util base vcp i2c usb dynvcp ddc
+SUBDIRS = util usb_util base vcp sysfs i2c usb dynvcp ddc dw
 if INCLUDE_TESTCASES_COND
 SUBDIRS += test
 endif 
@@ -125,7 +125,8 @@ $(LIBUSB_CFLAGS) \
 #
 
 # unused-result defined since at least gcc 5
-AM_CFLAGS = -Wall -std=c11 -Werror=unused-result
+# format-security defined since gcc 2.95.3, Clang 4.0.0
+AM_CFLAGS = -Wall -std=c11 -Werror=unused-result -Wformat-security
 
 # Distributing -Werror is bad programming practice.  It can result in build failure
 # on an external site having a different compiler, compiler version, or configuration. 
@@ -143,6 +144,9 @@ AM_CFLAGS = -Wall -std=c11 -Werror=unused-result
 # AM_CFLAGS += -H
 # Report header file dependencies
 
+# see https://community.ibm.com/community/user/ibmz-and-linuxone/blogs/colton-cox1/2020/03/12/ztpf-cc-performance-hints
+AM_CFLAGS += -fno-common
+
 AM_CFLAGS += -Wimplicit-function-declaration
 
 # Will flag glib's use of _Static_assert, which is not in the C99 standard, 
@@ -154,6 +158,15 @@ AM_CFLAGS += -Wimplicit-function-declaration
 # The "-Wno-" option form is ignored by gcc, but should be respected when compiling
 # in an environment, e.g. termux, where this option is enabled by default. 
 AM_CFLAGS += -Wno-compound-token-split-by-macro
+
+# https://github.com/ossf/wg-best-practices-os-developers/blob/main/docs/Compiler-Hardening-Guides/Compiler-Options-Hardening-Guide-for-C-and-C++
+# AM_CFLAGS += -Wformat -Wformat=2  
+AM_CFLAGS += -Wimplicit-fallthrough
+# too many errors to be worth fixing
+# AM_CFLAGS += -Wconversion
+AM_CFLAGS += -D_GLIBCXX_ASSERTIONS
+AM_CFLAGS += -Werror=implicit -Werror=incompatible-pointer-types
+AM_CFLAGS += -Werror=int-conversion
 
 if ENABLE_CALLGRAPH_COND
 AM_CFLAGS += -fdump-rtl-expand
@@ -171,6 +184,8 @@ endif
 # AM_CFLAGS += $(PYTHON_CPPFLAGS)
 
 AM_CFLAGS += -fPIC
+
+AM_CFLAGS += -D_GNU_SOURCE
 
 # unnessary, will use AM_CFLAGS if xxx_CFLAGS undefined
 # ddcutil_CFLAGS          = $(AM_CFLAGS)
@@ -191,9 +206,11 @@ export AM_CFLAGS_STD
 #
 
 libcommon_la_LIBADD = \
-ddc/libddc.la    \
+dw/libdw.la         \
+ddc/libddc.la       \
 dynvcp/libdynvcp.la \
 i2c/libi2c.la    \
+sysfs/libsysfs.la \
 vcp/libvcp.la    \
 cmdline/libcmdline.la \
 base/libbase.la  \
@@ -290,7 +307,9 @@ if ASAN_COND
    libddcutil_la_LDFLAGS += -fsanitize=address
    # needed? 
    libddcutil_la_LDFLAGS += -fsanitize-address-use-after-scope -fno-omit-frame-pointer
-   libddcutil_la_LIBADD += -lasan
+   # doesn't work:
+   # libddcutil_la_LDFLAGS += -static-libasan 
+   libddcutil_la_LIBADD += -lasan 
 endif
 
 # doesn't prevent creation of .la 
@@ -298,6 +317,10 @@ endif
 libddcutil_la_LDFLAGS += --disable-static
 
 endif
+
+all-local:
+	@echo "(src/Makefile) all-local"
+	rm -fv base/build_details.h
 
 
 # debug-install-hook:
@@ -353,7 +376,7 @@ uninstall-local:
 	rm -f $(DESTDIR)$(libdir)/libddcutil*  
 	
 	
-# Rename to "all=local" for development 
+# Rename from all-local-disabled to  "all-local" for development 
 all-local-disabled:
 	@echo ""
 	@echo "(src/Makefile:all-local) Variable values:"

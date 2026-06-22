@@ -10,7 +10,7 @@
  *  - abnormal termination
  */
 
-// Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef BASE_CORE_H_
@@ -32,9 +32,15 @@
 
 #include "public/ddcutil_types.h"
 
+#include "util/common_inlines.h"
+#include "util/common_printf_formats.h"
 #include "util/coredefs.h"
 #include "util/error_info.h"
 #include "util/failsim.h"
+#include "util/msg_util.h"
+#include "util/report_util.h"
+#include "util/string_util.h"
+#include "util/traced_function_stack.h"
 
 #include "base/parms.h"      // ensure available to any file that includes core.h
 #include "base/core_per_thread_settings.h"
@@ -49,15 +55,9 @@
 #define ASSERT_MARKER(_struct_ptr, _marker_value) \
    assert(_struct_ptr && memcmp(_struct_ptr->marker, _marker_value, 4) == 0)
 
-// Remove static function qualifier to make it visible to asan, valgrind, backtrace
-#ifdef STATIC_FUNCTIONS_VISIBLE
-#define STATIC
-#else
-#define STATIC static
-#endif
-
 // Indicates that all tracing facilities have been configured
 extern bool tracing_initialized;
+extern bool library_disabled;
 
 
 //
@@ -98,11 +98,6 @@ extern __thread  int  trace_api_call_depth;
 extern __thread  unsigned int  trace_callstack_call_depth;
 // extern __thread  char * trace_callstack[100];
 
-extern bool dbgtrc_show_time;       // prefix debug/trace messages with elapsed time
-extern bool dbgtrc_show_wall_time;  // prefix debug/trace messages with wall time
-extern bool dbgtrc_show_thread_id;  // prefix debug/trace messages with thread id
-extern bool dbgtrc_show_process_id; // prefix debug/trace messsages with process id
-extern bool dbgtrc_trace_to_syslog_only;
 
 // void set_libddcutil_output_destination(const char * filename, const char * traced_unit);
 
@@ -114,6 +109,7 @@ typedef uint16_t Dbgtrc_Options;
 #define DBGTRC_OPTIONS_STARTING  0x08
 #define DBGTRC_OPTIONS_DONE      0x10
 
+bool is_tracing(DDCA_Trace_Group trace_group, const char * filename, const char * funcname);
 
 //
 //  Error_Info reporting
@@ -211,7 +207,7 @@ bool dbgtrc_ret_ddcrc(
         ...);
 
 #ifdef UNNECESSARY
-// use dbgtrc_returning_expression()
+// use ddbgtrc_returning_string()
 bool dbgtrc_ret_bool(
         DDCA_Trace_Group trace_group,
         Dbgtrc_Options   options,
@@ -233,7 +229,7 @@ bool dbgtrc_returning_errinfo(
         char *           format,
         ...);
 
-bool dbgtrc_returning_expression(
+bool dbgtrc_returning_string(
         DDCA_Trace_Group trace_group,
         Dbgtrc_Options   options,
         const char *     funcname,
@@ -293,6 +289,19 @@ bool dbgtrc_returning_expression(
    } while (0)
 #endif
 
+
+#define CLOSE_W_ERRMSG(_fd) \
+   do \
+   { \
+      int close_rc = close(fd); \
+      if (close_rc < 0) { \
+         dbgtrc(DDCA_TRC_ALL, DBGTRC_OPTIONS_SEVERE, __func__, __LINE__, __FILE__, \
+               "Unexpected error on close(): fd=%d, filename=%s, errno=%s at line %d in file %s", \
+               _fd, filename_for_fd_t(_fd), linux_errno_name(errno), __LINE__, __FILE__); \
+      } \
+   } while(0)
+
+
 #define SEVEREMSG(format, ...) \
    dbgtrc(DDCA_TRC_ALL, DBGTRC_OPTIONS_SEVERE, \
           __func__, __LINE__, __FILE__, format, ##__VA_ARGS__)
@@ -318,12 +327,28 @@ bool dbgtrc_returning_expression(
 #endif
 
 #define DBGTRC_STARTING(debug_flag, trace_group, format, ...) \
-    dbgtrc( (debug_flag || trace_callstack_call_depth > 0 || is_traced_callstack_call(__func__) ) ? DDCA_TRC_ALL : (trace_group), DBGTRC_OPTIONS_STARTING, \
-            __func__, __LINE__, __FILE__, "Starting  "format, ##__VA_ARGS__)
+   do { \
+      push_traced_function(__func__); \
+      dbgtrc( (debug_flag) || trace_callstack_call_depth > 0 || is_traced_callstack_call(__func__) \
+                 ? DDCA_TRC_ALL : (trace_group), \
+              DBGTRC_OPTIONS_STARTING, \
+              __func__, __LINE__, __FILE__, "Starting  "format, ##__VA_ARGS__); \
+   } while(0)
 
 #define DBGTRC_DONE(debug_flag , trace_group, format, ...) \
-    dbgtrc( (debug_flag) || trace_callstack_call_depth > 0  ? DDCA_TRC_ALL : (trace_group), DBGTRC_OPTIONS_DONE, \
-            __func__, __LINE__, __FILE__, "Done      "format, ##__VA_ARGS__)
+   do { \
+      dbgtrc( (debug_flag) || trace_callstack_call_depth > 0  \
+              ? DDCA_TRC_ALL : (trace_group), DBGTRC_OPTIONS_DONE, \
+              __func__, __LINE__, __FILE__, "Done      "format, ##__VA_ARGS__); \
+      pop_traced_function(__func__);  \
+   } while (0)
+
+#define DBGTRC_DONE_WO_TRACED_FUNCTION_STACK(debug_flag , trace_group, format, ...) \
+   do { \
+      dbgtrc( (debug_flag) || trace_callstack_call_depth > 0  \
+              ? DDCA_TRC_ALL : (trace_group), DBGTRC_OPTIONS_DONE, \
+              __func__, __LINE__, __FILE__, "Done      "format, ##__VA_ARGS__); \
+   } while (0)
 
 #define DBGTRC_EXECUTED(debug_flag, trace_group, format, ...) \
     dbgtrc( (debug_flag) || trace_callstack_call_depth > 0  ? DDCA_TRC_ALL : (trace_group), DBGTRC_OPTIONS_STARTING | DBGTRC_OPTIONS_DONE, \
@@ -333,11 +358,15 @@ bool dbgtrc_returning_expression(
     dbgtrc( (debug_flag) || trace_callstack_call_depth > 0  ? DDCA_TRC_ALL : (trace_group), DBGTRC_OPTIONS_NONE, \
             __func__, __LINE__, __FILE__, "          "format, ##__VA_ARGS__)
 
-#define DBGTRC_RETURNING(debug_flag, trace_group, _result, format, ...) \
-    dbgtrc_returning_expression( \
-          (debug_flag) || trace_callstack_call_depth > 0  ? DDCA_TRC_ALL : (trace_group), \
+#define DBGTRC_RET_STRING(debug_flag, trace_group, _result, format, ...) \
+    do { \
+       dbgtrc_returning_string( \
+          (debug_flag) || trace_callstack_call_depth > 0  \
+             ? DDCA_TRC_ALL : (trace_group), \
           DBGTRC_OPTIONS_DONE, \
-          __func__, __LINE__, __FILE__, _result, format, ##__VA_ARGS__)
+          __func__, __LINE__, __FILE__, _result, format, ##__VA_ARGS__); \
+       pop_traced_function(__func__);  \
+    } while (0)
 
 /* Notes on macros that have ENABLE_FAILSIM variants.
  *
@@ -365,6 +394,7 @@ bool dbgtrc_returning_expression(
       dbgtrc_ret_ddcrc( \
          (debug_flag) || trace_callstack_call_depth > 0  ? DDCA_TRC_ALL : (trace_group), DBGTRC_OPTIONS_DONE, \
          __func__, __LINE__, __FILE__, rc, format, ##__VA_ARGS__); \
+      pop_traced_function(__func__);
   } while (0)
 #define DBGTRC_RET_DDCRC2(debug_flag, trace_group, _rc, _data_pointer, format, ...) \
    do { \
@@ -382,16 +412,25 @@ bool dbgtrc_returning_expression(
       dbgtrc_ret_ddcrc( \
          (debug_flag) || trace_callstack_call_depth > 0  ? DDCA_TRC_ALL : (trace_group), DBGTRC_OPTIONS_DONE, \
          __func__, __LINE__, __FILE__, _rc, format, ##__VA_ARGS__); \
+      pop_traced_function(__func__);
   } while (0)
 #else
 #define DBGTRC_RET_DDCRC(debug_flag, trace_group, rc, format, ...) \
-   dbgtrc_ret_ddcrc( \
-      (debug_flag) || trace_callstack_call_depth > 0  ? DDCA_TRC_ALL : (trace_group), DBGTRC_OPTIONS_DONE, \
-      __func__, __LINE__, __FILE__, rc, format, ##__VA_ARGS__)
+   do { \
+      dbgtrc_ret_ddcrc( \
+         (debug_flag) || trace_callstack_call_depth > 0  ? DDCA_TRC_ALL : (trace_group), \
+         DBGTRC_OPTIONS_DONE, \
+         __func__, __LINE__, __FILE__, rc, format, ##__VA_ARGS__); \
+      pop_traced_function(__func__);  \
+   } while (0)
+
 #define DBGTRC_RET_DDCRC2(debug_flag, trace_group, rc, data_pointer, format, ...) \
+      do { \
    dbgtrc_ret_ddcrc( \
       (debug_flag) || trace_callstack_call_depth > 0  ? DDCA_TRC_ALL : (trace_group), DBGTRC_OPTIONS_DONE, \
-      __func__, __LINE__, __FILE__, rc, format, ##__VA_ARGS__)
+      __func__, __LINE__, __FILE__, rc, format, ##__VA_ARGS__); \
+      pop_traced_function(__func__);  \
+   } while (0)
 #endif
 
 #ifdef ENABLE_FAILSIM
@@ -407,6 +446,7 @@ bool dbgtrc_returning_expression(
       dbgtrc_returning_errinfo( \
           (debug_flag) || trace_callstack_call_depth > 0  ? DDCA_TRC_ALL : (trace_group), DBGTRC_OPTIONS_DONE, \
           __func__, __LINE__, __FILE__, errinfo_result, format, ##__VA_ARGS__); \
+      pop_traced_function(__func__); \
    } while(0)
 #define DBGTRC_RET_ERRINFO2(debug_flag, trace_group, errinfo_result, data_pointer, format, ...) \
    do { \
@@ -424,36 +464,49 @@ bool dbgtrc_returning_expression(
       dbgtrc_returning_errinfo( \
           (debug_flag) || trace_callstack_call_depth > 0  ? DDCA_TRC_ALL : (trace_group), DBGTRC_OPTIONS_DONE, \
           __func__, __LINE__, __FILE__, errinfo_result, format, ##__VA_ARGS__); \
+      pop_traced_function(__func__); \
    } while(0)
 #else
 #define DBGTRC_RET_ERRINFO(debug_flag, trace_group, errinfo_result, format, ...) \
-       dbgtrc_returning_errinfo( \
-             (debug_flag) || trace_callstack_call_depth > 0  ? DDCA_TRC_ALL : (trace_group), DBGTRC_OPTIONS_DONE, \
-             __func__, __LINE__, __FILE__, errinfo_result, format, ##__VA_ARGS__)
+   do { \
+      dbgtrc_returning_errinfo( \
+             (debug_flag) || trace_callstack_call_depth > 0  ? DDCA_TRC_ALL : (trace_group), \
+             DBGTRC_OPTIONS_DONE, __func__, __LINE__, __FILE__, errinfo_result, format, ##__VA_ARGS__); \
+      pop_traced_function(__func__);  \
+   } while (0)
 #define DBGTRC_RET_ERRINFO2(debug_flag, trace_group, errinfo_result, pointer, format, ...) \
-       dbgtrc_returning_errinfo( \
-             (debug_flag) || trace_callstack_call_depth > 0  ? DDCA_TRC_ALL : (trace_group), DBGTRC_OPTIONS_DONE, \
-             __func__, __LINE__, __FILE__, errinfo_result, format, ##__VA_ARGS__)
+      do { \
+         dbgtrc_returning_errinfo( \
+             (debug_flag) || trace_callstack_call_depth > 0  ? DDCA_TRC_ALL : (trace_group), \
+             DBGTRC_OPTIONS_DONE, \
+             __func__, __LINE__, __FILE__, errinfo_result, format, ##__VA_ARGS__); \
+         pop_traced_function(__func__);  \
+      } while (0)
 #endif
 
-
+// can only pass a variable, not an expression or constant, to DBGTRC_RET_BOOL()
+// because failure simulation may assign a new value to the variable
 #define DBGTRC_RET_BOOL(debug_flag, trace_group, bool_result, format, ...) \
-    dbgtrc_returning_expression( \
-          (debug_flag) || trace_callstack_call_depth > 0  ? DDCA_TRC_ALL : (trace_group), \
-          DBGTRC_OPTIONS_DONE, \
-          __func__, __LINE__, __FILE__, SBOOL(bool_result), format, ##__VA_ARGS__)
+   do { \
+      dbgtrc_returning_string( \
+         (debug_flag) || trace_callstack_call_depth > 0  ? DDCA_TRC_ALL : (trace_group), \
+         DBGTRC_OPTIONS_DONE, \
+         __func__, __LINE__, __FILE__, SBOOL(bool_result), format, ##__VA_ARGS__); \
+     pop_traced_function(__func__);  \
+  } while (0)
 
 // typedef (*dbg_struct_func)(void * structptr, int depth);
-#define DBGMSF_RET_STRUCT(_flag, _structname, _dbgfunc, _structptr) \
-do { \
-   if ((_flag) || trace_callstack_call_depth > 0)  { \
-      dbgtrc(DDCA_TRC_ALL, DBGTRC_OPTIONS_DONE, \
-            __func__, __LINE__, __FILE__, "Returning %s at %p", #_structname, _structptr); \
-      if (_structptr) { \
-         _dbgfunc(_structptr, 1); \
+#define DBGMSF_RET_STRUCT(_debug_flag, _structname, _dbgfunc, _structptr) \
+   do { \
+      if ((_debug_flag) || trace_callstack_call_depth > 0)  { \
+         dbgtrc(DDCA_TRC_ALL, DBGTRC_OPTIONS_DONE, __func__, __LINE__, __FILE__, \
+                "Returning %s at %p", #_structname, _structptr); \
+         if (_structptr) { \
+            _dbgfunc(_structptr, 1); \
+         } \
       } \
-   } \
-} while (0)
+      pop_traced_function(__func__);  \
+   } while (0)
 
 #define DBGTRC_RET_STRUCT(_flag, _trace_group, _structname, _dbgfunc, _structptr) \
 do { \
@@ -465,6 +518,7 @@ do { \
          _dbgfunc(_structptr, 1); \
       } \
    } \
+   pop_traced_function(__func__);  \
 } while(0)
 
 #define DBGTRC_RET_STRUCT_VALUE(_flag, _trace_group, _structname, _dbgfunc, _structval) \
@@ -475,6 +529,7 @@ do { \
              "Returning %s value:", #_structname); \
       _dbgfunc(_structval, 2); \
    } \
+   pop_traced_function(__func__);  \
 } while(0)
 
 
@@ -487,8 +542,9 @@ do { \
               _errinfo_result, "*%s = %p", #_structptr_loc, *_structptr_loc); \
       if (*_structptr_loc) {                                                  \
          _dbgfunc(*_structptr_loc, 1);                                        \
-      }                                                                       \
+      }     \
    } \
+   pop_traced_function(__func__);  \
 } while(0)
 
 
@@ -534,6 +590,8 @@ void core_errmsg_emitter(
 // Use of system log
 //
 
+extern bool msg_to_syslog_only;
+
 extern bool enable_syslog;
 extern DDCA_Syslog_Level syslog_level;
 
@@ -544,25 +602,44 @@ int                 syslog_importance_from_ddcutil_syslog_level(DDCA_Syslog_Leve
 extern const char * valid_syslog_levels_string;
 
 
-/** The specified ddcutil severity level converted to a syslog priority and
- *  written to the system log.
+/** Checks that the specified ddcutil severity level is at least as great
+ *  as the severity cutoff level currently in effect.  If so, the ddcutil
+ *  severity is converted to a syslog severity, and the messages is written
+ *  to the system log.
  *
  *  @param _ddcutil_severity   e.g. DDCA_SYSLOG_ERROR
  *  @param  fmt                message format
  *  @param  ...                message arguments
- *
- *  Messages are written to the system log with the syslog priority
- *  corresponding to the ddcutil severity.
  */
+#define DECORATED_SYSLOG(_ddcutil_severity, format, ...) \
+do { \
+   if (test_emit_syslog(_ddcutil_severity)) { \
+      int syslog_priority = syslog_importance_from_ddcutil_syslog_level(_ddcutil_severity);  \
+      if (syslog_priority >= 0) { \
+         char * body = g_strdup_printf(format, ##__VA_ARGS__); \
+         char prefix[100] = {0}; \
+         if (rpt_get_ornamentation_enabled() ) { \
+            get_msg_decoration(prefix, 100, true); \
+         } \
+         syslog(syslog_priority, "%s%s%s", prefix, body, (tag_output) ? " (N)" : ""  ); \
+         free(body); \
+      } \
+   } \
+} while(0)
+
+
 #define SYSLOG2(_ddcutil_severity, format, ...) \
 do { \
    if (test_emit_syslog(_ddcutil_severity)) { \
       int syslog_priority = syslog_importance_from_ddcutil_syslog_level(_ddcutil_severity);  \
       if (syslog_priority >= 0) { \
-         syslog(syslog_priority, format, ##__VA_ARGS__); \
+         char * body = g_strdup_printf(format, ##__VA_ARGS__); \
+         syslog(syslog_priority, PRItid" %s%s", (intmax_t) tid(), body, (tag_output) ? " (P)" : "" ); \
+         free(body); \
       } \
    } \
 } while(0)
+
 
 
 /** Writes a message to the current ferr() or fout() device and, depending on
@@ -577,16 +654,25 @@ do { \
  *
  *  Messages are written to the system log with the syslog priority
  *  corresponding to the ddcutil severity.
+ *
+ *  If global **msg_to_syslog_only** is set, the message is written only
+ *  to the system log, not to the terminal.  This is avoid duplicate messages
+ *  in the system log if terminal output is redirected to the system log,
+ *  as is the case for KDE applications.
  */
 #define MSG_W_SYSLOG(_ddcutil_severity, format, ...) \
 do { \
-   FILE * f = (_ddcutil_severity <= DDCA_SYSLOG_WARNING) ? ferr() : fout(); \
-   fprintf(f, format, ##__VA_ARGS__); \
-   fprintf(f, "\n"); \
+   if (!msg_to_syslog_only) { \
+      FILE * f = (_ddcutil_severity <= DDCA_SYSLOG_WARNING) ? ferr() : fout(); \
+      fprintf(f, format, ##__VA_ARGS__); \
+      fprintf(f, "\n"); \
+   } \
    if (test_emit_syslog(_ddcutil_severity)) { \
       int syslog_priority = syslog_importance_from_ddcutil_syslog_level(_ddcutil_severity);  \
       if (syslog_priority >= 0) { \
-         syslog(syslog_priority, format, ##__VA_ARGS__); \
+         char * body = g_strdup_printf(format, ##__VA_ARGS__); \
+         syslog(syslog_priority, PRItid" %s%s", (intmax_t) tid(), body, (tag_output) ? " (Q)" : "" ); \
+         free(body); \
       } \
    } \
 } while(0)
@@ -607,12 +693,14 @@ void base_errinfo_free_with_report(
 
 void   start_capture(DDCA_Capture_Option_Flags flags);
 char * end_capture(void);
+Null_Terminated_String_Array end_capture_as_ntsa();
 
 
 //
 // Initialization
 //
 
+void detect_stdout_stderr_redirection();
 void init_core();
 
 #endif /* BASE_CORE_H_ */

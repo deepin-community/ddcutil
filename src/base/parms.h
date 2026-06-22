@@ -3,11 +3,31 @@
  *  System configuration and tuning
  */
 
-// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef PARMS_H_
 #define PARMS_H_
+
+#include "config.h"
+
+//
+// *** Build options that are not otherwise set
+//
+
+// if defined, DDCA_Display_Ref contains display ref id number instead of Display_Ref *
+#define NUMERIC_DDCA_DISPLAY_REF
+// #undef NUMERIC_DDCA_DISPLAY_REF
+
+// STATIC_FUNCTIONS_VISIBLE defined in config.h
+// If defined, remove static function qualifier on many functions to
+// make them visible to asan, valgrind, backtrace
+#ifdef STATIC_FUNCTIONS_VISIBLE
+#define STATIC
+#else
+#define STATIC static
+#endif
+
 
 //
 // *** Timeout values
@@ -84,10 +104,12 @@
 #define DEFAULT_ENABLE_CACHED_DISPLAYS false
 #define DEFAULT_ENABLE_DSA2 true
 #define DEFAULT_ENABLE_FLOCK true
+#define DEFAULT_SETVCP_VERIFY true
 
 #define DEFAULT_DDCUTIL_SYSLOG_LEVEL DDCA_SYSLOG_WARNING
 #define DEFAULT_LIBDDCUTIL_SYSLOG_LEVEL DDCA_SYSLOG_NOTICE
 
+#define DEFAULT_WATCH_MODE Watch_Mode_Dynamic
 
 //
 // Asynchronous Initialization
@@ -96,19 +118,58 @@
 #define CHECK_ASYNC_NEVER 99
 /** Parallelize bus checks if at least this number of checkable /dev/i2c devices exist */
 #define DEFAULT_BUS_CHECK_ASYNC_THRESHOLD CHECK_ASYNC_NEVER
-/** Parallelize DDC communication checks if three are least this number of /dev/i2c devices having an EDID */
-// on banner with 4 displays, async  detect: 1.7 sec, non-async 3.4 sec
+/** Parallelize DDC communication checks if at least this number of /dev/i2c devices have an EDID */
+// on workstation banner with 4 displays, async  detect: 1.7 sec, non-async 3.4 sec
 #define DEFAULT_DDC_CHECK_ASYNC_THRESHOLD 3
 
+
+//
+// Display detection
+//
+
+// Retry interval for retrying to open display
+#define DEFAULT_OPEN_MAX_WAIT_MILLISEC 1000
+#define DEFAULT_OPEN_WAIT_INTERVAL_MILLISEC 100
+
+// Retry interval and max tries when checking that a display handle
+// is still valid
+#define CHECK_OPEN_BUS_ALIVE_RETRY_MILLISEC 1000
+#define CHECK_OPEN_BUS_ALIVE_MAX_TRIES 3
+
+// During bus detection, retry interval and max tries for X37 detection
+#define DETECT_X37_MAX_TRIES 3
+#define DETECT_X37_RETRY_MILLISEC 400
+
+
+//
+// *** Watching for display changes
+//
+
+/** How frequently libddcutil watches for changes to connected displays */
+#define DEFAULT_UDEV_WATCH_LOOP_MILLISEC 500
+#define DEFAULT_POLL_WATCH_LOOP_MILLISEC 2000
+#define DEFAULT_XEVENT_WATCH_LOOP_MILLISEC 100
+
+// Once an event is received that possibly indicates a display change,
+// libddcutil repeatedly checks /sys/class/drm until the reported displays
+// stabilize
+/** Extra time to wait before first stabilization check */
+#define DEFAULT_INITIAL_STABILIZATION_MILLISEC 0  // 500
+/** Polling interval between stabilization checks */
+#define DEFAULT_STABILIZATION_POLL_MILLISEC 100
+
+// When checking that DDC communication has become enabled,
+// checks occur at increasing multiples of this value.
+#define WATCH_RETRY_THREAD_SLEEP_FACTOR_MILLISEC 500
 
 //
 // *** Miscellaneous
 //
 
 // EDID in /sys can have stale data
-#define DEFAULT_TRY_GET_EDID_FROM_SYSFS  false
+#define DEFAULT_TRY_GET_EDID_FROM_SYSFS  true
 
-#define DEFAULT_FLOCK_POLL_MILLISEC      500
+#define DEFAULT_FLOCK_POLL_MILLISEC      100
 #define DEFAULT_FLOCK_MAX_WAIT_MILLISEC 3000
 
 /** Maximum number of i2c buses this code supports */

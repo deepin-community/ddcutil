@@ -6,8 +6,6 @@
 // Copyright (C) 2016-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#define _GNU_SOURCE
-
 //* \cond */
 #include <assert.h>
 #include <errno.h>
@@ -17,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <syslog.h>
 /** \endcond */
 
 #include "coredefs_base.h"
@@ -296,7 +295,7 @@ get_single_subdir_name(
  *
  *  The assembled value will be silently truncated if necessary to fit in buffer
  */
-static char *
+char *
 assemble_sysfs_path2(
       char *        buffer,
       int           bufsz,
@@ -306,12 +305,16 @@ assemble_sysfs_path2(
    assert(buffer && bufsz > 0);
    bool debug = false;
    DBGF(debug, "Starting.  bufsz=%d, fn_segment=|%s|", bufsz, fn_segment);
+   
    STRLCPY(buffer, fn_segment, bufsz-1);
+   int segment_ct = 1;
    while(true) {
       char * segment = va_arg(ap, char*);
       if (!segment)
          break;
-      if (debug)
+      segment_ct++;
+      DBGF(debug, "segment_ct: %d, segment=%p", segment_ct, segment);
+      // hex_dump((const Byte*)segment,32);
       DBGF(debug, "segment |%s|", segment);
       STRLCAT(buffer, "/", bufsz);
       STRLCAT(buffer, segment, bufsz);
@@ -380,6 +383,55 @@ rpt_attr_text(
      ASSERT_IFF(found, *value_loc);
   return found;
 }
+
+
+bool
+rpt_attr_int(
+      int          depth,
+      int *        value_loc,
+      const char * fn_segment,
+      ...)
+{
+   bool debug = false;
+
+   char pb1[PATH_MAX];
+   va_list ap;
+   va_start(ap, fn_segment);
+   assemble_sysfs_path2(pb1, PATH_MAX, fn_segment, ap);
+   va_end(ap);
+   if (debug)
+      printf("(%s) pb1=%s\n", __func__, pb1);
+
+   bool found = false;
+   if (value_loc)
+      *value_loc = -1;
+
+   int ival = -1;
+   char * sval = read_sysfs_attr0(pb1, false);
+   if (sval) {
+      found = str_to_int(sval, &ival, 10);
+      if (!found) {
+         char buf[40];
+         g_strdup_printf(buf, 40, "Not an integer: %s", sval);
+         rpt_attr_output(depth, pb1, ": ", buf);
+      }
+      else {
+         rpt_attr_output(depth, pb1, "=", sval);
+         if (value_loc)
+            *value_loc = ival;
+      }
+      free(sval);
+   }
+   else  {
+     rpt_attr_output(depth, pb1, ": ", "Not Found");
+  }
+
+  if (debug)
+     printf("(%s) Done.\n", __func__);
+
+  return found;
+}
+
 
 
 /** Reads a binary attribute and reports "Found" or "Not found".
@@ -465,11 +517,14 @@ rpt_attr_edid(
        ...)
  {
     bool debug = false;
+    DBGF(debug, "Starting.  depth=%d, value_loc=%p, fn_segment=|%s|", depth, value_loc, fn_segment);
     if (debug) {
-       printf("(%s) Starting.  depth=%d, value_loc=%p\n", __func__, depth, value_loc);
-       if (debug && depth < 0)
-          depth=1;
+       show_backtrace(0);
+       if (redirect_reports_to_syslog)
+          backtrace_to_syslog(LOG_NOTICE, 0);
     }
+    if (debug && depth < 0)
+          depth=1;
 
     char pb1[PATH_MAX];
     va_list ap;
@@ -483,10 +538,19 @@ rpt_attr_edid(
        *value_loc = NULL;
     GByteArray * edid = NULL;
     found = rpt_attr_binary(depth, &edid, pb1, NULL);
-    assert( (found && edid) || (!found && edid==NULL) );
+    ASSERT_IFF(found, edid);
     if (edid) {
-       if (depth >= 0)
-          rpt_hex_dump(edid->data, edid->len, depth+4);
+       if (!rpt2_silent && depth >= 0) {
+          if (redirect_reports_to_syslog) {
+             GPtrArray * collector = g_ptr_array_new_with_free_func(g_free);
+             hex_dump_indented_collect(collector, edid->data, edid->len, depth+4);
+             for (int ndx = 0; ndx < collector->len; ndx++) {
+                syslog(LOG_NOTICE, "%s", (char*) g_ptr_array_index(collector, ndx));
+             }
+          }
+          else
+             rpt_hex_dump(edid->data, edid->len, depth+4);
+       }
        if (value_loc)
           *value_loc = edid;
        else {
@@ -495,11 +559,10 @@ rpt_attr_edid(
     }
 
     if (debug) {
-       printf("(%s) Returning %s. *value_loc=%p\n", __func__, SBOOL(found), *value_loc);
-       if (*value_loc) {
+       DBG("Returning %s.", SBOOL(found));
+       if (value_loc && *value_loc) {
           GByteArray * gba = *value_loc;
-          printf("(%s)               data=%p, len=%d\n",
-                 __func__, (void*) gba->data, gba->len);
+          DBG("               data=%p, len=%d\n", (void*) gba->data, gba->len);
        }
     }
 
@@ -530,6 +593,8 @@ rpt_attr_realpath(
       const char * fn_segment,
       ...)
 {
+   bool debug = false;
+   DBGF(debug, "fn_segment=|%s|", fn_segment);
    if (value_loc)
       *value_loc = NULL;
    char pb1[PATH_MAX];
@@ -674,16 +739,16 @@ rpt_attr_single_subdir(
 }
 
 
-/** Reports whether an indirect directory exists.
+/** Reports whether a subdirectory exists.
  *
  *  \param  depth      logical indentation depth, if < 0, output nothing
  *  \param  value_loc  if non-NULL, *value_loc is always set = NULL
  *  \param  fn_segment first segment of directory name
- *  \param  ...        remaining segments of name (requires at least 2)
+ *  \param  ...        remaining segments of name (requires at least 1)
  *  \return true if subdirectory found, false if not
  */
 bool
-rpt_attr_note_indirect_subdir(
+rpt_attr_note_subdir(
       int          depth,
       char **      value_loc,
       const char * fn_segment,
@@ -697,6 +762,7 @@ rpt_attr_note_indirect_subdir(
    va_start(ap, fn_segment);
    assemble_sysfs_path2(pb1, PATH_MAX, fn_segment, ap);
    va_end(ap);
+   DBGF(debug, "pb1: %s", pb1);
 
    if (value_loc)
       *value_loc = NULL;

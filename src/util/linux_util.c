@@ -3,13 +3,12 @@
  *  Miscellaneous Linux utilities
  */
 
-// Copyright (C) 2020-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2020-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "config.h"
 
 /** \cond */
-#define _GNU_SOURCE    // for syscall()
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -18,6 +17,7 @@
 #include <stdbool.h>
 #include <string.h>
 
+#include <sys/stat.h>
 #include <sys/utsname.h>
 #include <unistd.h>
 
@@ -30,6 +30,7 @@
 #endif
 /** \endcond */
 
+#include "debug_util.h"
 #include "file_util.h"
 #include "report_util.h"
 #include "string_util.h"
@@ -336,7 +337,7 @@ intmax_t get_thread_id() {
    pid_t tid = syscall(SYS_gettid);
 #endif
    if (debug)
-      printf("(%s) Done.    Returning %ld\n", __func__, (intmax_t) tid);
+      printf("(%s) Done.    Returning %jd\n", __func__, (intmax_t) tid);
    return tid;
 }
 
@@ -350,6 +351,27 @@ intmax_t get_process_id()
    pid_t pid = syscall(SYS_getpid);
    return pid;
 }
+
+
+/** Checks that a thread or process id is valid.
+ *
+ *  @param  id  thread or process id
+ *  @return true if valid, false if not
+ */
+bool is_valid_thread_or_process(pid_t id) {
+   bool debug = false;
+   struct stat buf;
+   char procfn[20];
+   snprintf(procfn, 20, "/proc/%d", id);
+   int rc = stat(procfn, &buf);
+   bool result = (rc == 0);
+   DBGF(debug, "File: %s, returning %s\n", procfn, sbool(result));
+   if (!result)
+      DBG("!!! Returning: %s", sbool(result));
+   return result;
+}
+
+
 
 
 void rpt_lsof(const char * fqfn, int depth) {

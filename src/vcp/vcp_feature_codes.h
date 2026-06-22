@@ -3,7 +3,7 @@
  *  Tables describing VCP feature codes and functions to interpret those tables
  */
 
-// Copyright (C) 2014-2022 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef VCP_FEATURE_CODES_H_
@@ -51,7 +51,17 @@ bool format_feature_detail_sl_lookup(
         DDCA_MCCS_Version_Spec  vcp_version,
         char *                  buffer,
         int                     bufsz);
+bool format_feature_detail_sl_lookup_with_sh(
+        Nontable_Vcp_Value *    code_info,
+        DDCA_MCCS_Version_Spec  vcp_version,
+        char *                  buffer,
+        int                     bufsz);
 bool format_feature_detail_sl_byte(
+        Nontable_Vcp_Value *     code_info,
+        DDCA_MCCS_Version_Spec   vcp_version,
+        char *                   buffer,
+        int                      bufsz);
+bool format_feature_detail_sh_sl_bytes(
         Nontable_Vcp_Value *     code_info,
         DDCA_MCCS_Version_Spec   vcp_version,
         char *                   buffer,

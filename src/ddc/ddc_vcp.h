@@ -3,7 +3,7 @@
  *  Basic functions to get and set single values and save current settings.
  */
 
-// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DDC_VCP_H_
@@ -24,6 +24,8 @@
 #include "vcp/vcp_feature_values.h"
 
 extern bool enable_mock_data;
+extern bool setvcp_verify_default;
+extern int  max_setvcp_verify_tries;
 
 bool
 ddc_set_verify_setvcp(
@@ -32,9 +34,6 @@ ddc_set_verify_setvcp(
 bool
 ddc_get_verify_setvcp();
 
-Error_Info *
-ddc_save_current_settings(
-      Display_Handle *          dh);
 
 Error_Info *
 ddc_set_nontable_vcp_value(
@@ -47,6 +46,12 @@ ddc_set_vcp_value(
       Display_Handle *          dh,
       DDCA_Any_Vcp_Value *      vrec,
       DDCA_Any_Vcp_Value **     newval_loc);
+
+Error_Info *
+ddc_set_verified_vcp_value_with_retry(
+      Display_Handle *    dh,
+      DDCA_Any_Vcp_Value *  vrec,
+      DDCA_Any_Vcp_Value ** newval_loc);
 
 Error_Info *
 ddc_get_table_vcp_value(

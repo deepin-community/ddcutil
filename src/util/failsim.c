@@ -2,7 +2,7 @@
  * Functions that provide a simple failure simulation framework.
  */
 
-// Copyright (C) 2017-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2017-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 
@@ -478,8 +478,7 @@ bool fsim_load_control_file(char * fn) {
    DBGF(debug, "Read %d lines", linect);
    bool result = false;
    if (linect < 0) {
-      char * msg = g_strdup_printf("Failed to read %s: %s", fn, strerror(-linect));
-      fprintf(stderr, "%s\n", msg);
+      fprintf(stderr, "Failed to read %s: %s\n", fn, strerror(-linect));
    }
    else {
       result = fsim_load_control_from_gptrarray(lines, errmsgs);
@@ -561,7 +560,7 @@ Failsim_Result fsim_check_failure(const char * fn, const char * funcname) {
 
 #ifdef OUT
 bool fsim_bool_injector(bool status, const char * fn, const char * funcname) {
-   bool debug = true;
+   bool debug = false;
    DBGF(debug, "Starting. status = %s, fn=%s, funcname=%s", SBOOL(status), fn, funcname);
 
    bool result = false;

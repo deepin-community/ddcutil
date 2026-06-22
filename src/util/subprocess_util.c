@@ -3,10 +3,8 @@
  * Functions to execute shell commands
  */
 
-// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
-
-#define _GNU_SOURCE
 
 /** \cond */
 #include <assert.h>
@@ -126,11 +124,13 @@ bool execute_shell_cmd(const char * shell_cmd) {
  *
  *  @return :GPtrArray of response lines if command succeeded
  *           NULL                        if command failed, e.g. command not found
+ *
+ *  @remark
+ *  **g_free** is set as the free function on the returned array
  */
 GPtrArray * execute_shell_cmd_collect(const char * shell_cmd) {
    bool debug = false;
-   GPtrArray * result = g_ptr_array_new();
-   g_ptr_array_set_free_func(result, g_free);
+   GPtrArray * result = g_ptr_array_new_with_free_func(g_free);
    if (debug)
       printf("(%s) Starting. shell_cmd = |%s|\n", __func__, shell_cmd);
    bool ok = true;

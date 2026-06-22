@@ -4,7 +4,7 @@
  * incorporate user-defined per-monitor feature information.
  */
 
-// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DYN_FEATURE_CODES_H_
@@ -23,18 +23,21 @@ dyn_get_feature_metadata_by_mmk_and_vspec(
      DDCA_Vcp_Feature_Code       feature_code,
      Monitor_Model_Key           mmk,
      DDCA_MCCS_Version_Spec      vspec,
+     bool                        check_udf,
      bool                        with_default);
 
 Display_Feature_Metadata *
 dyn_get_feature_metadata_by_dref(
       DDCA_Vcp_Feature_Code      id,
       Display_Ref *              dref,
+      bool                       check_udf,
       bool                       with_default);
 
 Display_Feature_Metadata *
 dyn_get_feature_metadata_by_dh(
       DDCA_Vcp_Feature_Code      id,
       Display_Handle *           dh,
+      bool                       check_udf,
       bool                       with_default);
 
 bool
@@ -65,6 +68,12 @@ dyn_get_feature_name(
       Display_Ref*               dref);
 
 bool dyn_format_feature_detail_sl_lookup(
+      Nontable_Vcp_Value *       code_info,
+      DDCA_Feature_Value_Entry * value_table,
+      char *                     buffer,
+      int                        bufsz);
+
+bool dyn_format_feature_detail_sl_lookup_with_sh(
       Nontable_Vcp_Value *       code_info,
       DDCA_Feature_Value_Entry * value_table,
       char *                     buffer,

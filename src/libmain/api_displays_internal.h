@@ -13,38 +13,60 @@
 
 #include "base/core.h"
 #include "base/displays.h"
+#include "ddc/ddc_displays.h"    // for Dref_Validation_Options
 
-DDCA_Status validate_ddca_display_ref(DDCA_Display_Ref ddca_dref,bool basic_only, bool require_not_alseep, Display_Ref** dref_loc);
-#ifdef UNUSED
-Display_Handle * validated_ddca_display_handle(DDCA_Display_Handle ddca_dh);
-#endif
+DDCA_Status      ddci_validate_ddca_display_ref2(
+      DDCA_Display_Ref        ddca_dref,
+      Dref_Validation_Options validation_options,
+      Display_Ref**           dref_loc);
+
 DDCA_Status validate_ddca_display_handle(DDCA_Display_Handle ddca_dh, Display_Handle** dh_loc);
 
+#ifdef UNUSED
 #define WITH_VALIDATED_DR3(_ddca_dref, _ddcrc, _action) \
    do { \
       assert(library_initialized); \
       _ddcrc = 0; \
       free_thread_error_detail(); \
       Display_Ref * dref = NULL; \
-      _ddcrc = validate_ddca_display_ref(_ddca_dref, false, false, &dref); \
+      _ddcrc = ddci_validate_ddca_display_ref(_ddca_dref, false, false, &dref); \
       if (_ddcrc == 0) { \
          (_action); \
       } \
    } while(0);
+#endif
 
-
+#ifdef OLD
 #define WITH_BASIC_VALIDATED_DR3(_ddca_dref, _ddcrc, _action) \
    do { \
       assert(library_initialized); \
       _ddcrc = 0; \
       free_thread_error_detail(); \
       Display_Ref * dref = NULL; \
-      _ddcrc = validate_ddca_display_ref(_ddca_dref, /*basic_only*/ true, false, &dref); \
+      _ddcrc = ddci_validate_ddca_display_ref(_ddca_dref, /*basic_only*/ true, false, &dref); \
       if (_ddcrc == 0) { \
          (_action); \
       } \
    } while(0);
+#endif
 
+
+#define WITH_VALIDATED_DR4(_ddca_dref, _ddcrc, _validation_options, _action) \
+   do { \
+      assert(library_initialized); \
+      _ddcrc = 0; \
+      free_thread_error_detail(); \
+      Display_Ref * dref0 = dref_from_published_ddca_dref(ddca_dref); \
+      Display_Ref * dref = NULL; \
+      if (dref0) \
+         dref_lock(dref0); \
+      _ddcrc = ddci_validate_ddca_display_ref2(_ddca_dref, _validation_options, &dref); \
+      if (_ddcrc == 0) { \
+         (_action); \
+      } \
+      if (dref0) \
+         dref_unlock(dref0); \
+   } while(0);
 
 
 #ifdef UNUSED

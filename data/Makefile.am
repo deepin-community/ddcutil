@@ -1,6 +1,6 @@
 # File data/Makefile.am
 
-# Copyright (C) 2016-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+# Copyright (C) 2016-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 # The proper location for pkgconfig files is ambiguous, and the 
@@ -24,7 +24,6 @@
 # to be kept in sync with where autotools puts the files.
 
 
-
 resfiles = \
 	etc/modprobe.d/nvidia-i2c.conf \
 	etc/udev/rules.d/60-ddcutil-i2c.rules \
@@ -32,8 +31,7 @@ resfiles = \
 	etc/X11/xorg.conf.d/90-nvidia-i2c.conf
 
 rulesfiles = \
-	usr/lib/udev/rules.d/60-ddcutil-i2c.rules \
-	usr/lib/udev/rules.d/60-ddcutil-usb.rules
+	usr/lib/udev/rules.d/60-ddcutil-i2c.rules 
 
 distributed_modulesfiles = \
     usr/lib/modules-load.d/ddcutil.conf
@@ -54,6 +52,8 @@ pkgconfigdir = ${libdir}/pkgconfig
    
 # Target directory (/usr/local/share/ddcutil/data or /usr/share/ddcutil/data):
 ddcutildir = $(datadir)/ddcutil/data
+resdir     = $(datadir)/ddcutil/data 
+
 # Causes files (w/o directory structure) to be installed in target directory:
 
 if !INSTALL_LIB_ONLY_COND
@@ -110,15 +110,25 @@ install-data-local:
 	@echo "udevdir:        ${udevdir}"
 
 # @xxx@ names are not defined, names with $() are 
+
+# use "find ..." instead of "rm -f" as latter tries to delete directory as well
+# rm -f ${DESTDIR}${resdir}/45-ddcutil*
+# rm -f ${DESTDIR}${rulesdir}/60-ddcutil.rules
+# rm -f ${DESTDIR}${rulesdir}/60-ddcutil-usb.rules
+          
 install-data-hook:
 	@echo "(data/install-data-hook)===> Executing rule: install-data-hook"
-if !INSTALL_LIB_ONLY_COND
-	sed  -i "s|/usr|${prefix}|" ${DESTDIR}${rulesdir}/60-ddcutil-usb.rules 
-endif
+# if !INSTALL_LIB_ONLY_COND
+# 	sed  -i "s|/usr|${prefix}|" ${DESTDIR}${rulesdir}/60-ddcutil-usb.rules 
+# endif
 	@echo "Clear out files possibly left over from earlier installation"
-	rm -f ${DESTDIR}${resdir}/45-ddcutil*
-	rm -f ${DESTDIR}${rulesdir}/60-ddcutil.rules
+	find ${DESTDIR}${resdir} -name "45-ddcutil*" -delete
+	find ${DESTDIR}${resdir} -name "60-ddcutil.rules" -delete
+	
 
 uninstall-hook:
 	@echo "(data/uninstall-hook)===> Executing rule: uninstall-hook"
+	@echo "Clear out files possibly left over from earlier installation"
+	find ${DESTDIR}${resdir} -name "45-ddcutil.rules" -delete
+	find ${DESTDIR}${rulesdir} -name "60-ddcutil-usb.rules" -delete
 

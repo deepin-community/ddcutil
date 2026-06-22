@@ -3,7 +3,7 @@
  *  Capabilities related functions of the API
  */
 
-// Copyright (C) 2015-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2015-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "config.h"
@@ -56,7 +56,7 @@ ddca_get_capabilities_string(
 {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug, "ddca_dh=%s", dh_repr((Display_Handle *) ddca_dh ) );
+   API_PROLOGX(debug, RESPECT_QUIESCE, "ddca_dh=%s", dh_repr((Display_Handle *) ddca_dh ) );
    API_PRECOND_W_EPILOG(pcaps_loc);
    *pcaps_loc = NULL;
    Error_Info * ddc_excp = NULL;
@@ -78,12 +78,18 @@ ddca_get_capabilities_string(
       }
    );
 
-   API_EPILOG(debug, psc, "ddca_dh=%s, *pcaps_loc=%p -> |%s|",
+#ifdef TMI
+   API_EPILOG_RET_DDCRC(debug, RESPECT_QUIESCE, psc, "ddca_dh=%s, *pcaps_loc=%p -> |%s|",
                      dh_repr((Display_Handle *) ddca_dh),
                      *pcaps_loc, *pcaps_loc );
+#endif
+   API_EPILOG_RET_DDCRC(debug, RESPECT_QUIESCE, psc, "ddca_dh=%s, *pcaps_loc=%p",
+                     dh_repr((Display_Handle *) ddca_dh),
+                     *pcaps_loc );
 }
 
 
+#ifdef UNUSED
 void
 dbgrpt_ddca_cap_vcp(DDCA_Cap_Vcp * cap, int depth) {
    rpt_structure_loc("DDCA_Cap_Vcp", cap, depth);
@@ -98,8 +104,10 @@ dbgrpt_ddca_cap_vcp(DDCA_Cap_Vcp * cap, int depth) {
       }
    }
 }
+#endif
 
 
+#ifdef UNUSED
 void
 dbgrpt_ddca_capabilities(DDCA_Capabilities * p_caps, int depth) {
    rpt_structure_loc("DDCA_Capabilities", p_caps, depth);
@@ -124,6 +132,7 @@ dbgrpt_ddca_capabilities(DDCA_Capabilities * p_caps, int depth) {
       }
    }
 }
+#endif
 
 
 DDCA_Status
@@ -133,7 +142,7 @@ ddca_parse_capabilities_string(
 {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug, "parsed_capabilities_loc=%p, capabilities_string: |%s|",
+   API_PROLOGX(debug, NORESPECT_QUIESCE, "parsed_capabilities_loc=%p, capabilities_string: |%s|",
                      parsed_capabilities_loc, capabilities_string);
    API_PRECOND_W_EPILOG(parsed_capabilities_loc);
    DDCA_Status ddcrc = DDCRC_BAD_DATA;
@@ -210,10 +219,14 @@ ddca_parse_capabilities_string(
       free_parsed_capabilities(pcaps);
    }
    *parsed_capabilities_loc = result;
-   API_EPILOG_WO_RETURN(debug, ddcrc, "*parsed_capabilities_loc=%p", *parsed_capabilities_loc);
+   API_EPILOG_BEFORE_RETURN(debug, NORESPECT_QUIESCE, ddcrc,
+         "*parsed_capabilities_loc=%p", *parsed_capabilities_loc);
    ASSERT_IFF(ddcrc==0, *parsed_capabilities_loc);
-   if ( IS_DBGTRC(debug, DDCA_TRC_API) && *parsed_capabilities_loc)
+   // if ( IS_DBGTRC(debug, DDCA_TRC_API) && *parsed_capabilities_loc)
+#ifdef TMI
+   if (is_traced_api_call(__func__) && *parsed_capabilities_loc)
       dbgrpt_ddca_capabilities(*parsed_capabilities_loc, 2);
+#endif
    return ddcrc;
 }
 
@@ -223,6 +236,7 @@ ddca_free_parsed_capabilities(
       DDCA_Capabilities * pcaps)
 {
    bool debug = false;
+   reset_current_traced_function_stack();
    DBGTRC_STARTING(debug, DDCA_TRC_API, "pcaps=%p", pcaps);
    if (pcaps) {
       assert(memcmp(pcaps->marker, DDCA_CAPABILITIES_MARKER, 4) == 0);
@@ -243,7 +257,7 @@ ddca_free_parsed_capabilities(
    DBGTRC_DONE(debug, DDCA_TRC_API, "");
 }
 
-
+#ifdef OLD
 DDCA_Status
 ddca_report_parsed_capabilities_by_dref(
       DDCA_Capabilities *      p_caps,
@@ -253,14 +267,16 @@ ddca_report_parsed_capabilities_by_dref(
    bool debug = false;
    DDCA_Status ddcrc = 0;
    free_thread_error_detail();
-   API_PROLOGX(debug, "Starting. p_caps=%p, ddca_dref=%s",
-                      p_caps, dref_repr_t((Display_Ref*) ddca_dref));
+   API_PROLOGX(debug, RESPECT_QUIESCE, "Starting. p_caps=%p", //  ddca_dref=%s",
+                      p_caps);      // , dref_repr_t((Display_Ref*) ddca_dref));
    API_PRECOND_W_EPILOG(p_caps);   // no need to check marker, DDCA_CAPABILITIES not opaque
 
    Display_Ref * dref = NULL;
    // dref may be NULL, but if not it must be valid
    if (ddca_dref) {
-      ddcrc = validate_ddca_display_ref(ddca_dref, /*basic_only*/ true, /*require_not_alseep*/ false, &dref);
+      dref = dref_from_published_ddca_dref(ddca_dref);
+      // DREF_VALIDAT_BASIC_ONLY?
+      ddcrc = (dref) ? ddc_validate_display_ref2(dref, DREF_VALIDATE_BASIC_ONLY) : DDCRC_ARG;
       if (ddcrc != 0) {
          goto bye;
       }
@@ -301,7 +317,8 @@ ddca_report_parsed_capabilities_by_dref(
       Display_Feature_Metadata * dfm =
          dyn_get_feature_metadata_by_dref(
                cur_vcp->feature_code,
-               ddca_dref,
+               dref,
+               true,     // check_udf
                true);    // create_default_if_not_found);
       assert(dfm);
       // dbgrpt_display_feature_metadata(dfm, 3);
@@ -342,7 +359,127 @@ ddca_report_parsed_capabilities_by_dref(
    }
 
 bye:
-   API_EPILOG(debug, ddcrc, "");
+   API_EPILOG_RET_DDCRC(debug, RESPECT_QUIESCE, ddcrc, "");
+}
+#endif
+
+DDCA_Status
+ddci_report_parsed_capabilities_by_dref(
+      DDCA_Capabilities *      p_caps,
+      Display_Ref *            dref,
+      int                      depth)
+{
+   bool debug = true;
+   DBGTRC_STARTING(debug, DDCA_TRC_API, "");
+
+   int d0 = depth;
+   int d1 = depth+1;
+   int d2 = depth+2;
+   int d3 = depth+3;
+
+   DDCA_Status ddcrc = 0;
+
+   DDCA_Output_Level ol = get_output_level();
+
+   if (ol >= DDCA_OL_VERBOSE)
+      rpt_vstring(d0, "Unparsed string: %s", p_caps->unparsed_string);
+
+   char * s = NULL;
+   if (vcp_version_eq(p_caps->version_spec, DDCA_VSPEC_UNQUERIED))
+      s = "Not present";
+   else if (vcp_version_eq(p_caps->version_spec, DDCA_VSPEC_UNKNOWN))
+      s = "Invalid value";
+   else
+      s = format_vspec(p_caps->version_spec);
+   rpt_vstring(d0, "VCP version: %s", s);
+   if (ol >= DDCA_OL_VERBOSE) {
+      rpt_label  (d0, "Command codes: ");
+      for (int cmd_ndx = 0; cmd_ndx < p_caps->cmd_ct; cmd_ndx++) {
+         uint8_t cur_code = p_caps->cmd_codes[cmd_ndx];
+         char * cmd_name = ddc_cmd_code_name(cur_code);
+         rpt_vstring(d1, "0x%02x (%s)", cur_code, cmd_name);
+      }
+   }
+
+   rpt_vstring(d0, "VCP Feature codes:");
+   for (int code_ndx = 0; code_ndx < p_caps->vcp_code_ct; code_ndx++) {
+      DDCA_Cap_Vcp * cur_vcp = &p_caps->vcp_codes[code_ndx];
+      assert( memcmp(cur_vcp->marker, DDCA_CAP_VCP_MARKER, 4) == 0);
+
+      Display_Feature_Metadata * dfm =
+         dyn_get_feature_metadata_by_dref(
+               cur_vcp->feature_code,
+               dref,
+               true,     // check_udf
+               true);    // create_default_if_not_found);
+      assert(dfm);
+      // dbgrpt_display_feature_metadata(dfm, 3);
+
+      rpt_vstring(d1, "Feature:  0x%02x (%s)", cur_vcp->feature_code, dfm->feature_name);
+
+      if (cur_vcp->value_ct > 0) {
+         if (ol > DDCA_OL_VERBOSE)
+            rpt_vstring(d2, "Unparsed values:     %s", hexstring_t(cur_vcp->values, cur_vcp->value_ct) );
+
+         DDCA_Feature_Value_Entry * feature_value_table = dfm->sl_values;
+         rpt_label(d2, "Values:");
+         for (int ndx = 0; ndx < cur_vcp->value_ct; ndx++) {
+            char * value_desc = "No lookup table";
+            if (feature_value_table) {
+               value_desc =
+                   sl_value_table_lookup(feature_value_table, cur_vcp->values[ndx]);
+               if (!value_desc)
+                  value_desc = "Unrecognized feature value";
+            }
+            rpt_vstring(d3, "0x%02x: %s", cur_vcp->values[ndx], value_desc);
+         }
+      }
+      dfm_free(dfm);
+   } // one feature code
+
+   if (p_caps->messages && *p_caps->messages) {
+      rpt_nl();
+      rpt_label(d0, "Parsing errors:");
+      char ** m = p_caps->messages;
+      while (*m) {
+         rpt_label(d1, *m);
+         m++;
+      }
+   }
+   else {
+      DBGMSF(debug, "No error messages");
+   }
+
+   DBGTRC_RET_DDCRC(debug, DDCA_TRC_API, ddcrc, "");
+   return ddcrc;
+}
+
+
+DDCA_Status
+ddca_report_parsed_capabilities_by_dref(
+      DDCA_Capabilities *      p_caps,
+      DDCA_Display_Ref         ddca_dref,
+      int                      depth)
+{
+   bool debug = false;
+   DDCA_Status ddcrc = 0;
+   free_thread_error_detail();
+   API_PROLOGX(debug, RESPECT_QUIESCE, "Starting. p_caps=%p", //  ddca_dref=%s",
+                      p_caps);      // , dref_repr_t((Display_Ref*) ddca_dref));
+   API_PRECOND_W_EPILOG(p_caps);   // no need to check marker, DDCA_CAPABILITIES not opaque
+
+   Display_Ref * dref = NULL;
+   // dref may be NULL, but if not it must be valid
+   if (ddca_dref) {
+      dref = dref_from_published_ddca_dref(ddca_dref);
+      ddcrc = (dref) ? ddc_validate_display_ref2(dref, DREF_VALIDATE_BASIC_ONLY) : DDCRC_ARG;
+   }
+
+   if (ddcrc == 0) {
+      ddcrc = ddci_report_parsed_capabilities_by_dref(p_caps, dref, depth);
+   }
+
+   API_EPILOG_RET_DDCRC(debug, RESPECT_QUIESCE, ddcrc, "");
 }
 
 
@@ -351,7 +488,7 @@ ddca_report_parsed_capabilities(
       DDCA_Capabilities *      p_caps,
       int                      depth)
 {
-   ddca_report_parsed_capabilities_by_dref(p_caps, NULL, depth);
+   ddci_report_parsed_capabilities_by_dref(p_caps, NULL, depth);
 }
 
 
@@ -363,11 +500,9 @@ ddca_report_parsed_capabilities_by_dh(
 {
    bool debug = false;
    free_thread_error_detail();
-   API_PROLOGX(debug, "p_caps=%p, ddca_dh=%s, depth=%d",
+   API_PROLOGX(debug, RESPECT_QUIESCE, "p_caps=%p, ddca_dh=%s, depth=%d",
                       p_caps, ddca_dh_repr(ddca_dh), depth);
    DDCA_Status ddcrc = 0;
-
-
    Display_Handle * dh = (Display_Handle *) ddca_dh;
    if (dh == NULL || memcmp(dh->marker, DISPLAY_HANDLE_MARKER, 4) != 0 ) {
       ddcrc = DDCRC_ARG;
@@ -380,10 +515,10 @@ ddca_report_parsed_capabilities_by_dh(
    DBGMSF(debug, "After get_vcp_version_by_dh(), dh->dref->vcp_version_df=%s",
                  format_vspec_verbose(dh->dref->vcp_version_xdf));
 
-   ddca_report_parsed_capabilities_by_dref(p_caps, dh->dref, depth);
+   ddci_report_parsed_capabilities_by_dref(p_caps, dh->dref, depth);
 
 bye:
-   API_EPILOG(debug, ddcrc, "");
+   API_EPILOG_RET_DDCRC(debug, RESPECT_QUIESCE, ddcrc, "");
 }
 
 
@@ -442,9 +577,10 @@ ddca_feature_list_from_capabilities(
 }
 
 void init_api_capabilities() {
-   // printf("(%s) Executing\n", __func__);
+   RTTI_ADD_FUNC(ddca_free_parsed_capabilities);
    RTTI_ADD_FUNC(ddca_get_capabilities_string);
    RTTI_ADD_FUNC(ddca_parse_capabilities_string);
+   RTTI_ADD_FUNC(ddci_report_parsed_capabilities_by_dref);
    RTTI_ADD_FUNC(ddca_report_parsed_capabilities_by_dref);
    RTTI_ADD_FUNC(ddca_report_parsed_capabilities_by_dh);
 }

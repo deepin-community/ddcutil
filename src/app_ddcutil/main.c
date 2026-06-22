@@ -3,7 +3,7 @@
  *  ddcutil standalone application mainline
  */
 
-// Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2025 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 /** \cond */
@@ -11,22 +11,24 @@
 
 #include <assert.h>
 #include <base/base_services.h>
+#include <base/drm_connector_state.h>
 #include <ctype.h>
 #include <errno.h>
 #include <glib-2.0/glib.h>
 #include <setjmp.h>
-#include <sys/stat.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
-#include <unistd.h>
-
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <syslog.h>
+#include <unistd.h>
 #include <unistd.h>
 
 #include "util/data_structures.h"
 #include "util/ddcutil_config_file.h"
+#include "util/debug_util.h"
 #include "util/error_info.h"
 #include "util/failsim.h"
 #include "util/file_util.h"
@@ -36,6 +38,7 @@
 #include "util/libdrm_util.h"
 #endif
 #include "util/linux_util.h"
+#include "util/regex_util.h"
 #include "util/report_util.h"
 #include "util/simple_ini_file.h"
 #include "util/string_util.h"
@@ -43,12 +46,14 @@
 #include "util/sysfs_filter_functions.h"
 #include "util/sysfs_i2c_util.h"
 #include "util/sysfs_util.h"
+#include "util/traced_function_stack.h"
 #include "util/xdg_util.h"
 /** \endcond */
 
 #include "public/ddcutil_types.h"
 
 #include "base/build_info.h"
+#include "base/build_timestamp.h"
 #include "base/core.h"
 #include "base/ddc_errno.h"
 #include "base/ddc_packets.h"
@@ -63,8 +68,6 @@
 #include "base/status_code_mgt.h"
 #include "base/tuned_sleep.h"
 
-#include "i2c/i2c_sysfs.h"
-
 #include "vcp/parse_capabilities.h"
 #include "vcp/persistent_capabilities.h"
 #include "vcp/vcp_feature_codes.h"
@@ -72,11 +75,14 @@
 #include "dynvcp/dyn_feature_files.h"
 #include "dynvcp/dyn_parsed_capabilities.h"
 
-#include "i2c/i2c_bus_core.h"
-#include "i2c/i2c_dpms.h"
-#include "i2c/i2c_strategy_dispatcher.h"
-#include "i2c/i2c_sysfs.h"
+#include "sysfs/sysfs_dpms.h"
+#include "sysfs/sysfs_sys_drm_connector.h"
+// #include "sysfs/i2c_sysfs_i2c_info.h"
+#include "sysfs/sysfs_top.h"
+#include "sysfs/sysfs_base.h"
 
+#include "i2c/i2c_bus_core.h"
+#include "i2c/i2c_strategy_dispatcher.h"
 #ifdef ENABLE_USB
 #include "usb/usb_displays.h"
 #endif
@@ -85,16 +91,20 @@
 #include "ddc/ddc_displays.h"
 #include "ddc/ddc_display_ref_reports.h"
 #include "ddc/ddc_display_selection.h"
+#include "ddc/ddc_initial_checks.h"
 #include "ddc/ddc_multi_part_io.h"
 #include "ddc/ddc_output.h"
 #include "ddc/ddc_packet_io.h"
 #include "ddc/ddc_read_capabilities.h"
+#include "ddc/ddc_save_current_settings.h"
 #include "ddc/ddc_serialize.h"
 #include "ddc/ddc_services.h"
 #include "ddc/ddc_try_data.h"
 #include "ddc/ddc_vcp_version.h"
 #include "ddc/ddc_vcp.h"
-#include "ddc/ddc_watch_displays.h"
+
+#include "dw/dw_main.h"
+#include "dw/dw_services.h"
 
 #include "cmdline/cmd_parser_aux.h"    // for parse_feature_id_or_subset(), should it be elsewhere?
 #include "cmdline/cmd_parser.h"
@@ -109,7 +119,7 @@
 #include "app_ddcutil/app_interrogate.h"
 #include "app_ddcutil/app_probe.h"
 #include "app_ddcutil/app_getvcp.h"
-#include <app_ddcutil/app_ddcutil_services.h>
+#include "app_ddcutil/app_ddcutil_services.h"
 #include "app_ddcutil/app_setvcp.h"
 #include "app_ddcutil/app_vcpinfo.h"
 #include "app_ddcutil/app_watch.h"
@@ -169,13 +179,20 @@ report_all_options(Parsed_Cmd * parsed_cmd, char * config_fn, char * default_opt
     bool debug = false;
     DBGMSF(debug, "Executing...");
 
+    bool saved_prefix_report_output = rpt_set_ornamentation_enabled(false);
+
     show_ddcutil_version();
+    if (streq(BUILD_DATE, "Not set"))
+       fprintf(stdout, "Build timestamp:            Not set\n");
+    else
+       fprintf(stdout, "Build timestamp:            %s at %s\n", BUILD_DATE, BUILD_TIME);
     rpt_vstring(depth, "%.*s%-*s%s", 0, "", 28, "Configuration file:",
                          (config_fn) ? config_fn : "(none)");
     if (config_fn)
        rpt_vstring(depth, "%.*s%-*s%s", 0, "", 28, "Configuration file options:", default_options);
 
     // report_build_options(depth);
+
     show_reporting();  // uses fout()
     report_optional_features(parsed_cmd, depth);
     report_tracing(depth);
@@ -183,6 +200,8 @@ report_all_options(Parsed_Cmd * parsed_cmd, char * config_fn, char * default_opt
     report_performance_options(depth);
     report_experimental_options(parsed_cmd, depth);
     report_build_options(depth);
+
+    rpt_set_ornamentation_enabled(saved_prefix_report_output);
 
     DBGMSF(debug, "Done");
 }
@@ -282,6 +301,11 @@ validate_environment()
 }
 
 
+/** For each /dev/i2c device that possibly can be used for DDC/CI communication,
+ *  check that it is readable and writable.
+ *
+ *  @return number of possibly usable devices
+ */
 STATIC int
 verify_i2c_access() {
    bool debug = false;
@@ -293,7 +317,8 @@ verify_i2c_access() {
    int buses_without_devices_ct = 0;
    int inaccessible_devices_ct = 0;
 
-   Bit_Set_256 buses = get_possible_ddc_ci_bus_numbers();  //sysfs bus numbers, not dev-i2c
+   // Bit_Set_256 buses = get_possible_ddc_ci_bus_numbers_using_sysfs_i2c_info();  //sysfs bus numbers, not dev-i2c
+   Bit_Set_256 buses = i2c_detect_attached_buses_as_bitset();
    buses_ct = bs256_count(buses);
    DBGTRC(debug, TRACE_GROUP, "/sys/bus/i2c/devices to check: %s",
                               bs256_to_string_decimal_t(buses, "i2c-", ", "));
@@ -347,6 +372,46 @@ verify_i2c_access() {
 }
 
 
+/** Verify that a single /dev/i2c device is readable and writable.
+ *
+ *  @param busno
+ *  @return 1 if the device exists and is usable, 0 if not
+ */
+int verify_i2c_access_for_single_bus(int busno) {
+   bool debug = false;
+   DBGTRC_STARTING(debug, TRACE_GROUP, "");
+
+   int result = 0;
+
+   if (!i2c_device_exists(busno)) {
+      fprintf(stderr, "Bus /dev/i2c-%d does not exist.\n", busno);
+   }
+   else if (sysfs_is_ignorable_i2c_device(busno)) {
+      fprintf(stderr, "Bus /dev/i2c-%d cannot be used for DDC/CI communication.\n", busno);
+   }
+   else {
+       char fnbuf[20];   // oversize to avoid -Wformat-truncation error
+       snprintf(fnbuf, sizeof(fnbuf), "/dev/i2c-%d", busno);
+       if ( access(fnbuf, R_OK|W_OK) < 0 ) {
+          int errsv = errno;   // EACCESS if lack permissions, ENOENT if file doesn't exist
+          if (errsv == ENOENT) {
+             fprintf(stderr, "Device %s does not exist. Error = %s\n",
+                               fnbuf, linux_errno_desc(errsv));
+          }
+          else {
+             fprintf(stderr, "Device %s is not readable and writable.  Error = %s\n",
+                            fnbuf, linux_errno_desc(errsv) );
+             include_open_failures_reported(busno);
+          }
+       }
+       else
+          result = 1;
+   }
+
+   DBGTRC_DONE(debug, TRACE_GROUP, "Returning %d.", result);
+   return result;
+}
+
 /** Master initialization function
  *
  *   \param  parsed_cmd  parsed command line
@@ -355,10 +420,14 @@ verify_i2c_access() {
 STATIC bool
 master_initializer(Parsed_Cmd * parsed_cmd) {
    bool debug = false;
-   DBGMSF(debug, "Starting ...");
+   DBGF(debug, "Starting ...");
    bool ok = false;
-   if (!submaster_initializer(parsed_cmd))    // shared with libddcutil
+   Error_Info * submaster_errs = submaster_initializer(parsed_cmd);  // shared with libddcutil
+   if (submaster_errs) {
+      errinfo_report_details(submaster_errs, 0);
+      ERRINFO_FREE(submaster_errs);
       goto bye;
+   }
 
 #ifdef ENABLE_ENVCMDS
    if (parsed_cmd->cmd_id != CMDID_ENVIRONMENT) {
@@ -371,12 +440,10 @@ master_initializer(Parsed_Cmd * parsed_cmd) {
       goto bye;
 #endif
 
-   if (!init_experimental_options(parsed_cmd))
-      goto bye;
    ok = true;
 
 bye:
-   DBGMSF(debug, "Done");
+   DBGF(debug, "Done");
    return ok;
 }
 
@@ -445,28 +512,31 @@ find_dref(
       // is this really a monitor?
       I2C_Bus_Info * businfo = i2c_detect_single_bus(busno);
       if (businfo) {
-         if (businfo->flags & I2C_BUS_ADDR_0X50)  {
+         if (businfo->edid)  {
             dref = create_bus_display_ref(busno);
             dref->dispno = DISPNO_INVALID;      // or should it be DISPNO_NOT_SET?
             dref->pedid = copy_parsed_edid(businfo->edid);
-            dref->mmid  = monitor_model_key_new(
+            dref->mmid  = mmk_new(
                              dref->pedid->mfg_id,
                              dref->pedid->model_name,
                              dref->pedid->product_code);
             // dref->driver_name = get_i2c_device_sysfs_driver(busno);
             // DBGMSG("driver_name = %p -> %s", dref->driver_name, dref->driver_name);
             dref->drm_connector = g_strdup(businfo->drm_connector_name);
+            dref->drm_connector_id = businfo->drm_connector_id;
 
             // dref->pedid = i2c_get_parsed_edid_by_busno(did_work->busno);
             dref->detail = businfo;
             dref->flags |= DREF_DDC_IS_MONITOR_CHECKED;
             dref->flags |= DREF_DDC_IS_MONITOR;
             dref->flags |= DREF_TRANSIENT;
-            if (!ddc_initial_checks_by_dref(dref)) {
+            Error_Info * err = ddc_initial_checks_by_dref(dref, false);
+            if (err) {
                f0printf(outf, "DDC communication failed for monitor on bus /dev/i2c-%d\n", busno);
                free_display_ref(dref);
-               i2c_free_bus_info(businfo);
+               // i2c_free_bus_info(businfo);  // double free
                dref = NULL;
+               ERRINFO_FREE_WITH_REPORT(err, debug);
                final_result = DDCRC_INVALID_DISPLAY;
             }
             else {
@@ -480,7 +550,7 @@ find_dref(
          }  // has edid
          else {   // no EDID found
             f0printf(fout(), "No monitor detected on bus /dev/i2c-%d\n", busno);
-            i2c_free_bus_info(businfo);
+            // i2c_free_bus_info(businfo);    // double free
             final_result = DDCRC_INVALID_DISPLAY;
          }
       }    // businfo allocated
@@ -517,9 +587,8 @@ find_dref(
 
    *dref_loc = dref;
    DBGTRC_RET_DDCRC(debug, TRACE_GROUP, final_result,
-                 "*dref_loc = %p -> %s",
-                 *dref_loc,
-                 dref_repr_t(*dref_loc) );
+                   "*dref_loc = %p -> %s",
+                   *dref_loc, dref_repr_t(*dref_loc) );
    return final_result;
 }
 
@@ -567,33 +636,42 @@ execute_cmd_with_optional_display_handle(
    case CMDID_CAPABILITIES:
       {
          assert(dh);
-         app_check_dynamic_features(dh->dref);
-         ensure_vcp_version_set(dh);
+         if (app_check_dynamic_features(dh->dref)) {
+            ensure_vcp_version_set(dh);
 
-         DDCA_Status ddcrc = app_capabilities(dh);
-         main_rc = (ddcrc==0) ? EXIT_SUCCESS : EXIT_FAILURE;
+            DDCA_Status ddcrc = app_capabilities(dh);
+            main_rc = (ddcrc==0) ? EXIT_SUCCESS : EXIT_FAILURE;
+         }
+         else
+            main_rc = EXIT_FAILURE;
          break;
       }
 
    case CMDID_GETVCP:
       {
          assert(dh);
-         app_check_dynamic_features(dh->dref);
-         ensure_vcp_version_set(dh);
+         if (app_check_dynamic_features(dh->dref)) {
+            ensure_vcp_version_set(dh);
 
-         Public_Status_Code psc = app_show_feature_set_values_by_dh(dh, parsed_cmd);
-         main_rc = (psc==0) ? EXIT_SUCCESS : EXIT_FAILURE;
+            Public_Status_Code psc = app_show_feature_set_values_by_dh(dh, parsed_cmd);
+            main_rc = (psc==0) ? EXIT_SUCCESS : EXIT_FAILURE;
+         }
+         else
+            main_rc = EXIT_FAILURE;
       }
       break;
 
    case CMDID_SETVCP:
       {
          assert(dh);
-         app_check_dynamic_features(dh->dref);
-         ensure_vcp_version_set(dh);
+         if (app_check_dynamic_features(dh->dref)) {
+            // ensure_vcp_version_set(dh);
 
-         int rc = app_setvcp(parsed_cmd, dh);
-         main_rc = (rc == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
+            int rc = app_setvcp(parsed_cmd, dh);
+            main_rc = (rc == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
+         }
+         else
+            main_rc = EXIT_FAILURE;
       }
       break;
 
@@ -626,34 +704,47 @@ execute_cmd_with_optional_display_handle(
       {
          assert(dh);
          // MCCS vspec can affect whether a feature is NC or TABLE
-         app_check_dynamic_features(dh->dref);
-         ensure_vcp_version_set(dh);
+         if (app_check_dynamic_features(dh->dref)) {
+            ensure_vcp_version_set(dh);
 
-         Public_Status_Code psc =
+            Public_Status_Code psc =
                app_dumpvcp_as_file(dh, (parsed_cmd->argct > 0)
                                       ? parsed_cmd->args[0]
                                       : NULL );
-         main_rc = (psc==0) ? EXIT_SUCCESS : EXIT_FAILURE;
+            main_rc = (psc==0) ? EXIT_SUCCESS : EXIT_FAILURE;
+         }
+         else
+            main_rc = EXIT_FAILURE;
          break;
       }
 
    case CMDID_READCHANGES:
+   {
       assert(dh);
-      app_check_dynamic_features(dh->dref);
-      ensure_vcp_version_set(dh);
+      if (app_check_dynamic_features(dh->dref)) {
+         ensure_vcp_version_set(dh);
 
-      app_read_changes_forever(dh, parsed_cmd->flags & CMD_FLAG_X52_NO_FIFO);     // only returns if fatal error
-      main_rc = EXIT_FAILURE;
+         app_read_changes_forever(dh, parsed_cmd->flags & CMD_FLAG_X52_NO_FIFO);     // only returns if fatal error
+         main_rc = EXIT_FAILURE;
+      }
+      else
+         main_rc = EXIT_FAILURE;
       break;
+   }
 
    case CMDID_PROBE:
+   {
       assert(dh);
-      app_check_dynamic_features(dh->dref);
-      ensure_vcp_version_set(dh);
+      if (app_check_dynamic_features(dh->dref)) {
+         ensure_vcp_version_set(dh);
 
-      app_probe_display_by_dh(dh);
-      main_rc = EXIT_SUCCESS;
+         app_probe_display_by_dh(dh);
+         main_rc = EXIT_SUCCESS;
+      }
+      else
+         main_rc = EXIT_FAILURE;
       break;
+   }
 
    default:
       main_rc = EXIT_FAILURE;
@@ -694,6 +785,24 @@ DDCA_Syslog_Level preparse_syslog_level(int argc, char** argv) {
 }
 
 
+/** Terminates watch displays thread in case of CTRL-C etc. then
+ *  terminates execution.
+ */
+void interrupt_handler(int sig) {
+   bool debug = false;
+   if (debug)
+      printf("\nHandling interrupt\n");
+   // signal(sig, SIG_IGN);
+   DDCA_Display_Event_Class event_classes  = DDCA_EVENT_CLASS_ALL;
+   dw_stop_watch_displays(false, &event_classes);
+   if (debug) {
+      printf("ddc_stop_watch_displays() returned\n");
+      printf("Calling exit()\n");
+   }
+   exit(0);
+}
+
+
 //
 // Mainline
 //
@@ -722,6 +831,7 @@ main(int argc, char *argv[]) {
    bool preparse_verbose = false;
    bool skip_config = false;
    Parsed_Cmd * parsed_cmd = NULL;
+   bool traced_function_stack_initialized = false;
 
    time_t program_start_time = time(NULL);
    char * program_start_time_s = asctime(localtime(&program_start_time));
@@ -731,11 +841,12 @@ main(int argc, char *argv[]) {
    add_local_rtti_functions();      // add entries for this file
    init_base_services();            // so tracing related modules are initialized
    init_ddc_services();             // initializes i2c, usb, ddc, vcp, dynvcp
+   init_dw_services();              // initializes subdir dw
    init_app_ddcutil_services();
 #ifdef ENABLE_ENVCMDS
    init_app_sysenv_services();
 #endif
-   DBGMSF(main_debug, "init_base_services() complete, ol = %s",
+   DBGF(main_debug, "init_base_services() complete, ol = %s",
                       output_level_name(get_output_level()) );
    // dbgrpt_rtti_func_name_table(3);
 
@@ -746,11 +857,12 @@ main(int argc, char *argv[]) {
 
    DDCA_Syslog_Level preparsed_level = preparse_syslog_level(argc, argv);
    if (preparsed_level != DDCA_SYSLOG_NOT_SET) {
-      DBGMSF(main_debug, "Setting syslog_level = %s", syslog_level_name(preparsed_level));
+      DBGF(main_debug, "Setting syslog_level = %s from preparse_syslog_level()",
+                        syslog_level_name(preparsed_level));
       syslog_level = preparsed_level;
       explicit_syslog_level = true;
    }
-   DBGMSF(main_debug, "syslog_level=%s, explicit_syslog_level=%s",
+   DBGF(main_debug, "syslog_level=%s, explicit_syslog_level=%s",
                       syslog_level_name(syslog_level),  sbool(explicit_syslog_level));
 
    preparse_verbose = ntsa_find(argv, "--verbose") >= 0 || ntsa_find(argv, "-v") >= 0;
@@ -772,18 +884,21 @@ main(int argc, char *argv[]) {
                        &untokenized_cmd_prefix,
                        &configure_fn,
                        config_file_errs);
-      DBGMSF(main_debug, "apply_config_file() returned %s", psc_desc(apply_config_rc));
-      DBGMSF(main_debug, "syslog_level=%s, explicit_syslog_level=%s",
+      DBGF(main_debug, "apply_config_file() returned %s", psc_desc(apply_config_rc));
+      DBGF(main_debug, "syslog_level=%s, explicit_syslog_level=%s",
                          syslog_level_name(syslog_level), SBOOL(explicit_syslog_level));
       if (config_file_errs->len > 0) {
+         // Special handling for config file errors.
+         // Open system log early.
          if (syslog_level > DDCA_SYSLOG_NEVER) {
             openlog("ddcutil",    // prepended to every log message
                      LOG_CONS |   // write to system console if error sending to system logger
                      LOG_PID,     // include caller's process id
                      LOG_USER);   // generic user program, syslogger can use to determine how to handle
             syslog_opened = true;
-            DBGMSF(main_debug, "openlog() executed");
+            DBGF(main_debug, "openlog() executed for config file errors,  explicit syslog level");
          }
+         // Write error msgs to stderr and (if opened) the system log
          f0printf(ferr(), "Error(s) reading ddcutil configuration from file %s:\n", configure_fn);
          if (syslog_opened)
             syslog(LOG_ERR, "Error(s) reading ddcutil configuration from file %s:\n", configure_fn);
@@ -813,13 +928,56 @@ main(int argc, char *argv[]) {
    assert(new_argc == ntsa_length(new_argv));
 
    if (main_debug) {
-      DBGMSG("new_argc = %d, new_argv:", new_argc);
-      rpt_ntsa(new_argv, 1);
+      DBG("new_argc = %d, new_argv:", new_argc);
+      for (int ndx=0; new_argv[ndx]; ndx++) {
+         DBG("   %s", new_argv[ndx]);
+      }
    }
 
-   parsed_cmd = parse_command(new_argc, new_argv, MODE_DDCUTIL, NULL);
-   DBGMSF(main_debug, "parse_command() returned %p", parsed_cmd);
+   preparsed_level = preparse_syslog_level(new_argc, new_argv);
+   if (preparsed_level != DDCA_SYSLOG_NOT_SET) {
+      DBGF(main_debug, "Setting syslog_level = %s from preparse_syslog_level()",
+                        syslog_level_name(preparsed_level));
+      syslog_level = preparsed_level;
+      explicit_syslog_level = true;
+   }
+   DBGF(main_debug, "Before parse_command(): syslog_level=%s, explicit_syslog_level=%s",
+                      syslog_level_name(syslog_level), SBOOL(explicit_syslog_level));
+
+   GPtrArray * parser_errmsgs = g_ptr_array_new_with_free_func(g_free);
+   parsed_cmd = parse_command(new_argc, new_argv, MODE_DDCUTIL, parser_errmsgs);
+   DBGF(main_debug, "parse_command() returned %p", parsed_cmd);
    ntsa_free(new_argv, true);
+
+   DBGF(main_debug, "After parse_command(): syslog_level=%s, explicit_syslog_level=%s",
+                      syslog_level_name(syslog_level), SBOOL(explicit_syslog_level));
+   if (parser_errmsgs->len > 0) {
+      // Special handling for parser error messages.
+      // Open system log early.
+      if (syslog_level > DDCA_SYSLOG_NEVER) {
+         openlog("ddcutil",    // prepended to every log message
+                  LOG_CONS |   // write to system console if error sending to system logger
+                  LOG_PID,     // include caller's process id
+                  LOG_USER);   // generic user program, syslogger can use to determine how to handle
+         syslog_opened = true;
+         DBGF(main_debug, "openlog() executed for parser errors");
+      }
+      // Write error msgs to stderr and (if opened) the system log
+      // f0printf(ferr(), "Command error(s):\n");
+      // if (syslog_opened)
+      //    syslog(LOG_ERR, "Error(s) in ddcutil command:\n");
+      for (int ndx = 0; ndx < parser_errmsgs->len; ndx++) {
+         char * s = g_strdup_printf("   %s\n", (char *) g_ptr_array_index(parser_errmsgs, ndx));
+         f0printf(ferr(), s);
+         if (syslog_opened)
+            syslog(LOG_ERR, "%s", s);
+         free(s);
+      }
+      DBGF(main_debug, "Done writing msgs");
+   }
+
+   g_ptr_array_free(parser_errmsgs, true);
+
    if (!parsed_cmd)
       goto bye;      // main_rc == EXIT_FAILURE
 
@@ -836,29 +994,31 @@ main(int argc, char *argv[]) {
          if (syslog_opened)
             syslog(LOG_ERR, "%s\n", cur->detail);
       }
+      ERRINFO_FREE(errs);
       goto bye;
    }
    if (preparse_verbose)
       parsed_cmd->output_level = DDCA_OL_VERBOSE;
 
+   DBGF(main_debug,"parsed_cmd->syslog_level =%d=%s, syslog_level=%d=%s, explicit_syslog_level=%s",
+         parsed_cmd->syslog_level, syslog_level_name(parsed_cmd->syslog_level),
+         syslog_level, syslog_level_name(syslog_level),
+         sbool(explicit_syslog_level));
    if (explicit_syslog_level)
-      parsed_cmd->syslog_level = explicit_syslog_level;
-
-   if (parsed_cmd->syslog_level > DDCA_SYSLOG_NEVER && !syslog_opened) {
-      if (parsed_cmd->syslog_level > DDCA_SYSLOG_NEVER ) {   // global
-         openlog("ddcutil",          // prepended to every log message
-                 LOG_CONS |          // write to system console if error sending to system logger
-                 LOG_PID,            // include caller's process id
-                 LOG_USER);          // generic user program, syslogger can use to determine how to handle
-         syslog_opened = true;
-         DBGMSF(main_debug, "openlog() executed");
-      }
-   }
-   else if (parsed_cmd->syslog_level == DDCA_SYSLOG_NEVER && syslog_opened) {
+      parsed_cmd->syslog_level = syslog_level;
+   if (parsed_cmd->syslog_level == DDCA_SYSLOG_NEVER && syslog_opened) {
       // oops
-      DBGMSF(main_debug, "parsed_cmd=>syslog_level == DDCA_SYSLOG_NEVER, calling closelog()");
+      DBGF(main_debug, "parsed_cmd=>syslog_level == DDCA_SYSLOG_NEVER, calling closelog()");
       closelog();
       syslog_opened = false;
+   }
+   else if (parsed_cmd->syslog_level > DDCA_SYSLOG_NEVER ) {   // global
+      openlog("ddcutil",          // prepended to every log message
+              LOG_CONS |          // write to system console if error sending to system logger
+              LOG_PID,            // include caller's process id
+              LOG_USER);          // generic user program, syslogger can use to determine how to handle
+      syslog_opened = true;
+      DBGF(main_debug, "Normal openlog() executed for parsed_cmd->syslog_level ");
    }
 
    // tracing is sufficiently initialized, can report start time
@@ -866,12 +1026,16 @@ main(int argc, char *argv[]) {
                          parsed_cmd->traced_files     ||
                          IS_TRACING()                 ||
                          main_debug;
-   DBGMSF(main_debug, "start_time_reported = %s", SBOOL(start_time_reported));
-   DBGMSF(start_time_reported, "Starting %s execution, %s",
+   DBGF(main_debug, "start_time_reported = %s", SBOOL(start_time_reported));
+   DBGF(start_time_reported, "Starting %s execution, %s",
                parser_mode_name(parsed_cmd->parser_mode),
                program_start_time_s);
 
    SYSLOG2(DDCA_SYSLOG_NOTICE, "Starting.  ddcutil version %s", get_full_ddcutil_version());
+   if (parsed_cmd->flags & CMD_FLAG_ENABLE_TRACED_FUNCTION_STACK) {
+      push_traced_function(__func__);
+      traced_function_stack_initialized = true;
+   }
 
    if (preparse_verbose) {
       if (untokenized_cmd_prefix && strlen(untokenized_cmd_prefix) > 0) {
@@ -894,13 +1058,20 @@ main(int argc, char *argv[]) {
 
    if (!master_initializer(parsed_cmd))
       goto bye;
+
+   if (parsed_cmd->cmd_id == CMDID_NOOP) {
+      rpt_vstring(0, "Executing options only");
+      rpt_nl();
+   }
+
    if (parsed_cmd->flags&CMD_FLAG_SHOW_SETTINGS)
       report_all_options(parsed_cmd, configure_fn, untokenized_cmd_prefix, 0);
-
    // xdg_tests(); // for development
 
-   if (parsed_cmd->flags & CMD_FLAG_F2) {
+   if (parsed_cmd->flags2 & CMD_FLAG2_F2) {
       consolidated_i2c_sysfs_report(0);
+      if (use_drm_connector_states)
+         report_drm_connector_states(0);
       // rpt_label(0, "*** Tests Done ***");
       // rpt_nl();
    }
@@ -915,7 +1086,8 @@ main(int argc, char *argv[]) {
 #endif
 
    main_rc = EXIT_SUCCESS;     // from now on assume success;
-   DBGTRC_NOPREFIX(main_debug, TRACE_GROUP, "Initialization complete, process commands");
+   // DBGTRC_NOPREFIX(main_debug, TRACE_GROUP, "Initialization complete, process commands");
+   DBGF(main_debug, "Initialization complete, process commands");
 
    if (parsed_cmd->cmd_id == CMDID_LISTVCP) {    // vestigial
       app_listvcp(stdout);
@@ -936,42 +1108,52 @@ main(int argc, char *argv[]) {
    //    i2c_discard_caches(parsed_cmd->discarded_cache_types);
    // }
 
+   else if (parsed_cmd->cmd_id == CMDID_NOOP) {
+      // rpt_vstring(0, "Executing options only");   // already reported
+      main_rc = EXIT_SUCCESS;
+   }
+
    else if (parsed_cmd->cmd_id == CMDID_C1) {
-      DBGMSG("Executing temporarily defined command C1");
-      if (!drm_enabled) {
+      bool saved_prefix_report_output = rpt_set_ornamentation_enabled(false);
+
+      rpt_label(0, "Executing temporarily defined command C1: watch for display connection/disconnection");
+      if (!all_video_adapters_implement_drm) {
          DBGMSG("Requires DRM capable video drivers.");
          main_rc = EXIT_FAILURE;
       }
       else {
+         // Catch CTRL-C to terminate watch thread, then exit:
+         signal(SIGINT, interrupt_handler);
+         publish_all_display_refs = true;
          ddc_ensure_displays_detected();
-         DDCA_Display_Event_Class event_classes = DDCA_EVENT_CLASS_ALL;
-         if (parsed_cmd->flags&CMD_FLAG_F13)
-            event_classes = DDCA_EVENT_CLASS_DISPLAY_CONNECTION;
-         if (parsed_cmd->flags&CMD_FLAG_F14)
-            event_classes = DDCA_EVENT_CLASS_DPMS;
-         Error_Info * erec = ddc_start_watch_displays(event_classes);
+         Error_Info * erec = dw_start_watch_displays(DDCA_EVENT_CLASS_DISPLAY_CONNECTION);
          if (erec) {
-            DBGMSG(erec->detail);
             ERRINFO_FREE_WITH_REPORT(erec, true);
             main_rc = EXIT_FAILURE;
          }
          else {
-            DBGMSG("Sleeping for 60 minutes");
-            sleep(60*60);
+            rpt_label(0,"Watching for 10 hours");
+            sleep(10*60*60);
+            rpt_label(0,"Terminating execution after 10 hours");
+            dw_stop_watch_displays(true, NULL);
             main_rc = EXIT_SUCCESS;
          }
       }
+
+      rpt_set_ornamentation_enabled(saved_prefix_report_output);
    }
 
-   else if (parsed_cmd->cmd_id == CMDID_C2) {
-      DBGMSG("Executing temporarily defined command C2: noop");
-      main_rc = EXIT_SUCCESS;
-   }
+   else if (parsed_cmd->cmd_id == CMDID_C2 ||
+            parsed_cmd->cmd_id == CMDID_C3 ||
+            parsed_cmd->cmd_id == CMDID_C4)
+   {
+      bool saved_prefix_report_output = rpt_set_ornamentation_enabled(false);
 
-   else if (parsed_cmd->cmd_id == CMDID_C3 || parsed_cmd->cmd_id == CMDID_C4) {
       Cmd_Desc * desc = get_command(parsed_cmd->cmd_id);
-      DBGMSG("Unrecognized command: %s", desc->cmd_name);
+      rpt_vstring(0,"Unrecognized command: %s", desc->cmd_name);
       main_rc = EXIT_FAILURE;
+
+      rpt_set_ornamentation_enabled(saved_prefix_report_output);
    }
 
 #ifdef INCLUDE_TESTCASES
@@ -985,15 +1167,21 @@ main(int argc, char *argv[]) {
 
    else if (parsed_cmd->cmd_id == CMDID_DETECT) {
       DBGTRC_NOPREFIX(main_debug, TRACE_GROUP, "Detecting displays...");
+
+      bool saved_prefix_report_output = rpt_set_ornamentation_enabled(false);
+
       verify_i2c_access();
 
-      if ( parsed_cmd->flags & CMD_FLAG_F4) {
+      if ( parsed_cmd->flags2 & CMD_FLAG2_F4) {
          test_display_detection_variants();
       }
       else {     // normal case
          ddc_ensure_displays_detected();
          ddc_report_displays(/*include_invalid_displays=*/ true, 0);
       }
+
+      rpt_set_ornamentation_enabled(saved_prefix_report_output);
+
       DBGTRC_NOPREFIX(main_debug, TRACE_GROUP, "Display detection complete");
       main_rc = EXIT_SUCCESS;
    }
@@ -1010,7 +1198,14 @@ main(int argc, char *argv[]) {
    else if (parsed_cmd->cmd_id == CMDID_ENVIRONMENT) {
       DBGTRC_NOPREFIX(main_debug, TRACE_GROUP, "Processing command ENVIRONMENT...");
       dup2(1,2);   // redirect stderr to stdout
+
+      bool saved_prefix_report_output = rpt_set_ornamentation_enabled(false);
+
+      if (parsed_cmd->output_level >= DDCA_OL_VERBOSE)
+         force_envcmd_settings(parsed_cmd);
       query_sysenv(parsed_cmd->flags & CMD_FLAG_QUICK);
+
+      rpt_set_ornamentation_enabled(saved_prefix_report_output);
       main_rc = EXIT_SUCCESS;
    }
 
@@ -1018,7 +1213,11 @@ main(int argc, char *argv[]) {
 #ifdef ENABLE_USB
       DBGTRC_NOPREFIX(main_debug, TRACE_GROUP, "Processing command USBENV...");
       dup2(1,2);   // redirect stderr to stdout
+      bool saved_prefix_report_output = rpt_set_ornamentation_enabled(false);
+
       query_usbenv();
+
+      rpt_set_ornamentation_enabled(saved_prefix_report_output);
       main_rc = EXIT_SUCCESS;
 #else
       f0printf(fout(), "ddcutil was not built with support for USB connected monitors\n");
@@ -1031,7 +1230,7 @@ main(int argc, char *argv[]) {
 #ifdef ENABLE_USB
       // DBGMSG("Processing command chkusbmon...\n");
       DBGTRC_NOPREFIX(main_debug, TRACE_GROUP, "Processing command CHKUSBMON...");
-      bool is_monitor = check_usb_monitor( parsed_cmd->args[0] );
+      bool is_monitor = (parsed_cmd->flags&CMD_FLAG_ENABLE_USB) && check_usb_monitor( parsed_cmd->args[0] );
       main_rc = (is_monitor) ? EXIT_SUCCESS : EXIT_FAILURE;
 #else
       main_rc = EXIT_FAILURE;
@@ -1047,38 +1246,50 @@ main(int argc, char *argv[]) {
 
    // *** Commands that may require Display Identifier ***
    else {
-      verify_i2c_access();
+      Status_Errno_DDC  rc = 0;
+      int useful_bus_ct = 0;
       Display_Ref * dref = NULL;
-      Status_Errno_DDC  rc =
-      find_dref(parsed_cmd,
-               (parsed_cmd->cmd_id == CMDID_LOADVCP) ? DISPLAY_ID_OPTIONAL : DISPLAY_ID_REQUIRED,
-               &dref);
-      if (rc != DDCRC_OK) {
+      if (parsed_cmd->pdid && parsed_cmd->pdid->id_type == DISP_ID_BUSNO) {
+         useful_bus_ct = verify_i2c_access_for_single_bus(parsed_cmd->pdid->busno);
+      }
+      else {
+         useful_bus_ct = verify_i2c_access();
+      }
+      if (useful_bus_ct == 0) {
          main_rc = EXIT_FAILURE;
       }
       else {
-         Display_Handle * dh = NULL;
-         if (dref) {
-            DBGMSF(main_debug,
-                   "mainline - display detection complete, about to call ddc_open_display() for dref" );
-            Error_Info* err = ddc_open_display(dref, callopts, &dh);
-            ASSERT_IFF( !err, dh);
-            if (!dh) {
-               f0printf(ferr(), "Error opening %s: %s\n", dref_repr_t(dref), psc_name(err->status_code));
-               errinfo_free(err);
-               main_rc = EXIT_FAILURE;
-            }
-         }  // dref
+         rc = find_dref(parsed_cmd,
+               (parsed_cmd->cmd_id == CMDID_LOADVCP) ? DISPLAY_ID_OPTIONAL : DISPLAY_ID_REQUIRED,
+               &dref);
 
-         if (main_rc == EXIT_SUCCESS) {
-            main_rc = execute_cmd_with_optional_display_handle(parsed_cmd, dh);
+         if (rc != DDCRC_OK) {
+            main_rc = EXIT_FAILURE;
          }
+         else {
+            Display_Handle * dh = NULL;
+            if (dref) {
+               DBGMSF(main_debug,
+                      "mainline - display detection complete, about to call ddc_open_display() for dref" );
+               Error_Info* err = ddc_open_display(dref, callopts, &dh);
+               ASSERT_IFF( !err, dh);
+               if (!dh) {
+                  f0printf(ferr(), "Error opening %s: %s\n", dref_repr_t(dref), psc_name(err->status_code));
+                  errinfo_free(err);
+                  main_rc = EXIT_FAILURE;
+               }
+            }  // dref
 
-         if (dh) {
-            Error_Info * err = ddc_close_display(dh);
-            if (err) {
-               MSG_W_SYSLOG(DDCA_SYSLOG_ERROR, "%s: %s", err->detail, psc_desc(err->status_code));
-               errinfo_free(err);
+            if (main_rc == EXIT_SUCCESS) {
+               main_rc = execute_cmd_with_optional_display_handle(parsed_cmd, dh);
+            }
+
+            if (dh) {
+               Error_Info * err = ddc_close_display(dh);
+               if (err) {
+                  MSG_W_SYSLOG(DDCA_SYSLOG_ERROR, "%s: %s", err->detail, psc_desc(err->status_code));
+                  errinfo_free(err);
+               }
             }
          }
          if (dref && (dref->flags & DREF_TRANSIENT))
@@ -1119,7 +1330,10 @@ bye:
    if (parsed_cmd)
       free_parsed_cmd(parsed_cmd);
 
-   DBGTRC_DONE(main_debug, TRACE_GROUP, "main_rc=%d", main_rc);
+   if (traced_function_stack_initialized)
+      DBGTRC_DONE(main_debug, TRACE_GROUP, "main_rc=%d", main_rc);
+   else
+      DBGTRC_DONE_WO_TRACED_FUNCTION_STACK(main_debug, TRACE_GROUP, "main_rc=%d", main_rc);
 
    time_t end_time = time(NULL);
    char * end_time_s = asctime(localtime(&end_time));
@@ -1130,11 +1344,15 @@ bye:
    DBGMSF(main_debug, "syslog_opened=%s", sbool(syslog_opened));
    if (syslog_opened) {
       SYSLOG2(DDCA_SYSLOG_NOTICE, "Terminating. Returning %d", main_rc);
+      DBGF(main_debug, "Calling closelog()...");
       closelog();
    }
 
+   // ddc_stop_watch_displays(true,NULL);
    terminate_ddc_services();
    terminate_base_services();
+   // free_all_traced_function_stacks();
+   free_current_traced_function_stack();
 
    return main_rc;
 }
@@ -1145,6 +1363,7 @@ static void add_local_rtti_functions() {
    RTTI_ADD_FUNC(execute_cmd_with_optional_display_handle);
    RTTI_ADD_FUNC(find_dref);
    RTTI_ADD_FUNC(verify_i2c_access);
+   RTTI_ADD_FUNC(verify_i2c_access_for_single_bus);
 #ifdef UNUSED
 #ifdef TARGET_LINUX
    RTTI_ADD_FUNC(validate_environment_using_libkmod);

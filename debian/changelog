@@ -1,3 +1,89 @@
+ddcutil (2.2.0-2) unstable; urgency=medium
+
+  * 'debian/changelog':
+    - Remove trailing whitespace.
+  * 'debian/control':
+    - Make 'libddcutil-dev' 'Multi-Arch: same'.
+    - Update 'Standards-Version' to 4.7.2, no changes required.
+
+ -- Phil Wyett <philip.wyett@kathenas.org>  Mon, 07 Apr 2025 19:32:39 +0100
+
+ddcutil (2.2.0-1) unstable; urgency=medium
+
+  * New upstream release, 2.2.0.
+  * 'd/control':
+    - Update 'Standards-Version' to 4.7.1, no changes required.
+  * 'd/copyright':
+    - Add myself to 'Files: debian/*' section.
+  * Add simple 'd/gbp.conf' to start us off.
+  * Remove 'd/patches' and contents, no longer required.
+
+ -- Phil Wyett <philip.wyett@kathenas.org>  Sat, 22 Feb 2025 15:37:45 +0000
+
+ddcutil (2.1.4-6) unstable; urgency=medium
+
+  * Add 'd/patches/fix_crlf_lf.patch.
+
+ -- Phil Wyett <philip.wyett@kathenas.org>  Thu, 26 Sep 2024 06:47:55 +0100
+
+ddcutil (2.1.4-5) unstable; urgency=medium
+
+  * Fix bad commit of 'src/app_ddcutil/main.c'
+
+ -- Phil Wyett <philip.wyett@kathenas.org>  Wed, 25 Sep 2024 20:41:21 +0100
+
+ddcutil (2.1.4-4) unstable; urgency=medium
+
+  * 'd/control':
+    - Adoption, add myself as maintainer. (Closes: #1080172)
+    - Remove versioned Build-Depends and Depends.
+  * Add Debian Continuous Integration (CI) file: 'd/salsa-ci.yml'.
+  * 'd/rules': Add DH_VERBOSE, but have disabled by default.
+
+ -- Phil Wyett <philip.wyett@kathenas.org>  Wed, 25 Sep 2024 19:32:57 +0100
+
+ddcutil (2.1.4-3) unstable; urgency=medium
+
+  * QA upload.
+  * Update and rename debian/patches/fix-building-on-arm.patch to
+    fix-building-on-32bit.patch.
+
+ -- Soren Stoutner <soren@debian.org>  Thu, 05 Sep 2024 16:49:36 -0700
+
+ddcutil (2.1.4-2) unstable; urgency=medium
+
+  * QA upload.
+  * Add debian/patches/fix-building-on-arm.patch.
+  * Remove obsolete debian/compat file.
+  * debian/control:
+    - Specify debhelper-compat (= 13) to replace obsolete debian/compat file.
+    - Update Build-Depends from obsolete pkg-config to pkgconf.
+    - Mark libddcutil5 as Multi-Arch: same.
+    - Add Vcs-Git and Vcs-Browser fields.
+  * debian/copyright:  Add myself to debian/*.
+
+ -- Soren Stoutner <soren@debian.org>  Wed, 04 Sep 2024 11:30:54 -0700
+
+ddcutil (2.1.4-1) unstable; urgency=medium
+
+  * Package is orphaned.
+
+  * Changed distribution from experimental to unstable as part of libddcutil5
+    transition
+
+  * debian/control
+    - Bump standards version to 4.7.0
+    - Changed maintainer field to Debian QA group
+
+  * debian/copyright
+    - Add BSD-3-clause
+
+  * debian/ddcutil.install
+    - Replace /usr/lib/udev/rules.d/60-ddcutil.rules with
+      /usr/lib/udev/rules.d/60-ddcutil*.rules
+
+ -- Sanford Rockowitz <rockowitz@minsoft.com>  Fri, 30 Aug 2024 05:00:00 -0400
+
 ddcutil (2.1.4-1~exp1) experimental; urgency=medium
 
   * Upload to experimental
@@ -9,7 +95,6 @@ ddcutil (2.1.4-1~exp1) experimental; urgency=medium
 
   * debian/libddcutil5.install
     - new shared library package reflecting SONAME bump, replaces libddcutil4
-    - install /usr/lib/modules-load.d/libddcutil.conf
 
  -- Sanford Rockowitz <rockowitz@minsoft.com>  Wed, 07 Feb 2024 05:00:00 -0400
 

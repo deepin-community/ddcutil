@@ -251,7 +251,7 @@ create_dumpload_data_from_g_ptr_array(
                      // One solution: rework data structures to parse later
                      // second solution: vcp version in dumpload data
 
-                     Monitor_Model_Key mmk = monitor_model_key_value(
+                     Monitor_Model_Key mmk = mmk_value(
                            data->mfg_id, data->model, data->product_code);
 
                      Display_Feature_Metadata * dfm =
@@ -259,8 +259,9 @@ create_dumpload_data_from_g_ptr_array(
                                                    feature_id,
                                                    mmk,
                                                    data->vcp_version,
+                                                   true,    /* check_udf */
                                                    /*with_default=*/ true);
-                     bool is_table_feature = dfm->feature_flags & DDCA_NORMAL_TABLE;
+                     bool is_table_feature = dfm->version_feature_flags & DDCA_NORMAL_TABLE;
 
                      if (is_table_feature) {
                         // s2 is hex string
@@ -382,7 +383,7 @@ ddc_set_multiple(
       //    sleep_millis_with_trace(DDC_TIMEOUT_MILLIS_DEFAULT, __func__, "before set_vcp_value()");
       // }
 
-      ddc_excp = ddc_set_vcp_value(dh, vrec, NULL);
+      ddc_excp = ddc_set_verified_vcp_value_with_retry(dh, vrec, NULL);
       psc = (ddc_excp) ? ddc_excp->status_code : 0;
       if (ddc_excp) {
          SYSLOG2(DDCA_SYSLOG_ERROR, "Error setting value for VCP feature code 0x%02x: %s",

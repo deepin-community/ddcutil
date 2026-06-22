@@ -3,7 +3,7 @@
  *  Functions and strings that are independent of the parser package used.
  */
 
-// Copyright (C) 2014-2023 Sanford Rockowitz <rockowitz@minsoft.com>
+// Copyright (C) 2014-2024 Sanford Rockowitz <rockowitz@minsoft.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <config.h>
@@ -54,6 +54,9 @@ static Cmd_Desc cmdinfo[] = {
    {CMDID_DISCARD_CACHE,"discard",        4,  1,       2,                  Option_None},
    {CMDID_LIST_RTTI,    "traceable-functions",
                                           2,  0,       0,                  Option_None},
+   {CMDID_NOOP,         "noop",           2,  0,       9,                  Option_None},
+   {CMDID_NOOP,         "c0",             2,  0,       0,                  Option_None},
+
    {CMDID_C1,           "c1",             2,  0,       9,                  Option_None},
    {CMDID_C2,           "c2",             2,  0,       9,                  Option_None},
    {CMDID_C3,           "c3",             2,  0,       9,                  Option_None},
@@ -233,6 +236,7 @@ const Feature_Subset_Table_Entry subset_table[] = {
    {VCP_SUBSET_CCONT,     CMDID_GETVCP|CMDID_VCPINFO, 3, "CCONT",     "Complex Continuous features"},
    {VCP_SUBSET_CONT,      CMDID_GETVCP|CMDID_VCPINFO, 3, "CONT",      "All Continuous features"},
    {VCP_SUBSET_SNC,       CMDID_GETVCP|CMDID_VCPINFO, 3, "SNC",       "Simple NC features"},
+   {VCP_SUBSET_XNC,       CMDID_GETVCP|CMDID_VCPINFO, 3, "XNC",       "Extended NC features"},
    {VCP_SUBSET_CNC,       CMDID_GETVCP|CMDID_VCPINFO, 3, "CNC",       "Complex NC features"},
    {VCP_SUBSET_NC_WO,                  CMDID_VCPINFO, 4, "NC_WO",     "Write-only NC features"},
    {VCP_SUBSET_NC_CONT,   CMDID_GETVCP|CMDID_VCPINFO, 4, "NC_CONT",   "NC features with continuous subrange"},
@@ -306,7 +310,7 @@ VCP_Feature_Subset find_subset(char * name, int cmd_id) {
 
 #ifdef OLD
 bool parse_feature_id_or_subset(char * val, int cmd_id, Feature_Set_Ref * fsref) {
-   bool debug = true;
+   bool debug = false;
    bool ok = true;
    VCP_Feature_Subset subset_id = find_subset(val, cmd_id);
    if (subset_id != VCP_SUBSET_NONE)
@@ -327,7 +331,7 @@ bool parse_feature_id_or_subset(char * val, int cmd_id, Feature_Set_Ref * fsref)
 }
 
 bool parse_feature_ids(char ** vals, int vals_ct, int cmd_id, Feature_Set_Ref * fsref) {
-   bool debug = true;
+   bool debug = false;
    DBGMSF(debug, "Starting. vals_ct=%d, cmd_id=%d, fsref=%p", vals_ct, cmd_id, fsref);
    bool ok = true;
    assert(cmd_id == CMDID_GETVCP || cmd_id == CMDID_VCPINFO);

@@ -22,22 +22,19 @@ ddc_displays.c              \
 ddc_display_ref_reports.c   \
 ddc_display_selection.c     \
 ddc_dumpload.c              \
+ddc_initial_checks.c        \
 ddc_multi_part_io.c         \
 ddc_output.c                \
 ddc_packet_io.c             \
+ddc_phantom_displays.c      \
 ddc_read_capabilities.c     \
+ddc_save_current_settings.c \
 ddc_serialize.c             \
 ddc_services.c              \
-ddc_status_events.c         \
 ddc_strategy.c              \
 ddc_vcp.c                   \
 ddc_vcp_version.c           \
 ddc_try_data.c 
-
-if ENABLE_SHARED_LIB_COND
-libddc_la_SOURCES += \
-  ddc_watch_displays.c
-endif
 
 # Rename to "all=local" for development 
 all-local-disabled:
