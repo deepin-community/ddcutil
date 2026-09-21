@@ -1,3 +1,9 @@
+ddcutil (2.2.0-2deepin1) unstable; urgency=medium
+
+  * Rebuild with LTO enabled (dpkg vendor feature optimize/lto).
+
+ -- tunaichao <tunaichao@uniontech.com>  Mon, 21 Sep 2026 14:49:32 +0800
+
 ddcutil (2.2.0-2) unstable; urgency=medium
 
   * 'debian/changelog':
